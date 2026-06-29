@@ -13,6 +13,7 @@ from app.api.internal_profile_update import router as internal_profile_update_ro
 from app.api.module_content import router as module_content_router
 from app.api.module_management import router as module_management_router
 from app.api.quiz import router as quiz_router
+from app.api.short_answer import router as short_answer_router
 from app.api.study_planner import router as study_planner_router
 from app.core.config import settings
 from app.db.session import engine
@@ -40,6 +41,7 @@ app.include_router(internal_profile_update_router)
 app.include_router(module_content_router)
 app.include_router(module_management_router)
 app.include_router(quiz_router)
+app.include_router(short_answer_router)
 app.include_router(study_planner_router)
 app.include_router(admin_router)
 

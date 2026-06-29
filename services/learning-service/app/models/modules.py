@@ -108,3 +108,10 @@ class Module(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    short_answer_assessment = relationship(
+        "ShortAnswerAssessment",
+        foreign_keys="ShortAnswerAssessment.module_id",
+        back_populates="module",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )

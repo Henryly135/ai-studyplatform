@@ -642,6 +642,20 @@ function CourseLayout() {
                         <small>quiz</small>
                       </NavLink>
                     )}
+                    {module.hasPublishedShortAnswer && (
+                      <NavLink
+                        to={`/course/${course.courseUuid}/modules/${module.moduleUuid}/short-answer${courseSearchSuffix}`}
+                        className={({ isActive }) =>
+                          isActive
+                            ? "course-layout-material-item course-layout-material-item-active"
+                            : "course-layout-material-item"
+                        }
+                        onClick={(e) => handleSidebarNavigation(e, `/course/${course.courseUuid}/modules/${module.moduleUuid}/short-answer${courseSearchSuffix}`)}
+                      >
+                        <span>{module.shortAnswerTitle ?? "Short-answer assessment"}</span>
+                        <small>assessment</small>
+                      </NavLink>
+                    )}
                   </div>
                 )}
               </div>
