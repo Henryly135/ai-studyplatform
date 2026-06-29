@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from app.models.course_enrollment_audit_logs import EnrollmentAuditActionType, EnrollmentAuditActorRole
 from app.models.course_enrollments import EnrollmentStatus
+from app.models.educator_content_drafts import EducatorContentDraftType
 from app.models.courses import CourseStatus, DifficultyLevelStatus
 from app.models.module_material_upload_sessions import MaterialUploadSessionStatus
 from app.models.module_materials import MaterialType
@@ -16,6 +17,7 @@ from app.repositories.course_enrollment_audit_log_repository import CourseEnroll
 from app.repositories.course_enrollment_repository import CourseEnrollmentRepository
 from app.repositories.course_invite_token_repository import CourseInviteTokenRepository
 from app.repositories.course_repository import CourseRepository
+from app.repositories.educator_content_draft_repository import EducatorContentDraftRepository
 from app.repositories.learning_path_repository import LearningPathRepository
 from app.repositories.module_material_repository import ModuleMaterialRepository
 from app.repositories.module_material_upload_session_repository import ModuleMaterialUploadSessionRepository
@@ -188,6 +190,50 @@ def test_learning_path_module_material_and_prerequisite_repositories_cover_crud(
     assert prerequisites.update(rule, prerequisite_module_id=18).prerequisite_module_id == 18
     assert prerequisites.upsert(module_id=20, prerequisite_module_id=17).prerequisite_module_id == 17
     prerequisites.delete(rule)
+
+
+def test_educator_content_draft_repository_covers_create_list_update():
+    draft = SimpleNamespace(
+        content_draft_id=40,
+        module_id=20,
+        title="Summary",
+        structured_content_json={"summary": "Old"},
+        grounding_json=[],
+        updated_by=None,
+    )
+    session = FakeSession(scalars_result=[draft], get_result=draft)
+    drafts = EducatorContentDraftRepository(session)
+
+    assert drafts.get_by_id(40) is draft
+    assert drafts.list_by_module(20) == [draft]
+    created = drafts.create(
+        module_id=20,
+        content_type=EducatorContentDraftType.SUMMARY,
+        title="Generated summary",
+        teacher_prompt="Summarise this module",
+        material_scope="Week 1 notes",
+        structured_content_json={"summary": "New"},
+        grounding_json=[
+            {
+                "sourceTitle": "Week 1 notes",
+                "sourceType": "pdf",
+                "reference": "Section 1",
+                "rationale": "Supports the summary.",
+            }
+        ],
+        confidence_score=Decimal("0.8200"),
+        is_fallback=False,
+        fallback_reason=None,
+        provider_name="fake",
+        provider_model="fake-model",
+        created_by=7,
+        updated_by=7,
+    )
+    drafts.update(created, title="Edited", structured_content_json={"summary": "Edited"}, updated_by=8)
+
+    assert session.added[0].title == "Edited"
+    assert created.content_type == EducatorContentDraftType.SUMMARY
+    assert created.updated_by == 8
 
 
 def test_progress_enrollment_invite_and_audit_repositories_cover_workflows():

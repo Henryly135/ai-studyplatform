@@ -44,6 +44,7 @@ Main capabilities:
 - Short-answer assessment: educator rubrics, learner submissions, AI suggested feedback, and educator review.
 - Learner Study Planner generation, lookup, adjustment, and regeneration.
 - Educator course, quiz, and teaching-insight analytics.
+- Educator AI content draft generation, editing, and saving.
 
 Learner Study Planner:
 
@@ -81,12 +82,22 @@ Educator Learning Analytics:
 
 These analytics endpoints require educator course-management permissions. Aggregation is computed in `learning-service` from enrollments, module progress, quiz attempts, and short-answer submissions; it does not call `ai-service`.
 
+Educator AI Content Drafts:
+
+- `POST /api/learning/courses/{courseUuid}/modules/{moduleUuid}/content-drafts/management/generate`: educator owner/admin generates and saves an editable content draft for a module. Supported types are `summary`, `learning_objectives`, `activity_suggestions`, `differentiated_explanation`, and `slide_outline`. The request can include a draft title, educator prompt, and material scope; `learning-service` passes module content and material summaries to internal `ai-service`.
+- `GET /api/learning/courses/{courseUuid}/modules/{moduleUuid}/content-drafts/management`: educator lists saved content drafts for the module.
+- `GET /api/learning/courses/{courseUuid}/modules/{moduleUuid}/content-drafts/management/{draftUuid}`: educator reads one content draft.
+- `PATCH /api/learning/courses/{courseUuid}/modules/{moduleUuid}/content-drafts/management/{draftUuid}`: educator saves edited structured content and source `grounding`.
+
+Content drafts are stored only in educator management views. They are not automatically published to learners and do not automatically overwrite module body content. The frontend offers a manual copy action into the module content editor; the educator must still explicitly save module changes. When the AI provider is missing, rate-limited, timed out, returns invalid JSON, or produces low-confidence output, `ai-service` returns an editable fallback draft with `isFallback` and `fallbackReason`.
+
 Key files:
 
 - `services/learning-service/app/api/course_management.py`
 - `services/learning-service/app/api/course_catalog.py`
 - `services/learning-service/app/api/module_management.py`
 - `services/learning-service/app/api/module_content.py`
+- `services/learning-service/app/api/content_generation.py`
 - `services/learning-service/app/api/quiz.py`
 - `services/learning-service/app/api/short_answer.py`
 - `services/learning-service/app/api/internal_quiz_generation.py`
@@ -119,6 +130,7 @@ Main capabilities:
 - Internal educator AI quiz draft generation endpoint for `learning-service`.
 - Internal short-answer evaluation endpoint for `learning-service`.
 - Internal Study Planner generation endpoint for `learning-service`.
+- Internal educator AI content draft generation endpoint for `learning-service`.
 - Celery smoke tasks and task status lookup.
 
 Key files:
@@ -129,11 +141,13 @@ Key files:
 - `services/ai-service/app/api/internal_profile_update.py`
 - `services/ai-service/app/api/internal_quiz_generation.py`
 - `services/ai-service/app/api/internal_study_planner.py`
+- `services/ai-service/app/api/internal_content_generation.py`
 - `services/ai-service/app/api/profiles.py`
 
 Internal AI quiz endpoint:
 
 - `POST /api/ai/internal/quiz-generation/educator-draft`: internal endpoint called only by `learning-service` with the internal token. It returns candidate questions, retrieval context, and the plan; each question includes `sourceGrounding`. nginx should not expose this endpoint directly to browsers.
+- `POST /api/ai/internal/content-generation/educator-draft`: internal endpoint called only by `learning-service` with the internal token. It accepts course/module context, content type, educator prompt, and material summaries, then returns a structured content draft, source grounding, confidence, and provider/fallback metadata. nginx should not expose this endpoint directly to browsers.
 - `POST /api/ai/internal/short-answer/evaluate`: internal endpoint called only by `learning-service` with the internal token. It accepts prompt, rubric, max score, and learner answer, then returns suggested score, feedback, strengths, and improvements. The current implementation is a mock-friendly local evaluator that can later be replaced by a provider-backed workflow.
 
 ## Authentication

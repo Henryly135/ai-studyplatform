@@ -129,6 +129,38 @@ export type EducatorQuizDraftPreview = {
   };
 };
 
+export type EducatorContentDraftType =
+  | "summary"
+  | "learning_objectives"
+  | "activity_suggestions"
+  | "differentiated_explanation"
+  | "slide_outline";
+
+export type EducatorContentDraftGrounding = {
+  sourceTitle: string;
+  sourceType: string;
+  reference: string;
+  rationale: string;
+};
+
+export type EducatorContentDraftRecord = {
+  draftUuid: string;
+  moduleUuid: string;
+  contentType: EducatorContentDraftType;
+  title: string;
+  teacherPrompt: string | null;
+  materialScope: string | null;
+  structuredContent: Record<string, unknown>;
+  grounding: EducatorContentDraftGrounding[];
+  confidenceScore: number;
+  isFallback: boolean;
+  fallbackReason: string | null;
+  provider: string | null;
+  model: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ShortAnswerAssessmentStatus = "draft" | "published" | "archived";
 export type ShortAnswerSubmissionStatus = "submitted" | "ai_suggested" | "reviewed";
 
