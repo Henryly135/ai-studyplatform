@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from platform_common.config import get_env, load_project_env
@@ -9,6 +10,14 @@ DEFAULT_REDIS_HOST = get_env("REDIS_HOST", default="redis")
 DEFAULT_REDIS_PORT = get_env("REDIS_PORT", "REDIS_INTERNAL_PORT", default="")
 DEFAULT_REDIS_DB = get_env("REDIS_DB", default="0")
 DEFAULT_CELERY_BROKER_URL = f"redis://{DEFAULT_REDIS_HOST}:{DEFAULT_REDIS_PORT}/{DEFAULT_REDIS_DB}"
+
+
+def get_secret_env(*names: str) -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return ""
 
 
 @dataclass(frozen=True)
@@ -30,10 +39,16 @@ class Settings:
     ai_embedding_version: str = get_env("AI_EMBEDDING_VERSION", default="gemini-embedding-001@1536")
     ai_embedding_batch_size: int = int(get_env("AI_EMBEDDING_BATCH_SIZE", default="16"))
     ai_embedding_orchestrator: str = get_env("AI_EMBEDDING_ORCHESTRATOR", default="langchain")
+    ai_embedding_api_key: str = get_secret_env("AI_EMBEDDING_API_KEY", "GEMINI_API_KEY")
     ai_chunk_size_chars: int = int(get_env("AI_CHUNK_SIZE_CHARS", default="1200"))
     ai_chunk_overlap_chars: int = int(get_env("AI_CHUNK_OVERLAP_CHARS", default="200"))
     ai_retrieval_top_k: int = int(get_env("AI_RETRIEVAL_TOP_K", default="5"))
     ai_retrieval_min_score: float = float(get_env("AI_RETRIEVAL_MIN_SCORE", default="0.45"))
+    ai_chat_provider: str = get_env("AI_CHAT_PROVIDER", default="gemini")
+    ai_chat_model: str = get_env("AI_CHAT_MODEL", "AI_DEMO_MODEL_NAME", "MODEL_NAME", default="gemini-2.5-flash")
+    ai_chat_base_url: str = get_env("AI_CHAT_BASE_URL", default="")
+    ai_chat_api_key: str = get_secret_env("AI_CHAT_API_KEY", "DEEPSEEK_API_KEY")
+    deepseek_api_key: str = get_secret_env("DEEPSEEK_API_KEY")
     ai_chat_max_output_tokens: int = int(get_env("AI_CHAT_MAX_OUTPUT_TOKENS", default="900"))
     ai_chat_orchestrator: str = get_env("AI_CHAT_ORCHESTRATOR", default="langchain")
     ai_index_job_max_auto_retries: int = int(get_env("AI_INDEX_JOB_MAX_AUTO_RETRIES", default="3"))
