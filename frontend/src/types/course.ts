@@ -28,6 +28,8 @@ export type CourseModule = {
   hasPublishedQuiz?: boolean;
   quizTitle?: string | null;
   quizTimeLimitSeconds?: number | null;
+  hasPublishedShortAnswer?: boolean;
+  shortAnswerTitle?: string | null;
   progressStatus?: string | null;
   isCompleted?: boolean;
   completedAt?: string | null;
@@ -125,6 +127,52 @@ export type EducatorQuizDraftPreview = {
     questionCount: number;
     questions: QuizQuestionDraft[];
   };
+};
+
+export type ShortAnswerAssessmentStatus = "draft" | "published" | "archived";
+export type ShortAnswerSubmissionStatus = "submitted" | "ai_suggested" | "reviewed";
+
+export type ShortAnswerAssessmentRecord = {
+  assessmentUuid: string;
+  moduleUuid: string;
+  title: string;
+  promptText: string;
+  rubricText: string;
+  maxScore: number;
+  status: ShortAnswerAssessmentStatus;
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ShortAnswerSuggestion = {
+  scoreSuggestion: number | null;
+  feedbackText: string | null;
+  strengths: string[];
+  improvements: string[];
+  provider: string | null;
+  model: string | null;
+};
+
+export type ShortAnswerSubmissionRecord = {
+  submissionUuid: string;
+  assessmentUuid: string;
+  learnerId: number;
+  answerText: string;
+  status: ShortAnswerSubmissionStatus;
+  aiSuggestion: ShortAnswerSuggestion;
+  finalScore: number | null;
+  finalFeedbackText: string | null;
+  reviewNotes: string | null;
+  reviewerId: number | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ShortAnswerLearnerAssessment = {
+  assessment: ShortAnswerAssessmentRecord;
+  latestSubmission: ShortAnswerSubmissionRecord | null;
 };
 
 export type QuizQuestionPage = {

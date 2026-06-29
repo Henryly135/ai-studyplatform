@@ -14,10 +14,12 @@ import CourseManagementModulesPage from "../pages/Course/CourseManagementModules
 import CourseManagementOverviewPage from "../pages/Course/CourseManagementOverviewPage";
 import CourseManagementPublishingPage from "../pages/Course/CourseManagementPublishingPage";
 import CourseManagementQuizPage from "../pages/Course/CourseManagementQuizPage";
+import CourseManagementShortAnswerPage from "../pages/Course/CourseManagementShortAnswerPage";
 import CourseManagementUserEnrolmentsPage from "../pages/Course/CourseManagementUserEnrolmentsPage";
 import CourseMaterialPage from "../pages/Course/CourseMaterialPage";
 import CourseModulePage from "../pages/Course/CourseModulePage";
 import CourseQuizPage from "../pages/Course/CourseQuizPage";
+import CourseShortAnswerPage from "../pages/Course/CourseShortAnswerPage";
 import CourseForumPage from "../pages/Course/CourseForumPage";
 import CourseOverviewPage from "../pages/Course/CourseOverviewPage";
 import ForgotPassword from "../pages/ForgotPassword/ForgotPassword";
@@ -104,6 +106,7 @@ function AppRoutes() {
                 <Route path="modules/:moduleUuid" element={<CourseModulePage />} />
                 <Route path="modules/:moduleUuid/materials/:materialUuid" element={<CourseMaterialPage />} />
                 <Route path="modules/:moduleUuid/quiz" element={<CourseQuizPage />} />
+                <Route path="modules/:moduleUuid/short-answer" element={<CourseShortAnswerPage />} />
             </Route>
             <Route path="/course/:courseUuid/management" element={<CourseManagementLayout />}>
                 <Route index element={<CourseManagementOverviewPage />} />
@@ -111,6 +114,7 @@ function AppRoutes() {
                 <Route path="modules/new" element={<CourseManagementModuleCreatePage />} />
                 <Route path="modules/:moduleUuid" element={<CourseManagementModuleDetailPage />} />
                 <Route path="modules/:moduleUuid/quiz" element={<CourseManagementQuizPage />} />
+                <Route path="modules/:moduleUuid/short-answer" element={<CourseManagementShortAnswerPage />} />
                 <Route path="enrolments" element={<CourseManagementUserEnrolmentsPage />} />
                 <Route path="materials" element={<CourseManagementMaterialsPage />} />
                 <Route path="publishing" element={<CourseManagementPublishingPage />} />

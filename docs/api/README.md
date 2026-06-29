@@ -41,6 +41,7 @@ English version: [README.en.md](README.en.md)
 - 材料上传、分片上传、删除和公开访问。
 - 教师手动测验编辑、发布、学生作答。
 - AI 生成测验的上下文查询、题目写入和教师端草稿预览/接受。
+- 短答题评估：教师 rubric、学生提交、AI 建议反馈和教师复核。
 - 学生端 Study Planner 计划生成、读取、调整和重新生成。
 - 教师端课程与测验分析。
 
@@ -61,6 +62,17 @@ English version: [README.en.md](README.en.md)
 
 以上接口仅限具备模块更新权限的教师 owner/admin 使用。`learning-service` 保存 quiz 元数据、题目、选项和每题来源依据；`ai-service` 只负责生成候选内容。
 
+短答题评估：
+
+- `PUT /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer/management`：教师 owner/admin 创建或更新模块短答题评估，包含标题、题干、rubric、满分和状态。
+- `GET /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer/management`：教师读取模块短答题评估。
+- `GET /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer/management/submissions`：教师查看学生提交、AI 建议分数和反馈。
+- `PATCH /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer/management/submissions/{submissionUuid}/review`：教师复核并发布最终分数与反馈。
+- `GET /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer`：学生读取已发布短答题评估和自己的最近提交。
+- `POST /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer/submissions`：学生提交答案；`learning-service` 保存提交前调用内部 `ai-service` 获取建议分数、反馈、strengths 和 improvements。
+
+短答题学生接口要求 learner 身份、课程报名和模块解锁；教师管理接口要求模块更新权限。AI 建议只作为草稿反馈，最终分数和可见反馈由教师复核接口确认。
+
 核心文件：
 
 - `services/learning-service/app/api/course_management.py`
@@ -68,6 +80,7 @@ English version: [README.en.md](README.en.md)
 - `services/learning-service/app/api/module_management.py`
 - `services/learning-service/app/api/module_content.py`
 - `services/learning-service/app/api/quiz.py`
+- `services/learning-service/app/api/short_answer.py`
 - `services/learning-service/app/api/internal_quiz_generation.py`
 - `services/learning-service/app/api/study_planner.py`
 
@@ -96,6 +109,7 @@ English version: [README.en.md](README.en.md)
 - 学习画像初始化和模块画像更新。
 - AI 测验生成 workflow。
 - 教师端 AI 测验草稿内部生成接口，供 `learning-service` 调用。
+- 短答题评估内部接口，供 `learning-service` 获取建议分数和反馈。
 - Study Planner 内部生成接口，供 `learning-service` 调用。
 - Celery smoke task 和任务状态查询。
 
@@ -112,6 +126,7 @@ English version: [README.en.md](README.en.md)
 内部 AI 测验接口：
 
 - `POST /api/ai/internal/quiz-generation/educator-draft`：内部接口，仅供 `learning-service` 通过 internal token 调用。返回候选题集合、检索上下文和计划，每题包含 `sourceGrounding`。nginx 不应向浏览器直接开放该接口。
+- `POST /api/ai/internal/short-answer/evaluate`：内部接口，仅供 `learning-service` 通过 internal token 调用。输入题干、rubric、满分和学生答案，输出建议分数、反馈、strengths 和 improvements；当前实现为 mock-friendly 的本地评估器，便于后续替换为 provider-backed 工作流。
 
 ## 鉴权约定
 

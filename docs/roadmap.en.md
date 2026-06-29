@@ -86,22 +86,29 @@ Future enhancements:
 - Add short-lived server-side draft preview storage so unaccepted previews can be restored across devices.
 - Link source grounding to finer-grained material citations.
 
-## Phase 4: Short-Answer Assessment
+## Phase 4: Short-Answer Assessment (Implemented)
 
 Goal: add one assessment mode beyond multiple-choice quizzes.
 
-Implementation direction:
+Current completed scope:
 
-- Add data structures for short-answer definitions, rubrics, learner submissions, AI feedback, and educator review.
-- After learners submit text answers, AI suggests scores and feedback using the rubric and material context.
-- Educators can inspect submissions, adjust feedback, and confirm final results.
-- Feed short-answer data into analytics later.
+- Add module-level short-answer definitions, rubrics, learner submissions, AI suggested feedback, and educator review data structures.
+- Educators can create/update short-answer assessments from module management and set draft/published/archived status.
+- Learners can read published short-answer tasks, submit answers, and view AI suggested feedback.
+- `ai-service` exposes an internal short-answer evaluation endpoint returning suggested score, feedback, strengths, and improvements; the current implementation is a mock-friendly local evaluator.
+- Educators can inspect submissions and override final score and feedback; final learner-visible feedback is published through educator review.
 
 Acceptance:
 
 - Educators can publish short-answer tasks.
 - Learners can submit answers.
 - Educators can review AI suggestions.
+
+Future enhancements:
+
+- Add retrieval-grounded citations from real module materials.
+- Feed short-answer data into analytics and learner profiles.
+- Support multi-question short-answer assignments, rubric-dimension scoring, and batch review.
 
 ## Phase 5: Educator Analytics
 
