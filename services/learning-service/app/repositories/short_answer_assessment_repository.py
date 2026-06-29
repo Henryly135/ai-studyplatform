@@ -26,6 +26,16 @@ class ShortAnswerAssessmentRepository:
         stmt = select(ShortAnswerAssessment).where(ShortAnswerAssessment.module_id == module_id)
         return self.session.scalar(stmt)
 
+    def list_by_module_ids(self, module_ids: list[int]) -> list[ShortAnswerAssessment]:
+        if not module_ids:
+            return []
+        stmt = (
+            select(ShortAnswerAssessment)
+            .where(ShortAnswerAssessment.module_id.in_(module_ids))
+            .order_by(ShortAnswerAssessment.module_id.asc())
+        )
+        return list(self.session.scalars(stmt))
+
     def create(
         self,
         *,
