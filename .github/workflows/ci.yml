@@ -138,6 +138,7 @@ jobs:
           set +a
 
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/ai/internal/profile-update/context" -H "Content-Type: application/json" -d '{"learnerId":1,"courseUuid":"x","moduleUuid":"y"}')" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/ai/internal/content-generation/educator-draft" -H "Content-Type: application/json" -d '{"courseUuid":"x","moduleUuid":"y","educatorId":1,"courseTitle":"x","moduleTitle":"y","contentType":"summary","teacherPrompt":"x"}')" = "404"
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/learning/internal/quiz-generation/context" -H "Content-Type: application/json" -d '{"courseUuid":"x","moduleUuid":"y"}')" = "404"
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/internal/users/lookup" -H "Content-Type: application/json" -d '{"userIds":[1]}')" = "404"
 

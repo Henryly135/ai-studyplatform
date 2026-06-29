@@ -5,6 +5,7 @@ from sqlalchemy import text
 
 from app.api.chat import router as chat_router
 from app.api.demo import router as demo_router
+from app.api.internal_content_generation import router as internal_content_generation_router
 from app.api.internal_index_jobs import router as internal_index_jobs_router
 from app.api.internal_profiles import router as internal_profiles_router
 from app.api.internal_profile_update import router as internal_profile_update_router
@@ -39,6 +40,7 @@ app.include_router(demo_router)
 app.include_router(chat_router)
 app.include_router(profiles_router)
 app.include_router(quiz_generation_router)
+app.include_router(internal_content_generation_router)
 app.include_router(internal_index_jobs_router)
 app.include_router(internal_profiles_router)
 app.include_router(internal_profile_update_router)

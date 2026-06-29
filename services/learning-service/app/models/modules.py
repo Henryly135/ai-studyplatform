@@ -115,3 +115,9 @@ class Module(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    content_drafts = relationship(
+        "EducatorContentDraft",
+        foreign_keys="EducatorContentDraft.module_id",
+        back_populates="module",
+        cascade="all, delete-orphan",
+    )

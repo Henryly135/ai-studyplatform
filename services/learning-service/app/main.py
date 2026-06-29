@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.api.admin import router as admin_router
+from app.api.content_generation import router as content_generation_router
 from app.api.course_catalog import router as course_catalog_router
 from app.api.course_enrollments import router as course_enrollments_router
 from app.api.course_invites import router as course_invites_router
@@ -33,6 +34,7 @@ settings.material_root_path.mkdir(parents=True, exist_ok=True)
 app.mount("/materials", StaticFiles(directory=settings.material_root_path), name="materials")
 
 app.include_router(course_catalog_router)
+app.include_router(content_generation_router)
 app.include_router(course_enrollments_router)
 app.include_router(course_invites_router)
 app.include_router(course_management_router)
