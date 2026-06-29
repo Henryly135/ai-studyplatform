@@ -8,6 +8,8 @@ import type {
   QuizGenerationProgressEvent,
   QuizGenerationRun,
   QuizRecord,
+  EducatorQuizDraftPayload,
+  EducatorQuizDraftPreview,
   QuizQuestionDraft,
   QuizQuestionPage,
   QuizAttemptSession,
@@ -1341,6 +1343,7 @@ function normalizeQuizQuestion(q: Record<string, unknown>, qi: number): QuizQues
     questionUuid: String(q.questionUuid ?? q.question_uuid ?? ""),
     questionText: String(q.questionText ?? q.question_text ?? ""),
     explanationText: String(q.explanationText ?? q.explanation_text ?? ""),
+    sourceGrounding: String(q.sourceGrounding ?? q.source_grounding ?? ""),
     sortOrder: typeof q.sortOrder === "number" ? q.sortOrder : typeof q.sort_order === "number" ? q.sort_order : qi + 1,
     isActive: (q.isActive ?? q.is_active ?? true) as boolean,
     options: rawOptions.map((o, oi) => ({
@@ -1350,6 +1353,77 @@ function normalizeQuizQuestion(q: Record<string, unknown>, qi: number): QuizQues
       sortOrder: typeof o.sortOrder === "number" ? o.sortOrder : typeof o.sort_order === "number" ? o.sort_order : oi + 1,
       isCorrect: (o.isCorrect ?? o.is_correct ?? false) as boolean,
     })),
+  };
+}
+
+function normalizeEducatorQuizDraftPreview(payload: unknown): EducatorQuizDraftPreview {
+  const data = (payload ?? {}) as Record<string, unknown>;
+  const rawCandidateSet = (data.candidateSet ?? data.candidate_set ?? {}) as Record<string, unknown>;
+  const rawQuestions = Array.isArray(rawCandidateSet.questions)
+    ? (rawCandidateSet.questions as Record<string, unknown>[])
+    : [];
+  const questions = rawQuestions.map((q, index) => normalizeQuizQuestion(q, index));
+  const candidateQuestionCount =
+    typeof rawCandidateSet.questionCount === "number"
+      ? rawCandidateSet.questionCount
+      : typeof rawCandidateSet.question_count === "number"
+        ? rawCandidateSet.question_count
+        : questions.length;
+
+  return {
+    title: String(data.title ?? ""),
+    questionCount:
+      typeof data.questionCount === "number"
+        ? data.questionCount
+        : typeof data.question_count === "number"
+          ? data.question_count
+          : candidateQuestionCount,
+    difficulty: (data.difficulty as EducatorQuizDraftPreview["difficulty"]) ?? "mixed",
+    questionTypes: Array.isArray(data.questionTypes)
+      ? (data.questionTypes as EducatorQuizDraftPreview["questionTypes"])
+      : Array.isArray(data.question_types)
+        ? (data.question_types as EducatorQuizDraftPreview["questionTypes"])
+        : ["multiple_choice"],
+    replaceExistingQuestions:
+      typeof data.replaceExistingQuestions === "boolean"
+        ? data.replaceExistingQuestions
+        : typeof data.replace_existing_questions === "boolean"
+          ? data.replace_existing_questions
+          : true,
+    timeLimitSeconds:
+      typeof data.timeLimitSeconds === "number"
+        ? data.timeLimitSeconds
+        : typeof data.time_limit_seconds === "number"
+          ? data.time_limit_seconds
+          : null,
+    shuffleQuestions:
+      typeof data.shuffleQuestions === "boolean"
+        ? data.shuffleQuestions
+        : typeof data.shuffle_questions === "boolean"
+          ? data.shuffle_questions
+          : true,
+    shuffleOptions:
+      typeof data.shuffleOptions === "boolean"
+        ? data.shuffleOptions
+        : typeof data.shuffle_options === "boolean"
+          ? data.shuffle_options
+          : false,
+    retrievalUsed:
+      typeof data.retrievalUsed === "boolean"
+        ? data.retrievalUsed
+        : typeof data.retrieval_used === "boolean"
+          ? data.retrieval_used
+          : false,
+    sourceChunkCount:
+      typeof data.sourceChunkCount === "number"
+        ? data.sourceChunkCount
+        : typeof data.source_chunk_count === "number"
+          ? data.source_chunk_count
+          : 0,
+    candidateSet: {
+      questionCount: candidateQuestionCount,
+      questions,
+    },
   };
 }
 
@@ -1465,6 +1539,7 @@ export async function upsertQuiz(
           questionUuid: q.questionUuid || null,
           questionText: q.questionText.trim(),
           explanationText: q.explanationText.trim() || null,
+          sourceGrounding: q.sourceGrounding.trim() || null,
           sortOrder: q.sortOrder,
           isActive: q.isActive,
           options: q.options.map((o) => ({
@@ -1516,6 +1591,96 @@ export async function publishQuiz(
 
   if (!response.ok) {
     throw new Error(extractErrorMessage(parsedPayload, "Failed to update quiz status."));
+  }
+
+  return normalizeQuiz(parsedPayload);
+}
+
+export async function generateEducatorQuizDraftPreview(
+  courseUuid: string,
+  moduleUuid: string,
+  payload: EducatorQuizDraftPayload
+): Promise<EducatorQuizDraftPreview> {
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/quiz/management/ai-draft`,
+    {
+      method: "POST",
+      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        title: payload.title?.trim() || null,
+        questionCount: payload.questionCount,
+        difficulty: payload.difficulty,
+        questionTypes: payload.questionTypes,
+        learningObjectives: payload.learningObjectives.map((objective) => objective.trim()).filter(Boolean),
+        materialScope: payload.materialScope?.trim() || null,
+        additionalInstructions: payload.additionalInstructions?.trim() || null,
+        replaceExistingQuestions: payload.replaceExistingQuestions,
+        timeLimitSeconds: payload.timeLimitSeconds || null,
+        shuffleQuestions: payload.shuffleQuestions,
+        shuffleOptions: payload.shuffleOptions,
+      }),
+    }
+  );
+
+  const text = await response.text();
+  const parsedPayload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, parsedPayload);
+
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(parsedPayload, "Failed to generate quiz draft."));
+  }
+
+  return normalizeEducatorQuizDraftPreview(parsedPayload);
+}
+
+export async function acceptEducatorQuizDraft(
+  courseUuid: string,
+  moduleUuid: string,
+  preview: EducatorQuizDraftPreview,
+  options?: { includeQuestions?: boolean }
+): Promise<QuizRecord> {
+  const params = new URLSearchParams();
+  if (options?.includeQuestions === false) {
+    params.set("include_questions", "false");
+  }
+  const queryString = params.toString();
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/quiz/management/ai-draft/accept${queryString ? `?${queryString}` : ""}`,
+    {
+      method: "POST",
+      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        title: preview.title.trim() || null,
+        replaceExistingQuestions: preview.replaceExistingQuestions,
+        timeLimitSeconds: preview.timeLimitSeconds || null,
+        shuffleQuestions: preview.shuffleQuestions,
+        shuffleOptions: preview.shuffleOptions,
+        candidateSet: {
+          questionCount: preview.candidateSet.questionCount,
+          questions: preview.candidateSet.questions.map((q, questionIndex) => ({
+            questionText: q.questionText.trim(),
+            explanationText: q.explanationText.trim() || null,
+            sourceGrounding: q.sourceGrounding.trim(),
+            sortOrder: questionIndex + 1,
+            isActive: true,
+            options: q.options.map((o, optionIndex) => ({
+              optionLabel: o.optionLabel.trim() || null,
+              optionText: o.optionText.trim(),
+              sortOrder: optionIndex + 1,
+              isCorrect: o.isCorrect,
+            })),
+          })),
+        },
+      }),
+    }
+  );
+
+  const text = await response.text();
+  const parsedPayload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, parsedPayload);
+
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(parsedPayload, "Failed to accept quiz draft."));
   }
 
   return normalizeQuiz(parsedPayload);

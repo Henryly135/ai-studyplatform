@@ -70,6 +70,7 @@ def test_validate_candidate_set_normalizes_options_and_text() -> None:
             QuizGenerationCandidateQuestion(
                 questionText="  Question?  ",
                 explanationText="  Because. ",
+                sourceGrounding="  Module notes, chunk 1. ",
                 sortOrder=2,
                 isActive=False,
                 options=[
@@ -88,6 +89,7 @@ def test_validate_candidate_set_normalizes_options_and_text() -> None:
     question = result.questions[0]
     assert question.questionText == "Question?"
     assert question.explanationText == "Because."
+    assert question.sourceGrounding == "Module notes, chunk 1."
     assert question.isActive is True
     assert [option.optionLabel for option in question.options] == ["A", "B"]
     assert [option.sortOrder for option in question.options] == [1, 2]
@@ -146,6 +148,24 @@ def test_candidate_generation_service_build_prompt_includes_plan_and_output_shap
     assert "Approved quiz plan JSON" in prompt
     assert "learner_profile_context_not_requested" in prompt
     assert "questionCount" in prompt
+    assert "sourceGrounding" in prompt
+
+
+def test_candidate_question_requires_source_grounding() -> None:
+    # Tests generated questions must include concise source grounding metadata.
+    with pytest.raises(Exception):
+        QuizGenerationCandidateQuestion.model_validate(
+            {
+                "questionText": "Question?",
+                "explanationText": "Because.",
+                "sortOrder": 1,
+                "isActive": True,
+                "options": [
+                    {"optionText": "Correct", "sortOrder": 1, "isCorrect": True},
+                    {"optionText": "Wrong", "sortOrder": 2, "isCorrect": False},
+                ],
+            }
+        )
 
 
 def test_profile_context_payload_marks_absent_or_present_profiles() -> None:

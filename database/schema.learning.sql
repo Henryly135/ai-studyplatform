@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS quiz_questions (
     quiz_id BIGINT NOT NULL,
     question_text TEXT NOT NULL,
     explanation_text TEXT NULL,
+    source_grounding TEXT NULL,
     sort_order INT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
