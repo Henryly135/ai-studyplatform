@@ -5,6 +5,7 @@ import type {
   CourseRecord,
   EducatorAnalytics,
   EducatorQuizAnalytics,
+  EducatorTeachingInsights,
   QuizGenerationProgressEvent,
   QuizGenerationRun,
   QuizRecord,
@@ -640,6 +641,25 @@ export async function getEducatorQuizAnalytics(): Promise<EducatorQuizAnalytics>
   }
 
   return payload as EducatorQuizAnalytics;
+}
+
+export async function getEducatorTeachingInsights(): Promise<EducatorTeachingInsights> {
+  const response = await fetch(`${COURSE_API_BASE_URL}/courses/me/analytics/teaching-insights`, {
+    method: "GET",
+    headers: buildAuthHeaders({
+      "Content-Type": "application/json",
+    }),
+  });
+
+  const text = await response.text();
+  const payload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, payload);
+
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(payload, "Failed to load teaching insights."));
+  }
+
+  return payload as EducatorTeachingInsights;
 }
 
 export async function getManagedCourseEnrollments(

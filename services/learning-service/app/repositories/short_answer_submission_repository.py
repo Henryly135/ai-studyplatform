@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.models.short_answer_submissions import ShortAnswerSubmission, ShortAnswerSubmissionStatus
@@ -29,6 +29,41 @@ class ShortAnswerSubmissionRepository:
             .order_by(ShortAnswerSubmission.updated_at.desc(), ShortAnswerSubmission.short_answer_submission_id.desc())
         )
         return list(self.session.scalars(stmt))
+
+    def aggregate_stats_by_assessment_ids(self, assessment_ids: list[int]) -> list[dict]:
+        if not assessment_ids:
+            return []
+        stmt = (
+            select(
+                ShortAnswerSubmission.assessment_id,
+                func.count(ShortAnswerSubmission.short_answer_submission_id).label("submission_count"),
+                func.avg(ShortAnswerSubmission.ai_score_suggestion).label("avg_ai_score"),
+                func.avg(ShortAnswerSubmission.final_score).label("avg_final_score"),
+                func.count(
+                    case(
+                        (
+                            ShortAnswerSubmission.status != ShortAnswerSubmissionStatus.REVIEWED,
+                            ShortAnswerSubmission.short_answer_submission_id,
+                        ),
+                        else_=None,
+                    )
+                ).label("pending_review_count"),
+            )
+            .where(ShortAnswerSubmission.assessment_id.in_(assessment_ids))
+            .group_by(ShortAnswerSubmission.assessment_id)
+        )
+
+        rows = self.session.execute(stmt).all()
+        return [
+            {
+                "assessment_id": row.assessment_id,
+                "submission_count": row.submission_count or 0,
+                "avg_ai_score": float(row.avg_ai_score) if row.avg_ai_score is not None else None,
+                "avg_final_score": float(row.avg_final_score) if row.avg_final_score is not None else None,
+                "pending_review_count": row.pending_review_count or 0,
+            }
+            for row in rows
+        ]
 
     def list_by_assessment_and_learner(self, assessment_id: int, learner_id: int) -> list[ShortAnswerSubmission]:
         stmt = (

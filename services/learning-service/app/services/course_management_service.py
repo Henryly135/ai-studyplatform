@@ -1,14 +1,19 @@
+from collections import defaultdict
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+
 from fastapi import UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.time import now_local
-from app.core.uuid_codec import decode_course_uuid, decode_module_uuid, encode_course_uuid, encode_module_uuid
+from app.core.uuid_codec import decode_course_uuid, decode_module_uuid, encode_course_uuid, encode_module_uuid, encode_user_uuid
 from app.models.courses import Course, CourseStatus, DifficultyLevelStatus
 from app.models.modules import ModuleStatus
 from app.models.quizzes import QuizStatus
 from app.repositories.course_repository import CourseRepository
 from app.repositories.learning_path_repository import LearningPathRepository
 from app.repositories.module_material_repository import ModuleMaterialRepository
+from app.repositories.module_progress_repository import ModuleProgressRepository
 from app.repositories.module_repository import ModuleRepository
 from app.repositories.module_repository import _UNSET
 from app.repositories.quiz_question_option_repository import QuizQuestionOptionRepository
@@ -16,7 +21,12 @@ from app.repositories.quiz_question_repository import QuizQuestionRepository
 from app.repositories.quiz_repository import QuizRepository
 from app.repositories.course_enrollment_repository import CourseEnrollmentRepository
 from app.repositories.quiz_attempt_repository import QuizAttemptRepository
+from app.repositories.short_answer_assessment_repository import ShortAnswerAssessmentRepository
+from app.repositories.short_answer_submission_repository import ShortAnswerSubmissionRepository
 from app.schemas.course import (
+    AssessmentSignalInsightItem,
+    AtRiskLearnerInsightItem,
+    CompletionTrendInsightItem,
     CourseCreateRequest,
     CourseDetailResponse,
     CoursePublishRequest,
@@ -24,6 +34,8 @@ from app.schemas.course import (
     EducatorAnalyticsResponse,
     EducatorCourseAnalyticsItem,
     EducatorQuizAnalyticsResponse,
+    EducatorTeachingInsightsResponse,
+    ModuleBottleneckInsightItem,
     QuizModuleStatsItem,
 )
 from app.services.ai_index_job_client import AIIndexJobClient
@@ -41,6 +53,7 @@ class CourseManagementService:
         self.learning_paths = LearningPathRepository(session)
         self.modules = ModuleRepository(session)
         self.materials = ModuleMaterialRepository(session)
+        self.module_progress = ModuleProgressRepository(session)
         self.ai_index_jobs = AIIndexJobClient()
         self.catalog = CourseCatalogService(session)
         self.enrollment_aggregates = CourseEnrollmentAggregateService(session)
@@ -51,6 +64,8 @@ class CourseManagementService:
         self.quizzes = QuizRepository(session)
         self.quiz_questions = QuizQuestionRepository(session)
         self.quiz_options = QuizQuestionOptionRepository(session)
+        self.short_answer_assessments = ShortAnswerAssessmentRepository(session)
+        self.short_answer_submissions = ShortAnswerSubmissionRepository(session)
 
     def create_course(
         self,
@@ -409,6 +424,214 @@ class CourseManagementService:
         ]
         return EducatorQuizAnalyticsResponse(items=items)
 
+    def get_educator_teaching_insights(self, *, current_user: dict) -> EducatorTeachingInsightsResponse:
+        educator_id = current_user.get("id")
+        if not isinstance(educator_id, int):
+            raise invalid_identity_response_error()
+
+        courses = self.courses.list_by_educator(educator_id)
+        if not courses:
+            return EducatorTeachingInsightsResponse(
+                moduleBottlenecks=[],
+                atRiskLearners=[],
+                completionTrends=[],
+                assessmentSignals=[],
+            )
+
+        quiz_rows_by_module = {
+            row["module_id"]: row
+            for row in self.quiz_attempts.aggregate_stats_by_educator(educator_id=educator_id)
+        }
+        module_bottlenecks: list[ModuleBottleneckInsightItem] = []
+        at_risk_learners: list[AtRiskLearnerInsightItem] = []
+        assessment_signals: list[AssessmentSignalInsightItem] = []
+        completion_counts: dict[tuple[int, date], int] = defaultdict(int)
+        course_titles: dict[int, str] = {}
+
+        for course in courses:
+            course_titles[course.course_id] = course.title
+            learning_path = self.learning_paths.get_by_course_id(course.course_id)
+            modules = self.modules.list_by_learning_path(learning_path.learning_path_id) if learning_path else []
+            enrollments = self.enrollments.list_current_by_course(course.course_id)
+            module_ids = [module.module_id for module in modules]
+            current_learner_ids = [int(enrollment.learner_id) for enrollment in enrollments]
+            progress_rows = self.module_progress.list_by_module_ids(
+                module_ids,
+                learner_ids=current_learner_ids,
+            )
+            module_stats = {
+                row["module_id"]: row
+                for row in self.module_progress.aggregate_stats_by_module_ids(
+                    module_ids,
+                    learner_ids=current_learner_ids,
+                )
+            }
+            assessments = self.short_answer_assessments.list_by_module_ids(module_ids)
+            assessment_by_module = {assessment.module_id: assessment for assessment in assessments}
+            short_answer_stats = {
+                row["assessment_id"]: row
+                for row in self.short_answer_submissions.aggregate_stats_by_assessment_ids(
+                    [assessment.short_answer_assessment_id for assessment in assessments]
+                )
+            }
+
+            enrolled_count = len(enrollments)
+            course_uuid = encode_course_uuid(course.course_id)
+
+            for module in modules:
+                stats = module_stats.get(module.module_id, {})
+                started_count = int(stats.get("started_count") or 0)
+                completed_count = int(stats.get("completed_count") or 0)
+                avg_progress_percent = stats.get("avg_progress_percent")
+                completion_rate = completed_count / enrolled_count if enrolled_count else None
+                bottleneck_signals: list[str] = []
+                if enrolled_count == 0:
+                    bottleneck_signals.append("no_enrollments")
+                elif started_count == 0:
+                    bottleneck_signals.append("no_activity")
+                if completion_rate is not None and completion_rate < 0.5:
+                    bottleneck_signals.append("low_completion")
+                if avg_progress_percent is not None and avg_progress_percent < 35:
+                    bottleneck_signals.append("low_progress")
+
+                module_bottlenecks.append(
+                    ModuleBottleneckInsightItem(
+                        courseUuid=course_uuid,
+                        courseTitle=course.title,
+                        moduleUuid=encode_module_uuid(module.module_id),
+                        moduleTitle=module.title,
+                        enrolledLearnerCount=enrolled_count,
+                        startedLearnerCount=started_count,
+                        completedLearnerCount=completed_count,
+                        completionRate=completion_rate,
+                        avgProgressPercent=avg_progress_percent,
+                        signals=bottleneck_signals,
+                    )
+                )
+
+            for enrollment in enrollments:
+                total_module_count = int(getattr(enrollment, "total_module_count", 0) or len(modules))
+                completed_module_count = int(getattr(enrollment, "completed_module_count", 0) or 0)
+                incomplete_module_count = max(0, total_module_count - completed_module_count)
+                progress_percent = self._to_float(getattr(enrollment, "progress_percent", 0)) or 0.0
+                risk_reasons: list[str] = []
+                if progress_percent < 35:
+                    risk_reasons.append("low_progress")
+                last_accessed_at = getattr(enrollment, "last_accessed_at", None)
+                if last_accessed_at is None:
+                    risk_reasons.append("no_recent_activity")
+                elif self._is_older_than(last_accessed_at, days=14):
+                    risk_reasons.append("inactive_14_days")
+                incomplete_threshold = max(2, (total_module_count + 1) // 2) if total_module_count else 0
+                if incomplete_threshold and incomplete_module_count >= incomplete_threshold:
+                    risk_reasons.append("many_incomplete_modules")
+
+                if risk_reasons:
+                    learner_id = int(enrollment.learner_id)
+                    at_risk_learners.append(
+                        AtRiskLearnerInsightItem(
+                            courseUuid=course_uuid,
+                            courseTitle=course.title,
+                            learnerId=learner_id,
+                            learnerUuid=encode_user_uuid(learner_id),
+                            progressPercent=progress_percent,
+                            completedModuleCount=completed_module_count,
+                            totalModuleCount=total_module_count,
+                            incompleteModuleCount=incomplete_module_count,
+                            lastAccessedAt=last_accessed_at,
+                            riskReasons=risk_reasons,
+                        )
+                    )
+
+            for progress in progress_rows:
+                if progress.completed_at is not None:
+                    completion_counts[(course.course_id, progress.completed_at.date())] += 1
+
+            for module in modules:
+                quiz_row = quiz_rows_by_module.get(module.module_id)
+                assessment = assessment_by_module.get(module.module_id)
+                if quiz_row is None and assessment is None:
+                    continue
+
+                short_stats = short_answer_stats.get(
+                    assessment.short_answer_assessment_id if assessment is not None else -1,
+                    {},
+                )
+                quiz_attempt_count = int(quiz_row["total_attempts"]) if quiz_row else 0
+                quiz_avg_score = quiz_row.get("avg_score_percent") if quiz_row else None
+                quiz_pass_rate = quiz_row.get("pass_rate") if quiz_row else None
+                short_answer_submission_count = int(short_stats.get("submission_count") or 0)
+                short_answer_pending_count = int(short_stats.get("pending_review_count") or 0)
+                short_answer_avg_ai_score = short_stats.get("avg_ai_score")
+                short_answer_avg_final_score = short_stats.get("avg_final_score")
+                short_answer_max_score = self._to_float(assessment.max_score) if assessment is not None else None
+                signal_codes: list[str] = []
+
+                if quiz_row is not None:
+                    if quiz_attempt_count == 0 and enrolled_count > 0:
+                        signal_codes.append("quiz_no_attempts")
+                    if quiz_attempt_count > 0 and quiz_pass_rate is not None and quiz_pass_rate < 0.6:
+                        signal_codes.append("low_quiz_pass_rate")
+                    if quiz_attempt_count > 0 and quiz_avg_score is not None and quiz_avg_score < 60:
+                        signal_codes.append("low_quiz_avg_score")
+                if short_answer_pending_count > 0:
+                    signal_codes.append("short_answer_pending_review")
+                score_for_signal = (
+                    short_answer_avg_final_score
+                    if short_answer_avg_final_score is not None
+                    else short_answer_avg_ai_score
+                )
+                if (
+                    score_for_signal is not None
+                    and short_answer_max_score is not None
+                    and short_answer_max_score > 0
+                    and (score_for_signal / short_answer_max_score) < 0.6
+                ):
+                    signal_codes.append("low_short_answer_score")
+
+                assessment_signals.append(
+                    AssessmentSignalInsightItem(
+                        courseUuid=course_uuid,
+                        courseTitle=course.title,
+                        moduleUuid=encode_module_uuid(module.module_id),
+                        moduleTitle=module.title,
+                        quizTitle=quiz_row.get("quiz_title") if quiz_row else None,
+                        quizAttemptCount=quiz_attempt_count,
+                        quizAvgScorePercent=quiz_avg_score,
+                        quizPassRate=quiz_pass_rate,
+                        shortAnswerTitle=assessment.title if assessment is not None else None,
+                        shortAnswerSubmissionCount=short_answer_submission_count,
+                        shortAnswerAvgAiScore=short_answer_avg_ai_score,
+                        shortAnswerAvgFinalScore=short_answer_avg_final_score,
+                        shortAnswerMaxScore=short_answer_max_score,
+                        shortAnswerPendingReviewCount=short_answer_pending_count,
+                        signals=signal_codes,
+                    )
+                )
+
+        completion_trends = [
+            CompletionTrendInsightItem(
+                courseUuid=encode_course_uuid(course_id),
+                courseTitle=course_titles[course_id],
+                bucketDate=bucket_date,
+                completedCount=count,
+            )
+            for (course_id, bucket_date), count in sorted(
+                completion_counts.items(),
+                key=lambda item: (item[0][1], item[0][0]),
+            )
+        ]
+
+        at_risk_learners.sort(key=lambda item: (item.progressPercent, item.courseTitle, item.learnerId))
+        assessment_signals.sort(key=lambda item: (item.courseTitle, item.moduleTitle))
+
+        return EducatorTeachingInsightsResponse(
+            moduleBottlenecks=module_bottlenecks,
+            atRiskLearners=at_risk_learners,
+            completionTrends=completion_trends,
+            assessmentSignals=assessment_signals,
+        )
+
     def _normalize_optional_text(self, value: str | None) -> str | None:
         if value is None:
             return None
@@ -420,3 +643,17 @@ class CourseManagementService:
         if not normalized:
             raise invalid_request_error(f"Course {field_name} is required")
         return normalized
+
+    def _to_float(self, value: Decimal | float | int | None) -> float | None:
+        if value is None:
+            return None
+        return float(value)
+
+    def _is_older_than(self, value: datetime, *, days: int) -> bool:
+        current = now_local()
+        compared = value
+        if compared.tzinfo is None and current.tzinfo is not None:
+            current = current.replace(tzinfo=None)
+        if compared.tzinfo is not None and current.tzinfo is None:
+            compared = compared.replace(tzinfo=None)
+        return compared < current - timedelta(days=days)

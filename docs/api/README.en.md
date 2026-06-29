@@ -43,7 +43,7 @@ Main capabilities:
 - AI-generated quiz context lookup, generated-question persistence, and educator draft preview/acceptance.
 - Short-answer assessment: educator rubrics, learner submissions, AI suggested feedback, and educator review.
 - Learner Study Planner generation, lookup, adjustment, and regeneration.
-- Educator course and quiz analytics.
+- Educator course, quiz, and teaching-insight analytics.
 
 Learner Study Planner:
 
@@ -72,6 +72,14 @@ Short-Answer Assessment:
 - `POST /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer/submissions`: learner submits an answer; before persistence, `learning-service` calls internal `ai-service` for suggested score, feedback, strengths, and improvements.
 
 Learner endpoints require learner identity, course enrollment, and module unlock. Educator management endpoints require module update permission. AI feedback is advisory until the educator review endpoint confirms final score and visible feedback.
+
+Educator Learning Analytics:
+
+- `GET /api/learning/courses/me/analytics`: educator reads enrollment aggregates for owned courses, including course count, total enrollments, active enrollments, completed enrollments, and average progress.
+- `GET /api/learning/courses/me/analytics/quiz`: educator reads per-module quiz attempt count, unique learners, average score, pass rate, and average duration across owned courses.
+- `GET /api/learning/courses/me/analytics/teaching-insights`: educator reads teaching-insight aggregates scoped to courses they own. The response includes `moduleBottlenecks` (module enrolled/started/completed/completionRate/avgProgressPercent plus bottleneck signals), `atRiskLearners` (learners with low progress, stale access, or many incomplete modules), `completionTrends` (module completions grouped by date), and `assessmentSignals` (low quiz pass rate/average score plus short-answer AI/final average score and pending review counts).
+
+These analytics endpoints require educator course-management permissions. Aggregation is computed in `learning-service` from enrollments, module progress, quiz attempts, and short-answer submissions; it does not call `ai-service`.
 
 Key files:
 

@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.module_progress import ModuleProgress, ProgressStatus
@@ -37,6 +37,57 @@ class ModuleProgressRepository:
             .order_by(ModuleProgress.updated_at.desc(), ModuleProgress.module_progress_id.desc())
         )
         return list(self.session.scalars(stmt))
+
+    def list_by_module_ids(self, module_ids: list[int], *, learner_ids: list[int] | None = None) -> list[ModuleProgress]:
+        """Used by educator analytics services to list progress records for a set of modules."""
+        if not module_ids:
+            return []
+        if learner_ids is not None and not learner_ids:
+            return []
+        stmt = (
+            select(ModuleProgress)
+            .where(ModuleProgress.module_id.in_(module_ids))
+            .order_by(ModuleProgress.updated_at.desc(), ModuleProgress.module_progress_id.desc())
+        )
+        if learner_ids is not None:
+            stmt = stmt.where(ModuleProgress.learner_id.in_(learner_ids))
+        return list(self.session.scalars(stmt))
+
+    def aggregate_stats_by_module_ids(self, module_ids: list[int], *, learner_ids: list[int] | None = None) -> list[dict]:
+        """Used by educator analytics to aggregate learner progress at module grain."""
+        if not module_ids:
+            return []
+        if learner_ids is not None and not learner_ids:
+            return []
+        started_condition = or_(
+            ModuleProgress.progress_status != ProgressStatus.NOT_STARTED,
+            ModuleProgress.progress_percent > 0,
+        )
+        stmt = (
+            select(
+                ModuleProgress.module_id,
+                func.count(case((started_condition, ModuleProgress.module_progress_id), else_=None)).label("started_count"),
+                func.count(
+                    case((ModuleProgress.progress_status == ProgressStatus.COMPLETED, ModuleProgress.module_progress_id), else_=None)
+                ).label("completed_count"),
+                func.avg(ModuleProgress.progress_percent).label("avg_progress_percent"),
+            )
+            .where(ModuleProgress.module_id.in_(module_ids))
+            .group_by(ModuleProgress.module_id)
+        )
+        if learner_ids is not None:
+            stmt = stmt.where(ModuleProgress.learner_id.in_(learner_ids))
+
+        rows = self.session.execute(stmt).all()
+        return [
+            {
+                "module_id": row.module_id,
+                "started_count": row.started_count or 0,
+                "completed_count": row.completed_count or 0,
+                "avg_progress_percent": float(row.avg_progress_percent) if row.avg_progress_percent is not None else None,
+            }
+            for row in rows
+        ]
 
     def list_by_learner(self, learner_id: int) -> list[ModuleProgress]:
         """Used by learner progress services to list all module progress records for a learner."""

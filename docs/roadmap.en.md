@@ -110,21 +110,30 @@ Future enhancements:
 - Feed short-answer data into analytics and learner profiles.
 - Support multi-question short-answer assignments, rubric-dimension scoring, and batch review.
 
-## Phase 5: Educator Analytics
+## Phase 5: Educator Analytics (Implemented)
 
 Goal: turn the dashboard into a teaching decision tool.
 
-Implementation direction:
+Current completed scope:
 
-- Add course, module, quiz, short-answer, engagement, and learner-profile dimensions.
-- Show module bottlenecks, weak questions, at-risk learners, completion trends, and mastery signals.
-- Support filters for course, module, time range, and learner status.
-- Preserve educator/admin permission boundaries.
+- Existing educator endpoints provide course enrollment aggregates and quiz module statistics.
+- Added a `teaching-insights` aggregate endpoint scoped to courses owned by the current educator, covering module bottlenecks, at-risk learners, completion trends, and assessment signals.
+- Module bottlenecks are derived from enrollment count, started/completed count, completion rate, and average progress, with low-completion and no-activity signals.
+- At-risk learners are flagged from low progress, stale access, and many incomplete modules.
+- Assessment signals combine low quiz pass rate/average score with short-answer AI/final average score and pending review counts.
+- The frontend Analytics page now shows course overview, quiz performance, at-risk learners, module bottlenecks, assessment signals, and completion trends.
+- Aggregation uses existing `learning-service` enrollment, module progress, quiz attempt, and short-answer submission tables, without calling AI.
 
 Acceptance:
 
 - Educators can identify learners needing help and high-risk modules.
 - Dashboard data matches backend aggregates.
+
+Future enhancements:
+
+- Add filters for course, module, time range, and learner status.
+- Add finer-grained weak-question, rubric-dimension, and learner-profile mastery signals.
+- Add trend charts, export, and proactive alerts.
 
 ## Phase 6: Educator AI Content Generation
 

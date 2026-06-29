@@ -10,6 +10,8 @@ from app.models.module_materials import MaterialType
 from app.models.module_progress import ProgressStatus
 from app.models.modules import ModuleStatus
 from app.models.quizzes import QuizStatus
+from app.models.short_answer_assessments import ShortAnswerAssessmentStatus
+from app.models.short_answer_submissions import ShortAnswerSubmissionStatus
 from app.repositories.course_enrollment_audit_log_repository import CourseEnrollmentAuditLogRepository
 from app.repositories.course_enrollment_repository import CourseEnrollmentRepository
 from app.repositories.course_invite_token_repository import CourseInviteTokenRepository
@@ -25,6 +27,8 @@ from app.repositories.quiz_attempt_repository import QuizAttemptRepository
 from app.repositories.quiz_question_option_repository import QuizQuestionOptionRepository
 from app.repositories.quiz_question_repository import QuizQuestionRepository
 from app.repositories.quiz_repository import QuizRepository
+from app.repositories.short_answer_assessment_repository import ShortAnswerAssessmentRepository
+from app.repositories.short_answer_submission_repository import ShortAnswerSubmissionRepository
 
 
 class FakeSession:
@@ -214,6 +218,12 @@ def test_progress_enrollment_invite_and_audit_repositories_cover_workflows():
         completed_enrollments=1,
         avg_progress_percent=Decimal("50.00"),
     )
+    module_stats_row = SimpleNamespace(
+        module_id=20,
+        started_count=1,
+        completed_count=1,
+        avg_progress_percent=Decimal("75.00"),
+    )
     session = FakeSession(scalar_result=enrollment, scalars_result=[progress], execute_result=[row], get_result=progress)
     progress_repo = ModuleProgressRepository(session)
     enrollment_repo = CourseEnrollmentRepository(session)
@@ -223,8 +233,13 @@ def test_progress_enrollment_invite_and_audit_repositories_cover_workflows():
     assert progress_repo.get_by_id(1) is progress
     assert progress_repo.get_by_module_and_learner(20, 7) is enrollment
     assert progress_repo.list_by_module(20) == [progress]
+    assert progress_repo.list_by_module_ids([20]) == [progress]
+    assert progress_repo.list_by_module_ids([]) == []
     assert progress_repo.list_by_learner(7) == [progress]
     assert progress_repo.list_completed_by_learner(7) == [progress]
+    session.execute_result = [module_stats_row]
+    assert progress_repo.aggregate_stats_by_module_ids([20])[0]["avg_progress_percent"] == 75.0
+    assert progress_repo.aggregate_stats_by_module_ids([]) == []
     created_progress = progress_repo.create(module_id=20, learner_id=7)
     progress_repo.update_progress(
         created_progress,
@@ -247,6 +262,7 @@ def test_progress_enrollment_invite_and_audit_repositories_cover_workflows():
     enrollment_repo.update_progress(created_enrollment, progress_percent=Decimal("50.00"), completed_module_count=1, total_module_count=2)
     enrollment_repo.update_status(created_enrollment, enrollment_status=EnrollmentStatus.COMPLETED, completed_at=now)
     enrollment_repo.touch_last_accessed(created_enrollment, now)
+    session.execute_result = [row]
     assert enrollment_repo.aggregate_stats_by_educator(educator_id=9)[0]["avg_progress_percent"] == 50.0
     enrollment_repo.delete(created_enrollment)
 
@@ -370,3 +386,83 @@ def test_quiz_repositories_cover_authoring_attempt_and_answer_paths():
         option_texts_snapshot_json=[{"id": 3, "text": "A"}],
     )
     assert created_answer.correct_option_id_snapshot == 3
+
+
+def test_short_answer_repositories_cover_assessment_and_submission_analytics():
+    # Tests short-answer repository helpers used by educator teaching insights.
+    now = datetime(2024, 1, 1, 12, 0, 0)
+    assessment = SimpleNamespace(
+        short_answer_assessment_id=10,
+        assessment_uuid="assessment-uuid",
+        module_id=20,
+        title="Short answer",
+        prompt_text="Explain it.",
+        rubric_text="Clear rubric.",
+        max_score=Decimal("10.00"),
+        status=ShortAnswerAssessmentStatus.DRAFT,
+        published_at=None,
+    )
+    aggregate_row = SimpleNamespace(
+        assessment_id=10,
+        submission_count=2,
+        avg_ai_score=Decimal("6.50"),
+        avg_final_score=Decimal("8.00"),
+        pending_review_count=1,
+    )
+    session = FakeSession(
+        scalar_result=assessment,
+        scalars_result=[assessment],
+        execute_result=[aggregate_row],
+        get_result=assessment,
+    )
+    assessments = ShortAnswerAssessmentRepository(session)
+    submissions = ShortAnswerSubmissionRepository(session)
+
+    assert assessments.get_by_id(10) is assessment
+    assert assessments.get_by_uuid("assessment-uuid") is assessment
+    assert assessments.get_by_module_id(20) is assessment
+    assert assessments.list_by_module_ids([20]) == [assessment]
+    assert assessments.list_by_module_ids([]) == []
+    created_assessment = assessments.create(
+        module_id=20,
+        title="Created",
+        prompt_text="Prompt",
+        rubric_text="Rubric",
+        max_score=Decimal("10.00"),
+        status=ShortAnswerAssessmentStatus.DRAFT,
+        created_by=9,
+        updated_by=9,
+        published_at=None,
+    )
+    assessments.update(created_assessment, status=ShortAnswerAssessmentStatus.PUBLISHED, published_at=now)
+
+    assert submissions.get_by_id(11) is assessment
+    assert submissions.get_by_uuid("submission-uuid") is assessment
+    assert submissions.list_by_assessment(10) == [assessment]
+    assert submissions.list_by_assessment_and_learner(10, 7) == [assessment]
+    assert submissions.get_latest_by_assessment_and_learner(10, 7) is assessment
+    assert submissions.aggregate_stats_by_assessment_ids([10])[0]["pending_review_count"] == 1
+    assert submissions.aggregate_stats_by_assessment_ids([]) == []
+    created_submission = submissions.create(
+        assessment_id=10,
+        learner_id=7,
+        answer_text="Answer",
+        ai_score_suggestion=Decimal("6.00"),
+        ai_feedback_text="Feedback",
+        ai_strengths_json=["Clear"],
+        ai_improvements_json=["More detail"],
+        ai_provider_name="test",
+        ai_provider_model="stub",
+        status=ShortAnswerSubmissionStatus.AI_SUGGESTED,
+    )
+    submissions.update_review(
+        created_submission,
+        final_score=Decimal("7.00"),
+        final_feedback_text="Final",
+        review_notes=None,
+        reviewer_id=9,
+        reviewed_at=now,
+    )
+
+    assert created_assessment.status == ShortAnswerAssessmentStatus.PUBLISHED
+    assert created_submission.status == ShortAnswerSubmissionStatus.REVIEWED
