@@ -67,10 +67,13 @@ COMPOSE_PROJECT_NAME=ai-studyplatform
 CI workflow：
 
 - 前端 `npm ci`、lint、build。
-- Python 后端服务测试。
-- Docker image build。
+- `packages/platform_common` 测试。
 - Compose config 校验。
-- Redis、MinIO 和 nginx 网关基础验证。
+- 完整 Docker Compose 栈启动。
+- nginx 网关基础验证。
+- identity、communication、learning、ai 四个后端服务完整 `pytest tests -q`。
+
+CI 使用 `scripts/create-ci-env.sh` 生成安全占位 `.env.ci`，不依赖真实 Gemini、SMTP 或生产密钥。后续新功能测试只要放入对应服务 `tests/` 目录，就会被 CI 自动执行。
 
 部署 workflow：
 

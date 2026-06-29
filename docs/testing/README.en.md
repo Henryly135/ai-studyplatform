@@ -1,8 +1,36 @@
 # Testing Guide
 
-Testing is organized into backend pytest, frontend lint/build, Docker Compose validation, and manual API flow checks.
+Testing is organized into backend pytest, frontend lint/build, Docker Compose validation, GitHub Actions CI, and manual API flow checks.
 
 中文版本: [README.md](README.md)
+
+## GitHub CI/CD Gate
+
+`.github/workflows/ci.yml` is the current quality gate. It runs on pushes to `main`, `feature/**`, `fix/**`, and `refactor/**`, and on pull requests targeting `main`.
+
+CI always runs:
+
+- Frontend `npm ci`, `npm run lint`, and `npm run build`.
+- `packages/platform_common/tests`.
+- Docker Compose config validation.
+- Full Docker Compose startup plus nginx gateway smoke tests.
+- Full `pytest tests -q` for all backend services: identity, communication, learning, and ai.
+
+CI uses safe placeholder configuration and does not require real Gemini, SMTP, or production secrets:
+
+```bash
+./scripts/create-ci-env.sh .env.ci
+docker compose --env-file .env.ci -f infra/docker-compose.yml config --quiet
+```
+
+## New Feature Test Convention
+
+Every new feature should add tests with the feature change:
+
+- Put backend tests in the relevant service `tests/` directory; CI collects them automatically.
+- AI feature tests must mock providers and must not depend on real external API keys.
+- Permission, error-handling, and cross-service flows should cover success and failure paths.
+- Frontend changes must at least pass lint/build; once Vitest or Playwright is introduced, put the test command in `frontend/package.json` and wire it into CI.
 
 ## Backend Tests
 
@@ -51,6 +79,13 @@ Validate compose config:
 
 ```bash
 docker compose --env-file .env.example -f infra/docker-compose.yml config
+```
+
+Validate with the CI environment:
+
+```bash
+./scripts/create-ci-env.sh .env.ci
+docker compose --env-file .env.ci -f infra/docker-compose.yml config --quiet
 ```
 
 Inspect services after startup:

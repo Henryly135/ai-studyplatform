@@ -22,22 +22,23 @@ Acceptance:
 - All health checks pass.
 - Fixes have tests or clear regression notes.
 
-## Phase 1: Testing and CI
+## Phase 1: GitHub CI/CD Test Gate
 
-Goal: create a maintainable quality baseline.
+Goal: make GitHub run the complete test suite before new feature development continues.
 
 Tasks:
 
-- Add backend tests for auth, courses, modules, materials, quizzes, forums, notifications, and AI workflows.
-- Add frontend lint/build/smoke checks for critical pages.
-- Extend GitHub Actions to cover frontend build, backend pytest, Docker Compose config, and basic health checks.
-- Document local and CI testing commands.
+- Use `.github/workflows/ci.yml` as the main quality gate.
+- Cover frontend lint/build, `platform_common` tests, Docker Compose config, full backend pytest, and nginx gateway smoke tests.
+- Generate a safe CI `.env` through `scripts/create-ci-env.sh`, without real Gemini, SMTP, or production secrets.
+- Establish the new-feature testing convention: backend tests live in each service `tests/` directory, AI tests use mocked providers, and future frontend test commands are wired through `frontend/package.json`.
 
 Acceptance:
 
-- CI runs for PRs and main.
-- Backend service tests can be run independently.
-- Docs explain how to inspect failed tests and service logs.
+- Pushes and pull requests trigger CI automatically.
+- All four backend services run full `pytest tests -q`.
+- Future test files are collected automatically by GitHub Actions.
+- Docs explain local and CI testing entry points.
 
 ## Phase 2: AI Provider Adapter and Multi-Model Support
 

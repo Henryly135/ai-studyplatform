@@ -67,10 +67,13 @@ COMPOSE_PROJECT_NAME=ai-studyplatform
 CI workflow:
 
 - Frontend `npm ci`, lint, and build.
-- Python backend service tests.
-- Docker image build.
 - Compose config validation.
-- Basic Redis, MinIO, and nginx gateway checks.
+- `packages/platform_common` tests.
+- Full Docker Compose stack startup.
+- Basic nginx gateway checks.
+- Full `pytest tests -q` for identity, communication, learning, and ai services.
+
+CI uses `scripts/create-ci-env.sh` to generate a safe placeholder `.env.ci`, so it does not require real Gemini, SMTP, or production secrets. Future feature tests are collected automatically when placed in the relevant service `tests/` directory.
 
 Deployment workflows:
 

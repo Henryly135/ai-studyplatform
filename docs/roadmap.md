@@ -22,22 +22,23 @@ English version: [roadmap.en.md](roadmap.en.md)
 - 健康检查全部通过。
 - 修复内容有对应测试或明确回归记录。
 
-## 阶段 1：测试与 CI 完善
+## 阶段 1：GitHub CI/CD 测试门禁
 
-目标：让项目具备可持续开发的质量保障。
+目标：先让 GitHub 自动跑完整测试，再进入新功能开发。
 
 任务：
 
-- 补充认证、课程、模块、材料、测验、论坛通知和 AI workflow 的后端测试。
-- 为前端增加关键页面的 lint/build/smoke 校验。
-- 扩展 GitHub Actions，覆盖前端构建、后端 pytest、Docker Compose config 和基础健康检查。
-- 统一本地测试命令和 CI 文档。
+- 将 `.github/workflows/ci.yml` 作为唯一质量门禁。
+- 覆盖前端 lint/build、`platform_common` 测试、Docker Compose config、完整后端 pytest 和 nginx gateway smoke test。
+- 使用 `scripts/create-ci-env.sh` 生成安全 CI `.env`，不依赖真实 Gemini、SMTP 或生产密钥。
+- 建立新功能测试约定：后端测试放入对应服务 `tests/` 目录，AI 测试使用 mock provider，前端测试命令统一接入 `frontend/package.json`。
 
 验收：
 
-- PR 和 main 分支触发 CI。
-- 后端核心服务测试可单独运行。
-- 文档说明如何定位失败测试和服务日志。
+- push 和 PR 会自动触发 CI。
+- 四个后端服务都会执行完整 `pytest tests -q`。
+- 后续新增测试文件能被 GitHub Actions 自动收集。
+- 文档说明本地和 CI 测试入口。
 
 ## 阶段 2：AI Provider Adapter 与多模型支持
 

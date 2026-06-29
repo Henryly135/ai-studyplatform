@@ -1,8 +1,36 @@
 # 测试指南
 
-本项目测试分为后端 pytest、前端 lint/build、Docker Compose 配置校验和手动 API 流程验证。
+本项目测试分为后端 pytest、前端 lint/build、Docker Compose 配置校验、GitHub Actions CI 和手动 API 流程验证。
 
 English version: [README.en.md](README.en.md)
+
+## GitHub CI/CD 门禁
+
+`.github/workflows/ci.yml` 是当前唯一质量门禁，push 到 `main`、`feature/**`、`fix/**`、`refactor/**`，以及 PR 到 `main` 时都会运行。
+
+CI 固定执行：
+
+- 前端 `npm ci`、`npm run lint`、`npm run build`。
+- `packages/platform_common/tests`。
+- Docker Compose 配置校验。
+- 完整 Docker Compose 栈启动和 nginx gateway smoke test。
+- 四个后端服务完整 `pytest tests -q`：identity、communication、learning、ai。
+
+CI 使用安全占位配置，不依赖真实 Gemini、SMTP 或生产密钥：
+
+```bash
+./scripts/create-ci-env.sh .env.ci
+docker compose --env-file .env.ci -f infra/docker-compose.yml config --quiet
+```
+
+## 新功能测试约定
+
+后续每个新功能都必须同步补测试：
+
+- 后端测试放在对应服务的 `tests/` 目录，CI 会自动执行。
+- AI 功能测试必须 mock provider，不能依赖真实外部 API key。
+- 涉及权限、错误处理、跨服务调用的数据流，需要覆盖成功路径和失败路径。
+- 前端变更至少通过 lint/build；引入 Vitest 或 Playwright 后，测试命令统一放入 `frontend/package.json` 并接入 CI。
 
 ## 后端测试
 
@@ -51,6 +79,13 @@ npm run build
 
 ```bash
 docker compose --env-file .env.example -f infra/docker-compose.yml config
+```
+
+使用 CI 环境校验：
+
+```bash
+./scripts/create-ci-env.sh .env.ci
+docker compose --env-file .env.ci -f infra/docker-compose.yml config --quiet
 ```
 
 启动后检查服务：
