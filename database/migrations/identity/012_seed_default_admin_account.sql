@@ -6,9 +6,9 @@ INSERT INTO users (
     email_verified
 )
 VALUES (
-    'eduplatform.aibot@gmail.com',
-    '5785264f6d90120c8f35637046e34725c7ad048547f3665392a745283d8fd528',
-    'Edu Platform Admin',
+    'admin@example.com',
+    'df88c832e9ed606645d98fac326669b3e12856e23719aabdfd7d894212ec1a0b',
+    'Demo Admin',
     'active',
     TRUE
 )
@@ -22,7 +22,7 @@ INSERT INTO user_roles (user_id, role_id)
 SELECT u.user_id, r.role_id
 FROM users u
 JOIN roles r ON r.role_code = 'admin'
-WHERE u.email = 'eduplatform.aibot@gmail.com'
+WHERE u.email = 'admin@example.com'
 ON DUPLICATE KEY UPDATE
     user_id = VALUES(user_id),
     role_id = VALUES(role_id);

@@ -61,6 +61,15 @@ copy .env.example .env
 
 `.env` 只用于本地或部署环境，不能提交到 Git。真实密钥、SMTP 密码、Gemini API Key 和数据库密码都应只写入 `.env` 或部署平台的 secret。
 
+本地 demo 默认管理员账号已经写在 `.env.example` 中，方便面试官试用后台：
+
+```text
+Email: admin@example.com
+Password: DemoAdmin123!
+```
+
+该账号只用于本地管理后台登录；注册、邮箱验证、忘记密码和教师邀请等邮件流程，应使用真实收件邮箱配合 SMTP 测试。
+
 ### 3. 修改必要配置
 
 `.env.example` 中标记 `# Have to Change` 的字段需要替换，例如：
@@ -69,11 +78,10 @@ copy .env.example .env
 SMTP_USER=your_ses_smtp_username
 SMTP_PASS=your_ses_smtp_password
 SMTP_FROM=your_email@example.com
-DEFAULT_ADMIN_EMAIL=your_email@example.com
-DEFAULT_ADMIN_PASSWORD=your-system-admin-password
-DEFAULT_ADMIN_FULL_NAME='System Admin'
 GEMINI_API_KEY=your_gemini_api_key
 ```
+
+如果部署到公网环境，请同时修改默认管理员邮箱、密码和姓名。
 
 如果本机端口冲突，可以修改 `.env` 中的外部端口，例如 `MYSQL_PORT`、`AI_DB_EXTERNAL_PORT`、`FRONTEND_PORT` 和 `NGINX_PORT`。
 

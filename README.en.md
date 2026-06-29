@@ -61,6 +61,15 @@ copy .env.example .env
 
 Do not commit `.env`. Real secrets, SMTP passwords, Gemini API keys, and database passwords must stay in `.env` or deployment secrets.
 
+The local demo admin account is included in `.env.example` so interviewers can try the admin console quickly:
+
+```text
+Email: admin@example.com
+Password: DemoAdmin123!
+```
+
+This account is only for local admin login. Registration, email verification, password reset, and educator invite flows should be tested with real recipient email addresses through SMTP.
+
 ### 3. Update Required Values
 
 Fields marked with `# Have to Change` must be replaced, for example:
@@ -69,11 +78,10 @@ Fields marked with `# Have to Change` must be replaced, for example:
 SMTP_USER=your_ses_smtp_username
 SMTP_PASS=your_ses_smtp_password
 SMTP_FROM=your_email@example.com
-DEFAULT_ADMIN_EMAIL=your_email@example.com
-DEFAULT_ADMIN_PASSWORD=your-system-admin-password
-DEFAULT_ADMIN_FULL_NAME='System Admin'
 GEMINI_API_KEY=your_gemini_api_key
 ```
+
+For public deployment, also change the default admin email, password, and name.
 
 If local ports conflict, adjust external ports such as `MYSQL_PORT`, `AI_DB_EXTERNAL_PORT`, `FRONTEND_PORT`, and `NGINX_PORT`.
 

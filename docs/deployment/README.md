@@ -15,8 +15,17 @@ cp .env.example .env
 关键规则：
 
 - `.env` 不提交。
-- `.env.example` 只保留安全占位符。
+- `.env.example` 包含本地 demo 管理员账号，其他真实密钥仍使用安全占位符。
 - 真实密钥放在本地 `.env`、服务器环境变量或 GitHub Secrets。
+
+本地 demo 管理员账号：
+
+```text
+Email: admin@example.com
+Password: DemoAdmin123!
+```
+
+该账号用于本地管理后台试用；邮件验证、忘记密码和邀请邮件应使用真实收件邮箱测试。公网部署前必须修改默认管理员账号和密码。
 
 必须配置的常见字段：
 
@@ -24,8 +33,6 @@ cp .env.example .env
 SMTP_USER=your_ses_smtp_username
 SMTP_PASS=your_ses_smtp_password
 SMTP_FROM=your_email@example.com
-DEFAULT_ADMIN_EMAIL=your_email@example.com
-DEFAULT_ADMIN_PASSWORD=your-system-admin-password
 GEMINI_API_KEY=your_gemini_api_key
 ```
 

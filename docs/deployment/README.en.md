@@ -15,8 +15,17 @@ cp .env.example .env
 Rules:
 
 - Do not commit `.env`.
-- Keep only safe placeholders in `.env.example`.
+- `.env.example` includes a local demo admin account; other real secrets remain safe placeholders.
 - Put real secrets in local `.env`, server environment variables, or GitHub Secrets.
+
+Local demo admin account:
+
+```text
+Email: admin@example.com
+Password: DemoAdmin123!
+```
+
+This account is for local admin-console testing. Email verification, password reset, and invite emails should be tested with real recipient addresses. Change the default admin account and password before any public deployment.
 
 Common required fields:
 
@@ -24,8 +33,6 @@ Common required fields:
 SMTP_USER=your_ses_smtp_username
 SMTP_PASS=your_ses_smtp_password
 SMTP_FROM=your_email@example.com
-DEFAULT_ADMIN_EMAIL=your_email@example.com
-DEFAULT_ADMIN_PASSWORD=your-system-admin-password
 GEMINI_API_KEY=your_gemini_api_key
 ```
 
