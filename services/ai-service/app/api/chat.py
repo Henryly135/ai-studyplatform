@@ -122,7 +122,11 @@ def chat(
     except Exception as exc:
         db.rollback()
         logger.exception("Unexpected error while processing authenticated chat request")
-        raise _http_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "AI_INTERNAL_ERROR", "Gemini API call failed.") from exc
+        raise _http_error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "AI_INTERNAL_ERROR",
+            "AI provider call failed.",
+        ) from exc
 
 
 @router.get("/chat/sessions", response_model=list[ChatSessionSummary])

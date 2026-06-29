@@ -13,6 +13,7 @@ from app.services.chat.ai_chat_service import (
     AIChatSessionError,
     persist_chat,
 )
+from app.services.providers import AIProviderConfigurationError, get_chat_provider
 
 
 router = APIRouter(prefix="/demo", tags=["demo"])
@@ -21,19 +22,20 @@ logger = logging.getLogger(__name__)
 
 @router.get("/health", response_model=AIHealthResponse)
 def demo_health() -> AIHealthResponse:
-    configured = bool(settings.gemini_api_key)
-    if not configured:
+    try:
+        provider = get_chat_provider(settings)
+    except AIProviderConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="GEMINI_API_KEY is not configured",
-        )
+            detail=str(exc),
+        ) from exc
 
     return AIHealthResponse(
         status="ok",
         module="ai-demo",
-        provider="gemini",
-        model=settings.ai_demo_model_name,
-        configured=configured,
+        provider=provider.provider_name,
+        model=getattr(settings, "ai_chat_model", getattr(settings, "ai_demo_model_name", "")),
+        configured=True,
     )
 
 
@@ -81,5 +83,5 @@ def demo_chat(
         logger.exception("Unexpected error while processing demo chat request")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Gemini API call failed.",
+            detail="AI provider call failed.",
         ) from exc

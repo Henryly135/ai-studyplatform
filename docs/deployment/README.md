@@ -17,7 +17,7 @@ cp .env.example .env
 - `.env` 不提交。
 - `.env.example` 包含本地 demo 管理员账号，其他真实密钥仍使用安全占位符。
 - 真实密钥放在本地 `.env`、服务器环境变量或 GitHub Secrets。
-- DeepSeek/OpenAI-compatible key 只放本地 `.env` 或部署 secret；当前阶段只做配置准备，不接入现有 AI 调用链。
+- DeepSeek/OpenAI-compatible key 只放本地 `.env` 或部署 secret；chat 可通过 provider adapter 接入，embedding 仍使用独立配置。
 
 本地 demo 管理员账号：
 
@@ -37,12 +37,12 @@ SMTP_FROM=your_email@example.com
 GEMINI_API_KEY=your_gemini_api_key
 AI_CHAT_PROVIDER=deepseek
 AI_CHAT_BASE_URL=https://api.deepseek.com
-AI_CHAT_MODEL=deepseek-v4-flash
+AI_CHAT_MODEL=deepseek-chat
 AI_CHAT_API_KEY=your_local_deepseek_key
 DEEPSEEK_API_KEY=your_local_deepseek_key
 ```
 
-`GEMINI_API_KEY` 仍是当前 Gemini 逻辑的兼容入口。`AI_CHAT_*` 和 `DEEPSEEK_API_KEY` 是后续 provider adapter 的统一配置入口，仅配置 DeepSeek key 不会自动替换当前 Gemini 调用。
+Gemini 仍是默认 chat provider，并兼容 `GEMINI_API_KEY`。DeepSeek/OpenRouter 等 OpenAI-compatible chat provider 使用 `AI_CHAT_PROVIDER`、`AI_CHAT_BASE_URL`、`AI_CHAT_MODEL` 和 `AI_CHAT_API_KEY`。Embedding provider 独立配置，目前只支持 Gemini；更换 embedding provider 需要新增 adapter 并重新索引材料。
 
 ## Docker Compose
 
