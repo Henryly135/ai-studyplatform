@@ -10,6 +10,7 @@ Testing is organized into backend pytest, frontend lint/build, Docker Compose va
 
 CI always runs:
 
+- Commit title and pull request template format checks.
 - Frontend `npm ci`, `npm run lint`, and `npm run build`.
 - `packages/platform_common/tests`.
 - Docker Compose config validation.
@@ -39,6 +40,52 @@ Every new feature should add tests with the feature change:
 - When `develop` reaches a demo-ready state, open a pull request from `develop` into `main`.
 - Pull requests into `main` must come from `develop`; other source branches are blocked by `Main PR Guard`.
 - Keep `main` as the stable branch containing only CI-verified work.
+
+## Commit and PR Format
+
+Commit titles and pull request titles use one shared format:
+
+```text
+type(scope): summary
+```
+
+Examples:
+
+```text
+feat(ai): add provider settings
+fix(auth): handle expired reset tokens
+ci(workflow): enforce commit and PR templates
+docs(testing): document PR workflow
+```
+
+Allowed `type` values:
+
+- `build`
+- `chore`
+- `ci`
+- `docs`
+- `feat`
+- `fix`
+- `perf`
+- `refactor`
+- `revert`
+- `style`
+- `test`
+
+Enable the local commit message template:
+
+```bash
+./scripts/setup-git-conventions.sh
+```
+
+Check the current commit or a specific title manually:
+
+```bash
+./scripts/check-git-conventions.sh
+./scripts/check-git-conventions.sh --subject "ci(workflow): enforce commit and PR templates"
+```
+
+CI enforces the title rule described by `.github/commit_message_template.txt` on push and pull requests. Pull requests must also keep the required sections from `.github/pull_request_template.md`: `Summary`, `Change Type`, `Tests`, and `Checklist`.
 
 ## Backend Tests
 
