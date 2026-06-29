@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   LuBell,
@@ -473,11 +473,28 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
     );
   }, [recipientUsers, recipientSearch]);
 
-  const refreshUnreadCount = async () => {
+  const refreshUnreadCount = useCallback(async () => {
     if (isAdminMode || !accessToken) return;
     const countData = await getNotificationUnreadCount(accessToken);
     setUnreadCount(countData.unreadCount);
-  };
+  }, [accessToken, isAdminMode]);
+
+  const updateRecipientItemState = useCallback(
+    (
+      notificationUuid: string,
+      updater: (item: NotificationRecipientRead) => NotificationRecipientRead
+    ) => {
+      setRecipientItems((current) =>
+        current.map((item) =>
+          item.notificationUuid === notificationUuid ? updater(item) : item
+        )
+      );
+      setSelectedRecipientDetail((current) =>
+        current && current.notificationUuid === notificationUuid ? updater(current) : current
+      );
+    },
+    []
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -515,9 +532,9 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
             return Array.from(next).sort();
           });
 
-          if (!selectedNotificationUuid && notificationsData.items.length > 0) {
-            setSelectedNotificationUuid(notificationsData.items[0].notificationUuid);
-          }
+          setSelectedNotificationUuid((current) =>
+            current || notificationsData.items[0]?.notificationUuid || current
+          );
         } else {
           const [notificationsData] = await Promise.all([
             listMyNotifications(accessToken, {
@@ -541,9 +558,9 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
             return Array.from(next).sort();
           });
 
-          if (!selectedNotificationUuid && notificationsData.items.length > 0) {
-            setSelectedNotificationUuid(notificationsData.items[0].notificationUuid);
-          }
+          setSelectedNotificationUuid((current) =>
+            current || notificationsData.items[0]?.notificationUuid || current
+          );
         }
       } catch (error) {
         if (!cancelled) {
@@ -563,7 +580,15 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [accessToken, isAdminMode, page, showHidden, typeFilter, unreadOnly]);
+  }, [
+    accessToken,
+    isAdminMode,
+    page,
+    refreshUnreadCount,
+    showHidden,
+    typeFilter,
+    unreadOnly,
+  ]);
 
   useEffect(() => {
     if (!accessToken) {
@@ -757,6 +782,8 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
     activeRecipientIsRead,
     activeRecipientNotificationUuid,
     isAdminMode,
+    refreshUnreadCount,
+    updateRecipientItemState,
   ]);
 
   useEffect(() => {
@@ -795,20 +822,6 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
     } catch {
       // Keep selection responsive even if the manual read update fails.
     }
-  };
-
-  const updateRecipientItemState = (
-    notificationUuid: string,
-    updater: (item: NotificationRecipientRead) => NotificationRecipientRead
-  ) => {
-    setRecipientItems((current) =>
-      current.map((item) =>
-        item.notificationUuid === notificationUuid ? updater(item) : item
-      )
-    );
-    setSelectedRecipientDetail((current) =>
-      current && current.notificationUuid === notificationUuid ? updater(current) : current
-    );
   };
 
   const handleMarkAllRead = async () => {

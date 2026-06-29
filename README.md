@@ -130,6 +130,24 @@ curl http://127.0.0.1:${NGINX_PORT}/api/ai/health
 - [部署与配置](docs/deployment/README.md)
 - [测试指南](docs/testing/README.md)
 
+## 面试讲解路线
+
+建议按下面顺序介绍本项目，能同时覆盖业务价值、系统设计和个人后续开发计划：
+
+1. **项目定位**：这是一个 AI 个性化学习平台，核心用户是学生、教师和管理员。
+2. **业务闭环**：教师创建课程和模块，上传材料并发布；学生报名课程、学习材料、完成测验和论坛互动；系统通过通知和进度记录连接学习过程。
+3. **AI 能力**：材料被索引到 PostgreSQL + pgvector，聊天和测验生成通过 RAG 检索课程上下文，再由 Gemini/LangChain 生成 grounded response。
+4. **微服务架构**：identity、learning、communication、ai 四个 FastAPI 服务通过 nginx 统一暴露 API，内部使用 MySQL、PostgreSQL、Redis、MinIO 和 Celery。
+5. **质量与部署**：Docker Compose 可以复现完整运行环境，GitHub Actions 覆盖前端构建、后端测试和基础设施检查。
+6. **后续开发**：优先实现学生端 Study Planner，再扩展教师端 AI 测验草稿生成、短答题评估和教师端学习分析。
+
+可重点展开的技术点：
+
+- RAG 索引链路：文件解析、chunk、embedding、向量检索、prompt grounding。
+- 学习画像更新：从测验和聊天信号中提取学习状态，用于反馈和推荐。
+- 权限与网关：JWT + RBAC + nginx 路由隔离公共 API 和内部 API。
+- 异步任务：Celery 处理材料索引、通知、AI workflow 和测验会话。
+
 ## 常用开发命令
 
 后端测试：

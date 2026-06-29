@@ -130,6 +130,24 @@ curl http://127.0.0.1:${NGINX_PORT}/api/ai/health
 - [Deployment and Configuration](docs/deployment/README.en.md)
 - [Testing Guide](docs/testing/README.en.md)
 
+## Interview Walkthrough
+
+A clear interview walkthrough can use this order:
+
+1. **Positioning**: AI Study Platform is an AI-powered personalised learning platform for learners, educators, and admins.
+2. **Business loop**: educators create courses and modules, upload materials, and publish content; learners enroll, study materials, complete quizzes, and interact through forums; notifications and progress records connect the workflow.
+3. **AI capability**: materials are indexed into PostgreSQL + pgvector; chat and quiz generation retrieve course context through RAG, then Gemini/LangChain generates grounded responses.
+4. **Microservice architecture**: identity, learning, communication, and AI services are exposed through nginx and backed by MySQL, PostgreSQL, Redis, MinIO, and Celery.
+5. **Quality and deployment**: Docker Compose reproduces the full runtime; GitHub Actions cover frontend build, backend tests, and infrastructure checks.
+6. **Next development**: build the student Study Planner first, then expand educator AI quiz drafts, short-answer assessment, and educator analytics.
+
+Technical points worth highlighting:
+
+- RAG indexing flow: file parsing, chunking, embedding, vector retrieval, and prompt grounding.
+- Learner profile updates: extracting learning signals from quizzes and chat for feedback and recommendations.
+- Permissions and gateway: JWT + RBAC + nginx route isolation for public and internal APIs.
+- Async processing: Celery handles material indexing, notifications, AI workflows, and quiz sessions.
+
 ## Common Commands
 
 Backend tests:
