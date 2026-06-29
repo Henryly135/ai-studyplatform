@@ -9,7 +9,7 @@ This repository has been cleaned and reorganised as a personal project. Chinese 
 ## Highlights
 
 - Microservice backend with separate identity, learning, communication, and AI services.
-- AI features powered by Gemini, LangChain, and pgvector: RAG chat, material indexing, quiz generation, and learner profile updates.
+- AI features powered by Gemini, DeepSeek/OpenAI-compatible adapters, LangChain, and pgvector: RAG chat, material indexing, quiz generation, short-answer review, learner profiles, study planning, and educator content drafts.
 - Learning platform core flows: authentication, email verification, RBAC, course management, modules, materials, progress, quizzes, forums, and notifications.
 - Async processing with Redis and Celery for indexing, notifications, quiz sessions, and AI workflows.
 - Reproducible local stack using Docker Compose with MySQL, PostgreSQL, Redis, MinIO, nginx, frontend, and backend services.
@@ -159,7 +159,7 @@ A clear interview walkthrough can use this order:
 3. **AI capability**: materials are indexed into PostgreSQL + pgvector; chat and quiz generation retrieve course context through RAG, then Gemini/LangChain generates grounded responses.
 4. **Microservice architecture**: identity, learning, communication, and AI services are exposed through nginx and backed by MySQL, PostgreSQL, Redis, MinIO, and Celery.
 5. **Quality and deployment**: Docker Compose reproduces the full runtime; GitHub Actions cover frontend build, backend tests, and infrastructure checks.
-6. **Next development**: build the AI Provider Adapter and Student Study Planner first, then expand educator AI quiz drafts, short-answer assessment, and educator analytics.
+6. **Completed extensions**: AI Provider Adapter, Student Study Planner, educator AI quiz drafts, short-answer assessment, educator analytics, and educator AI content drafts now form a demonstrable feature set.
 
 Technical points worth highlighting:
 
@@ -197,13 +197,17 @@ Docker config validation:
 docker compose --env-file .env.example -f infra/docker-compose.yml config
 ```
 
-## Next Development Areas
+## Current and Next Development
 
-- Educator-side AI quiz draft generation with human review.
-- AI Provider Adapter for OpenAI-compatible providers beyond Gemini.
-- Short-answer assessment beyond multiple-choice quizzes.
-- Educator analytics dashboard.
+The current personal-project version includes:
+
+- AI Provider Adapter for Gemini and DeepSeek/OpenAI-compatible chat providers.
 - Student personalised Study Planner.
-- Stronger AI grounding, source citation, and structured-output validation.
+- Educator-side AI quiz draft generation with human review.
+- Short-answer assessment, AI suggested feedback, and educator review.
+- Educator analytics dashboard.
+- Educator AI content draft generation, editing, and saving.
+
+Next enhancements focus on stronger AI grounding, source citation, structured-output validation, embedding provider expansion, and production-grade observability.
 
 See [docs/roadmap.en.md](docs/roadmap.en.md) for details.

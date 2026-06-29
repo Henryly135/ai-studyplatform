@@ -9,7 +9,7 @@ English version: [README.en.md](README.en.md)
 ## 项目亮点
 
 - 微服务后端：`identity-service`、`learning-service`、`communication-service`、`ai-service` 分离职责。
-- AI 能力：基于 Gemini、LangChain、pgvector 的 RAG 聊天、材料索引、测验生成和学习画像更新。
+- AI 能力：基于 Gemini、DeepSeek/OpenAI-compatible adapter、LangChain 和 pgvector 的 RAG 聊天、材料索引、测验生成、短答评估、学习画像、学习计划和教师内容草稿。
 - 学习平台核心能力：注册登录、邮箱验证、角色权限、课程管理、模块材料、学习进度、测验、论坛和站内通知。
 - 异步任务：Redis + Celery 支撑材料索引、通知、测验会话和 AI 后台流程。
 - 可本地复现：Docker Compose 一键启动 MySQL、PostgreSQL、Redis、MinIO、nginx、前端和后端服务。
@@ -159,7 +159,7 @@ curl http://127.0.0.1:${NGINX_PORT}/api/ai/health
 3. **AI 能力**：材料被索引到 PostgreSQL + pgvector，聊天和测验生成通过 RAG 检索课程上下文，再由 Gemini/LangChain 生成 grounded response。
 4. **微服务架构**：identity、learning、communication、ai 四个 FastAPI 服务通过 nginx 统一暴露 API，内部使用 MySQL、PostgreSQL、Redis、MinIO 和 Celery。
 5. **质量与部署**：Docker Compose 可以复现完整运行环境，GitHub Actions 覆盖前端构建、后端测试和基础设施检查。
-6. **后续开发**：优先实现 AI Provider Adapter 和学生端 Study Planner，再扩展教师端 AI 测验草稿生成、短答题评估和教师端学习分析。
+6. **已完成扩展**：AI Provider Adapter、学生端 Study Planner、教师端 AI 测验草稿、短答题评估、教师学习分析和教师端 AI 内容草稿已经形成可演示闭环。
 
 可重点展开的技术点：
 
@@ -197,15 +197,17 @@ Docker 配置校验：
 docker compose --env-file .env.example -f infra/docker-compose.yml config
 ```
 
-## 后续方向
+## 当前状态与后续方向
 
-当前个人项目版本会继续围绕以下能力演进：
+当前个人项目版本已完成：
 
-- 教师端 AI 测验草稿生成与人工审核。
-- AI Provider Adapter，支持 Gemini 之外的 OpenAI-compatible provider。
-- 短答题等非选择题评估方式。
-- 教师端学习分析 Dashboard。
+- AI Provider Adapter，支持 Gemini 与 DeepSeek/OpenAI-compatible chat provider。
 - 学生端个性化 Study Planner。
-- 更完整的 AI 输出安全层、来源引用和结构化校验。
+- 教师端 AI 测验草稿生成与人工审核。
+- 短答题评估、AI 建议反馈和教师复核。
+- 教师端学习分析 Dashboard。
+- 教师端 AI 内容草稿生成、编辑和保存。
+
+后续会继续增强 AI 输出安全层、来源引用、结构化校验、embedding provider 扩展和生产级观测能力。
 
 详细计划见 [docs/roadmap.md](docs/roadmap.md)。
