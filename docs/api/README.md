@@ -44,6 +44,7 @@ English version: [README.en.md](README.en.md)
 - 短答题评估：教师 rubric、学生提交、AI 建议反馈和教师复核。
 - 学生端 Study Planner 计划生成、读取、调整和重新生成。
 - 教师端课程、测验和教学洞察分析。
+- 教师端 AI 内容草稿生成、编辑和保存。
 
 学生端 Study Planner：
 
@@ -81,12 +82,22 @@ English version: [README.en.md](README.en.md)
 
 以上学习分析接口仅限具备教师课程管理权限的用户使用；聚合由 `learning-service` 基于课程报名、模块进度、quiz attempt 和短答题提交表计算，不调用 `ai-service`。
 
+教师端 AI 内容草稿：
+
+- `POST /api/learning/courses/{courseUuid}/modules/{moduleUuid}/content-drafts/management/generate`：教师 owner/admin 为模块生成并保存一个可编辑内容草稿。支持 `summary`、`learning_objectives`、`activity_suggestions`、`differentiated_explanation` 和 `slide_outline`。请求可包含草稿标题、教师提示和材料范围；`learning-service` 传入模块内容和材料摘要，调用内部 `ai-service`。
+- `GET /api/learning/courses/{courseUuid}/modules/{moduleUuid}/content-drafts/management`：教师读取模块下已保存的内容草稿。
+- `GET /api/learning/courses/{courseUuid}/modules/{moduleUuid}/content-drafts/management/{draftUuid}`：教师读取单个内容草稿。
+- `PATCH /api/learning/courses/{courseUuid}/modules/{moduleUuid}/content-drafts/management/{draftUuid}`：教师保存编辑后的结构化内容和 `grounding` 来源依据。
+
+内容草稿仅保存在教师管理侧，不会自动发布给学生，也不会自动覆盖模块正文。前端提供手动复制到模块内容编辑器的入口；是否保存为模块正文仍由教师显式执行。AI provider 缺失、quota/timeout、非法 JSON 或低置信度时，`ai-service` 返回可编辑 fallback 草稿并标记 `isFallback` 和 `fallbackReason`。
+
 核心文件：
 
 - `services/learning-service/app/api/course_management.py`
 - `services/learning-service/app/api/course_catalog.py`
 - `services/learning-service/app/api/module_management.py`
 - `services/learning-service/app/api/module_content.py`
+- `services/learning-service/app/api/content_generation.py`
 - `services/learning-service/app/api/quiz.py`
 - `services/learning-service/app/api/short_answer.py`
 - `services/learning-service/app/api/internal_quiz_generation.py`
@@ -119,6 +130,7 @@ English version: [README.en.md](README.en.md)
 - 教师端 AI 测验草稿内部生成接口，供 `learning-service` 调用。
 - 短答题评估内部接口，供 `learning-service` 获取建议分数和反馈。
 - Study Planner 内部生成接口，供 `learning-service` 调用。
+- 教师端 AI 内容草稿内部生成接口，供 `learning-service` 调用。
 - Celery smoke task 和任务状态查询。
 
 核心文件：
@@ -129,11 +141,13 @@ English version: [README.en.md](README.en.md)
 - `services/ai-service/app/api/internal_profile_update.py`
 - `services/ai-service/app/api/internal_quiz_generation.py`
 - `services/ai-service/app/api/internal_study_planner.py`
+- `services/ai-service/app/api/internal_content_generation.py`
 - `services/ai-service/app/api/profiles.py`
 
 内部 AI 测验接口：
 
 - `POST /api/ai/internal/quiz-generation/educator-draft`：内部接口，仅供 `learning-service` 通过 internal token 调用。返回候选题集合、检索上下文和计划，每题包含 `sourceGrounding`。nginx 不应向浏览器直接开放该接口。
+- `POST /api/ai/internal/content-generation/educator-draft`：内部接口，仅供 `learning-service` 通过 internal token 调用。输入课程、模块、内容类型、教师提示和材料摘要，输出结构化内容草稿、来源依据、置信度和 provider/fallback 元数据。nginx 不应向浏览器直接开放该接口。
 - `POST /api/ai/internal/short-answer/evaluate`：内部接口，仅供 `learning-service` 通过 internal token 调用。输入题干、rubric、满分和学生答案，输出建议分数、反馈、strengths 和 improvements；当前实现为 mock-friendly 的本地评估器，便于后续替换为 provider-backed 工作流。
 
 ## 鉴权约定

@@ -17,6 +17,9 @@ import type {
   QuizAttemptResult,
   QuizAttemptHistory,
   ShortAnswerAssessmentRecord,
+  EducatorContentDraftGrounding,
+  EducatorContentDraftRecord,
+  EducatorContentDraftType,
   ShortAnswerLearnerAssessment,
   ShortAnswerSubmissionRecord,
 } from "../types/course";
@@ -1713,6 +1716,137 @@ export async function acceptEducatorQuizDraft(
   }
 
   return normalizeQuiz(parsedPayload);
+}
+
+// ---------------------------------------------------------------------------
+// Educator AI content drafts
+// ---------------------------------------------------------------------------
+
+function normalizeContentDraftGrounding(payload: unknown): EducatorContentDraftGrounding {
+  const data = (payload ?? {}) as Record<string, unknown>;
+  return {
+    sourceTitle: String(pick(data, "sourceTitle", "source_title") ?? ""),
+    sourceType: String(pick(data, "sourceType", "source_type") ?? ""),
+    reference: String(pick(data, "reference") ?? ""),
+    rationale: String(pick(data, "rationale") ?? ""),
+  };
+}
+
+function normalizeEducatorContentDraft(payload: unknown): EducatorContentDraftRecord {
+  const data = (payload ?? {}) as Record<string, unknown>;
+  const structuredContent = pick(data, "structuredContent", "structured_content");
+  const grounding = pick(data, "grounding");
+  const confidenceScore = pick(data, "confidenceScore", "confidence_score");
+  return {
+    draftUuid: String(pick(data, "draftUuid", "draft_uuid") ?? ""),
+    moduleUuid: String(pick(data, "moduleUuid", "module_uuid") ?? ""),
+    contentType: (pick(data, "contentType", "content_type") as EducatorContentDraftType) ?? "summary",
+    title: String(pick(data, "title") ?? ""),
+    teacherPrompt: (pick(data, "teacherPrompt", "teacher_prompt") ?? null) as string | null,
+    materialScope: (pick(data, "materialScope", "material_scope") ?? null) as string | null,
+    structuredContent:
+      structuredContent && typeof structuredContent === "object" && !Array.isArray(structuredContent)
+        ? (structuredContent as Record<string, unknown>)
+        : {},
+    grounding: Array.isArray(grounding) ? grounding.map(normalizeContentDraftGrounding) : [],
+    confidenceScore: typeof confidenceScore === "number" ? confidenceScore : Number(confidenceScore ?? 0),
+    isFallback: Boolean(pick(data, "isFallback", "is_fallback") ?? false),
+    fallbackReason: (pick(data, "fallbackReason", "fallback_reason") ?? null) as string | null,
+    provider: (pick(data, "provider") ?? null) as string | null,
+    model: (pick(data, "model") ?? null) as string | null,
+    createdAt: String(pick(data, "createdAt", "created_at") ?? ""),
+    updatedAt: String(pick(data, "updatedAt", "updated_at") ?? ""),
+  };
+}
+
+export type EducatorContentDraftGeneratePayload = {
+  contentType: EducatorContentDraftType;
+  title?: string | null;
+  teacherPrompt?: string | null;
+  materialScope?: string | null;
+};
+
+export type EducatorContentDraftUpdatePayload = {
+  title?: string;
+  structuredContent?: Record<string, unknown>;
+  grounding?: EducatorContentDraftGrounding[];
+};
+
+export async function listEducatorContentDrafts(courseUuid: string, moduleUuid: string): Promise<EducatorContentDraftRecord[]> {
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/content-drafts/management`,
+    { method: "GET", headers: buildAuthHeaders({ "Content-Type": "application/json" }) }
+  );
+
+  const text = await response.text();
+  const payload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, payload);
+
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(payload, "Failed to load content drafts."));
+  }
+
+  return Array.isArray(payload) ? payload.map(normalizeEducatorContentDraft) : [];
+}
+
+export async function generateEducatorContentDraft(
+  courseUuid: string,
+  moduleUuid: string,
+  payload: EducatorContentDraftGeneratePayload
+): Promise<EducatorContentDraftRecord> {
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/content-drafts/management/generate`,
+    {
+      method: "POST",
+      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        contentType: payload.contentType,
+        title: payload.title?.trim() || null,
+        teacherPrompt: payload.teacherPrompt?.trim() || null,
+        materialScope: payload.materialScope?.trim() || null,
+      }),
+    }
+  );
+
+  const text = await response.text();
+  const parsedPayload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, parsedPayload);
+
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(parsedPayload, "Failed to generate content draft."));
+  }
+
+  return normalizeEducatorContentDraft(parsedPayload);
+}
+
+export async function updateEducatorContentDraft(
+  courseUuid: string,
+  moduleUuid: string,
+  draftUuid: string,
+  payload: EducatorContentDraftUpdatePayload
+): Promise<EducatorContentDraftRecord> {
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/content-drafts/management/${draftUuid}`,
+    {
+      method: "PATCH",
+      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        title: payload.title?.trim(),
+        structuredContent: payload.structuredContent,
+        grounding: payload.grounding,
+      }),
+    }
+  );
+
+  const text = await response.text();
+  const parsedPayload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, parsedPayload);
+
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(parsedPayload, "Failed to save content draft."));
+  }
+
+  return normalizeEducatorContentDraft(parsedPayload);
 }
 
 // ---------------------------------------------------------------------------

@@ -70,3 +70,11 @@ def encode_user_uuid(user_id: int) -> str:
 
 def decode_user_uuid(user_uuid: str) -> int:
     return decode_public_uuid(public_id=user_uuid, expected_kind="user", secret=_get_secret())
+
+
+def encode_content_draft_uuid(content_draft_id: int) -> str:
+    return encode_public_uuid(kind="content_draft", resource_id=content_draft_id, secret=_get_secret())
+
+
+def decode_content_draft_uuid(content_draft_uuid: str) -> int:
+    return decode_public_uuid(public_id=content_draft_uuid, expected_kind="content_draft", secret=_get_secret())

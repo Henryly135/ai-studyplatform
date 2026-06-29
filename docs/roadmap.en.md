@@ -135,20 +135,29 @@ Future enhancements:
 - Add finer-grained weak-question, rubric-dimension, and learner-profile mastery signals.
 - Add trend charts, export, and proactive alerts.
 
-## Phase 6: Educator AI Content Generation
+## Phase 6: Educator AI Content Generation (Implemented)
 
 Goal: help educators create teaching-material drafts faster.
 
-Implementation direction:
+Current completed scope:
 
-- Support summaries, learning objectives, activity suggestions, level-adapted explanations, and slide outlines.
-- Include structured fields and material grounding.
-- Provide fallback and manual editing when AI confidence is low.
+- Educators can generate AI content drafts from the module detail page, covering summaries, learning objectives, activity suggestions, differentiated explanations, and slide outlines.
+- `learning-service` persists draft title, educator prompt, material scope, structured content, source grounding, confidence, and provider/fallback metadata.
+- `ai-service` exposes an internal content-generation endpoint that uses the current `AI_CHAT_*` provider adapter first; missing provider configuration, quota/timeout, invalid JSON, or low confidence falls back to a deterministic editable draft.
+- Drafts remain educator-management records only. They are not automatically published to learners and do not automatically overwrite module body content.
+- The frontend supports selecting saved drafts, editing structured content and source grounding, saving changes, and manually copying a draft into the module content editor.
+- The implementation includes a database migration, backend mock-provider/fallback tests, and permission/save-path tests.
 
 Acceptance:
 
 - Educators can generate content drafts from materials.
 - Generated outputs can be edited and saved.
+
+Future enhancements:
+
+- Add finer-grained material chunk citations rather than only material titles/summaries.
+- Support version history, draft archiving, and a confirmed one-click apply flow into module body content.
+- Add content-type-specific frontend editors instead of the generic structured text editor.
 
 ## Phase 7: Student Study Planner (Implemented)
 
