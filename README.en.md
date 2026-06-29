@@ -21,7 +21,7 @@ This repository has been cleaned and reorganised as a personal project. Chinese 
 | --- | --- |
 | Frontend | React, Vite, TypeScript, Bootstrap |
 | Backend | FastAPI, SQLAlchemy, Pydantic |
-| AI | Gemini API, LangChain, LangGraph, pgvector |
+| AI | Gemini API, DeepSeek/OpenAI-compatible API, LangChain, LangGraph, pgvector |
 | Databases | MySQL, PostgreSQL |
 | Async tasks | Redis, Celery |
 | File storage | MinIO |
@@ -81,17 +81,17 @@ SMTP_FROM=your_email@example.com
 GEMINI_API_KEY=your_gemini_api_key
 ```
 
-The AI chat provider entry point is reserved for a future adapter:
+AI chat providers can be switched between Gemini and DeepSeek/OpenAI-compatible services through the unified adapter:
 
 ```env
 AI_CHAT_PROVIDER=deepseek
 AI_CHAT_BASE_URL=https://api.deepseek.com
-AI_CHAT_MODEL=deepseek-v4-flash
+AI_CHAT_MODEL=deepseek-chat
 AI_CHAT_API_KEY=your_local_deepseek_key
 DEEPSEEK_API_KEY=your_local_deepseek_key
 ```
 
-This phase only prepares configuration. Existing AI calls still use the Gemini-compatible path; adding a DeepSeek key alone does not make current Gemini direct calls work. CI uses empty keys or mocks and does not require real AI provider keys.
+Gemini remains the default provider and still supports `GEMINI_API_KEY`. DeepSeek/OpenRouter and other OpenAI-compatible chat providers use `AI_CHAT_PROVIDER`, `AI_CHAT_BASE_URL`, `AI_CHAT_MODEL`, and `AI_CHAT_API_KEY`; embeddings still use the separate Gemini embedding configuration, so changing embedding providers requires adding an embedding adapter and reindexing materials. CI uses empty keys or mocks and does not require real AI provider keys.
 
 For public deployment, also change the default admin email, password, and name.
 

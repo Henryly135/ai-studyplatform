@@ -21,7 +21,7 @@ English version: [README.en.md](README.en.md)
 | --- | --- |
 | 前端 | React, Vite, TypeScript, Bootstrap |
 | 后端 | FastAPI, SQLAlchemy, Pydantic |
-| AI | Gemini API, LangChain, LangGraph, pgvector |
+| AI | Gemini API、DeepSeek/OpenAI-compatible API、LangChain、LangGraph、pgvector |
 | 数据库 | MySQL, PostgreSQL |
 | 异步任务 | Redis, Celery |
 | 文件存储 | MinIO |
@@ -81,17 +81,17 @@ SMTP_FROM=your_email@example.com
 GEMINI_API_KEY=your_gemini_api_key
 ```
 
-AI chat provider 配置入口已经预留给后续 adapter：
+AI chat provider 可通过统一 adapter 在 Gemini 和 DeepSeek/OpenAI-compatible 服务之间切换：
 
 ```env
 AI_CHAT_PROVIDER=deepseek
 AI_CHAT_BASE_URL=https://api.deepseek.com
-AI_CHAT_MODEL=deepseek-v4-flash
+AI_CHAT_MODEL=deepseek-chat
 AI_CHAT_API_KEY=your_local_deepseek_key
 DEEPSEEK_API_KEY=your_local_deepseek_key
 ```
 
-当前阶段只是配置准备，现有 AI 调用链仍使用 Gemini 兼容路径；仅配置 DeepSeek key 不会自动让 Gemini 直连功能可用。CI 使用空 key 或 mock，不需要真实 AI provider key。
+Gemini 仍是默认 provider，并兼容 `GEMINI_API_KEY`。DeepSeek/OpenRouter 等 OpenAI-compatible chat provider 使用 `AI_CHAT_PROVIDER`、`AI_CHAT_BASE_URL`、`AI_CHAT_MODEL` 和 `AI_CHAT_API_KEY`；embedding 目前仍使用独立的 Gemini embedding 配置，切换 embedding provider 前需要新增对应 adapter 并重新索引材料。CI 使用空 key 或 mock，不需要真实 AI provider key。
 
 如果部署到公网环境，请同时修改默认管理员邮箱、密码和姓名。
 

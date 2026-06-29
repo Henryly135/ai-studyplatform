@@ -120,7 +120,7 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
             user_id=payload.user_id,
             call_type=AIPromptCallType.CHAT,
             prompt_template_name="chat_rag_v1" if payload.course_id is not None else "chat_reply_v1",
-            model_name=settings.ai_demo_model_name,
+            model_name=settings.ai_chat_model,
             input_text=payload.message.strip(),
             output_text=None,
             request_json={
@@ -148,7 +148,7 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
             user_id=payload.user_id,
             call_type=AIPromptCallType.CHAT,
             prompt_template_name="chat_rag_v1" if payload.course_id is not None else "chat_reply_v1",
-            model_name=settings.ai_demo_model_name,
+            model_name=settings.ai_chat_model,
             input_text=payload.message.strip(),
             output_text=None,
             request_json={
@@ -204,7 +204,7 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
         model_name=(
             str(workflow_result.reply_result.request_json.get("model") or "guardrail")
             if isinstance(workflow_result.reply_result.request_json, dict)
-            else settings.ai_demo_model_name
+            else settings.ai_chat_model
         ),
         input_text=payload.message.strip(),
         output_text=workflow_result.reply_result.reply,

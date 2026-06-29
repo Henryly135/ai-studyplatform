@@ -17,8 +17,11 @@ class LangChainEmbeddingExecutionResult:
 
 class LangChainEmbeddingService:
     def __init__(self) -> None:
-        if not settings.gemini_api_key:
-            raise invalid_request_error("GEMINI_API_KEY is not configured")
+        if not settings.ai_embedding_api_key:
+            raise invalid_request_error(
+                "AI_EMBEDDING_API_KEY or GEMINI_API_KEY is not configured for Gemini embeddings. "
+                "Configure the embedding key and reindex affected materials."
+            )
 
     def embed_query(self, *, text: str) -> LangChainEmbeddingExecutionResult:
         normalized_text = text.strip()
@@ -92,6 +95,6 @@ class LangChainEmbeddingService:
     def _build_embeddings(self, *, task_type: str) -> GoogleGenerativeAIEmbeddings:
         return GoogleGenerativeAIEmbeddings(
             model=settings.ai_embedding_model,
-            google_api_key=settings.gemini_api_key,
+            google_api_key=settings.ai_embedding_api_key,
             task_type=task_type,
         )
