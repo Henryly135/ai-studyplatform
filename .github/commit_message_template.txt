@@ -1,0 +1,32 @@
+# Commit title format:
+# type(scope): summary
+#
+# Examples:
+# feat(ai): add provider settings
+# fix(auth): handle expired reset tokens
+# ci(workflow): enforce commit and PR templates
+# docs(testing): document PR workflow
+#
+# Allowed types:
+# build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test
+#
+# Scope rules:
+# - Optional.
+# - Use lowercase letters, numbers, ".", "_", "-", or "/".
+# - Prefer clear scopes such as ai, auth, frontend, docs, workflow, testing.
+#
+# Summary rules:
+# - Keep it short and imperative.
+# - Use one line.
+# - Do not end with a period.
+#
+# Body template:
+#
+# Why:
+# - TODO
+#
+# What:
+# - TODO
+#
+# Tests:
+# - TODO

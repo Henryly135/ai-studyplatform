@@ -10,6 +10,7 @@ English version: [README.en.md](README.en.md)
 
 CI 固定执行：
 
+- 提交标题和 PR 模版格式检查。
 - 前端 `npm ci`、`npm run lint`、`npm run build`。
 - `packages/platform_common/tests`。
 - Docker Compose 配置校验。
@@ -39,6 +40,52 @@ docker compose --env-file .env.ci -f infra/docker-compose.yml config --quiet
 - `develop` 达到可展示状态后，再开 PR 到 `main`。
 - PR 到 `main` 必须来自 `develop`，其他来源会被 `Main PR Guard` 拦截。
 - `main` 只保留已通过 CI 的稳定版本。
+
+## 提交与 PR 格式
+
+提交标题和 PR 标题统一使用：
+
+```text
+type(scope): summary
+```
+
+示例：
+
+```text
+feat(ai): add provider settings
+fix(auth): handle expired reset tokens
+ci(workflow): enforce commit and PR templates
+docs(testing): document PR workflow
+```
+
+允许的 `type`：
+
+- `build`
+- `chore`
+- `ci`
+- `docs`
+- `feat`
+- `fix`
+- `perf`
+- `refactor`
+- `revert`
+- `style`
+- `test`
+
+本地启用提交信息模版：
+
+```bash
+./scripts/setup-git-conventions.sh
+```
+
+手动检查当前提交或指定标题：
+
+```bash
+./scripts/check-git-conventions.sh
+./scripts/check-git-conventions.sh --subject "ci(workflow): enforce commit and PR templates"
+```
+
+CI 会在 push 和 PR 时执行 `.github/commit_message_template.txt` 对应的标题规则。PR 还必须保留 `.github/pull_request_template.md` 中的固定章节：`Summary`、`Change Type`、`Tests`、`Checklist`。
 
 ## 后端测试
 
