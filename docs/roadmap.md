@@ -22,7 +22,7 @@ English version: [roadmap.en.md](roadmap.en.md)
 - 健康检查全部通过。
 - 修复内容有对应测试或明确回归记录。
 
-## 阶段 1：GitHub CI/CD 测试门禁
+## 阶段 1：GitHub CI/CD 测试门禁（已实现）
 
 目标：先让 GitHub 自动跑完整测试，再进入新功能开发。
 
@@ -40,26 +40,32 @@ English version: [roadmap.en.md](roadmap.en.md)
 - 后续新增测试文件能被 GitHub Actions 自动收集。
 - 文档说明本地和 CI 测试入口。
 
-## 阶段 2：AI Provider Adapter 与多模型支持
+## 阶段 2：AI Provider Adapter 与多模型支持（已实现）
 
 目标：把当前 Gemini 绑定改造成可配置的 AI provider 层，支持以后接入 OpenAI、DeepSeek、Claude、OpenRouter 等模型供应商。
 
-实现方向：
+当前完成内容：
 
-- 在 `ai-service` 中抽象 chat、embedding、结构化生成和错误处理接口，保留 Gemini 作为默认实现。
-- 增加 provider 配置，例如 `AI_CHAT_PROVIDER`、`AI_EMBEDDING_PROVIDER`、模型名、base URL 和对应 API key；兼容现有 `GEMINI_API_KEY`。
-- Chat provider adapter 已接入 `AI_CHAT_*`、`DEEPSEEK_API_KEY` 和 `GEMINI_API_KEY` 兼容路径；embedding provider 仍独立配置，切换前需要新增 adapter 并重新索引材料。
-- 优先支持 OpenAI-compatible API，用于接入 DeepSeek、OpenRouter 和其他兼容服务；再按需扩展 Claude 等专有 SDK。
-- 统一 token usage、quota/rate-limit、timeout、重试、日志和 prompt 记录字段。
-- 为 embedding provider 切换增加向量维度校验、索引版本标记和重新索引提示，避免新旧 embedding 混用。
-- 为聊天、RAG、测验生成、学习画像更新和材料索引增加 provider mock 测试。
+- 在 `ai-service` 中抽象 chat provider 接口，保留 Gemini 默认实现。
+- 新增 OpenAI-compatible chat provider adapter，支持 DeepSeek、OpenRouter 和自定义兼容 base URL。
+- 配置层接入 `AI_CHAT_PROVIDER`、`AI_CHAT_MODEL`、`AI_CHAT_BASE_URL`、`AI_CHAT_API_KEY`、`DEEPSEEK_API_KEY`，并兼容 `GEMINI_API_KEY`。
+- AI 聊天、RAG fallback、测验生成、学习画像决策、Study Planner 和教师端 AI 内容草稿都复用 `get_chat_provider`。
+- 统一 provider 错误分类，包括 timeout、quota/rate-limit、invalid key、transient network 和 unknown provider error。
+- Embedding provider 保持独立配置，目前只支持 Gemini embedding；非 Gemini 配置会返回可解释错误，并提示新增 adapter 后重新索引材料。
+- 为 chat provider factory、Gemini mock、DeepSeek/OpenAI-compatible mock、错误分类、embedding 维度校验和重新索引提示补充测试。
 
 验收：
 
-- 通过 `.env` 切换 Gemini 与至少一个 OpenAI-compatible provider。
-- AI 聊天、RAG、测验生成和材料 embedding 能在新 provider 下跑通。
+- 通过 `.env` 切换 Gemini 与至少一个 OpenAI-compatible chat provider。
+- AI 聊天、RAG fallback、测验生成、学习画像决策、Study Planner 和教师端内容生成可通过统一 chat provider 调用。
 - provider 错误能返回统一、可解释的错误信息。
-- 文档说明不同 provider 的配置方式、限制和重新索引要求。
+- 文档说明 chat provider 配置方式、embedding 限制和重新索引要求。
+
+后续增强项：
+
+- 新增 OpenAI-compatible embedding adapter，并为不同 embedding provider 维护索引版本迁移。
+- 接入 Claude 等非 OpenAI-compatible 专有 SDK。
+- 增加 provider 成本统计、模型效果对比和可配置 failover。
 
 ## 阶段 3：教师端 AI 测验生成（已实现）
 

@@ -22,7 +22,7 @@ Acceptance:
 - All health checks pass.
 - Fixes have tests or clear regression notes.
 
-## Phase 1: GitHub CI/CD Test Gate
+## Phase 1: GitHub CI/CD Test Gate (Implemented)
 
 Goal: make GitHub run the complete test suite before new feature development continues.
 
@@ -40,26 +40,32 @@ Acceptance:
 - Future test files are collected automatically by GitHub Actions.
 - Docs explain local and CI testing entry points.
 
-## Phase 2: AI Provider Adapter and Multi-Model Support
+## Phase 2: AI Provider Adapter and Multi-Model Support (Implemented)
 
 Goal: turn the current Gemini-specific implementation into a configurable AI provider layer that can later support OpenAI, DeepSeek, Claude, OpenRouter, and other model providers.
 
-Implementation direction:
+Current completed scope:
 
-- Introduce provider interfaces in `ai-service` for chat, embeddings, structured generation, and error handling, while keeping Gemini as the default implementation.
-- Add provider configuration such as `AI_CHAT_PROVIDER`, `AI_EMBEDDING_PROVIDER`, model names, base URLs, and provider-specific API keys; keep backward compatibility with `GEMINI_API_KEY`.
-- The chat provider adapter now uses `AI_CHAT_*`, `DEEPSEEK_API_KEY`, and `GEMINI_API_KEY` compatibility paths; embedding providers remain separately configured and require a dedicated adapter plus material reindexing before switching.
-- Prioritise OpenAI-compatible APIs first so DeepSeek, OpenRouter, and similar services can be integrated through one adapter; add Claude or other dedicated SDKs later if needed.
-- Standardise token usage, quota/rate-limit handling, timeout handling, retries, logs, and prompt records.
-- Add embedding dimension checks, index-version metadata, and reindexing guidance when switching embedding providers, so old and new embeddings are not mixed accidentally.
-- Add provider mock tests for chat, RAG, quiz generation, learner profile updates, and material indexing.
+- Added a chat provider interface in `ai-service` while keeping Gemini as the default implementation.
+- Added an OpenAI-compatible chat provider adapter for DeepSeek, OpenRouter, and custom compatible base URLs.
+- Wired configuration through `AI_CHAT_PROVIDER`, `AI_CHAT_MODEL`, `AI_CHAT_BASE_URL`, `AI_CHAT_API_KEY`, `DEEPSEEK_API_KEY`, with backward compatibility for `GEMINI_API_KEY`.
+- AI chat, RAG fallback, quiz generation, learner-profile decisions, Study Planner, and educator content drafts reuse `get_chat_provider`.
+- Standardised provider error classification for timeout, quota/rate-limit, invalid key, transient network, and unknown provider errors.
+- Embedding providers remain separately configured and currently support Gemini embeddings only; non-Gemini embedding settings return an explainable error that tells operators to add an adapter and reindex materials.
+- Added tests for the chat provider factory, Gemini mock path, DeepSeek/OpenAI-compatible mock path, error classification, embedding dimension checks, and reindexing guidance.
 
 Acceptance:
 
-- `.env` can switch between Gemini and at least one OpenAI-compatible provider.
-- AI chat, RAG, quiz generation, and material embeddings work with the new provider.
+- `.env` can switch between Gemini and at least one OpenAI-compatible chat provider.
+- AI chat, RAG fallback, quiz generation, learner-profile decisions, Study Planner, and educator content generation can call the unified chat provider.
 - Provider errors return consistent and explainable error responses.
-- Documentation explains provider setup, limitations, and reindexing requirements.
+- Documentation explains chat provider setup, embedding limitations, and reindexing requirements.
+
+Future enhancements:
+
+- Add an OpenAI-compatible embedding adapter and maintain index-version migrations for different embedding providers.
+- Add Claude and other non-OpenAI-compatible dedicated SDKs.
+- Add provider cost tracking, model-quality comparison, and configurable failover.
 
 ## Phase 3: Educator AI Quiz Generation (Implemented)
 
