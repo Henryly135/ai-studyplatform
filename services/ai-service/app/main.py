@@ -9,6 +9,7 @@ from app.api.internal_index_jobs import router as internal_index_jobs_router
 from app.api.internal_profiles import router as internal_profiles_router
 from app.api.internal_profile_update import router as internal_profile_update_router
 from app.api.internal_quiz_generation import router as internal_quiz_generation_router
+from app.api.internal_short_answer import router as internal_short_answer_router
 from app.api.internal_study_planner import router as internal_study_planner_router
 from app.api.profiles import router as profiles_router
 from app.api.quiz_generation import router as quiz_generation_router
@@ -42,6 +43,7 @@ app.include_router(internal_index_jobs_router)
 app.include_router(internal_profiles_router)
 app.include_router(internal_profile_update_router)
 app.include_router(internal_quiz_generation_router)
+app.include_router(internal_short_answer_router)
 app.include_router(internal_study_planner_router)
 app.include_router(tasks_router)
 

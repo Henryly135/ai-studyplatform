@@ -15,6 +15,9 @@ import type {
   QuizAttemptSession,
   QuizAttemptResult,
   QuizAttemptHistory,
+  ShortAnswerAssessmentRecord,
+  ShortAnswerLearnerAssessment,
+  ShortAnswerSubmissionRecord,
 } from "../types/course";
 import type {
   CourseInviteLinkResponse,
@@ -118,6 +121,10 @@ type ApiModule = {
   quizTitle?: string | null;
   quiz_time_limit_seconds?: number | null;
   quizTimeLimitSeconds?: number | null;
+  has_published_short_answer?: boolean;
+  hasPublishedShortAnswer?: boolean;
+  short_answer_title?: string | null;
+  shortAnswerTitle?: string | null;
   progress_status?: string | null;
   progressStatus?: string | null;
   is_completed?: boolean;
@@ -276,6 +283,8 @@ function normalizeModule(courseUuid: string, module: ApiModule, index: number): 
     hasPublishedQuiz: Boolean(module.hasPublishedQuiz ?? module.has_published_quiz ?? false),
     quizTitle: (module.quizTitle ?? module.quiz_title ?? null) as string | null,
     quizTimeLimitSeconds: (module.quizTimeLimitSeconds ?? module.quiz_time_limit_seconds ?? null) as number | null,
+    hasPublishedShortAnswer: Boolean(module.hasPublishedShortAnswer ?? module.has_published_short_answer ?? false),
+    shortAnswerTitle: (module.shortAnswerTitle ?? module.short_answer_title ?? null) as string | null,
     progressStatus: (module.progressStatus ?? module.progress_status ?? null) as string | null,
     isCompleted: Boolean(module.isCompleted ?? module.is_completed ?? false),
     completedAt: (module.completedAt ?? module.completed_at ?? null) as string | null,
@@ -1684,6 +1693,193 @@ export async function acceptEducatorQuizDraft(
   }
 
   return normalizeQuiz(parsedPayload);
+}
+
+// ---------------------------------------------------------------------------
+// Short-answer assessments
+// ---------------------------------------------------------------------------
+
+function toNullableNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeShortAnswerAssessment(payload: unknown): ShortAnswerAssessmentRecord {
+  const d = (payload ?? {}) as Record<string, unknown>;
+  return {
+    assessmentUuid: String(pick(d, "assessmentUuid", "assessment_uuid") ?? ""),
+    moduleUuid: String(pick(d, "moduleUuid", "module_uuid") ?? ""),
+    title: String(pick(d, "title") ?? ""),
+    promptText: String(pick(d, "promptText", "prompt_text") ?? ""),
+    rubricText: String(pick(d, "rubricText", "rubric_text") ?? ""),
+    maxScore: toNullableNumber(pick(d, "maxScore", "max_score")) ?? 10,
+    status: (pick(d, "status") as ShortAnswerAssessmentRecord["status"]) ?? "draft",
+    publishedAt: (pick(d, "publishedAt", "published_at") as string | null) ?? null,
+    createdAt: String(pick(d, "createdAt", "created_at") ?? ""),
+    updatedAt: String(pick(d, "updatedAt", "updated_at") ?? ""),
+  };
+}
+
+function normalizeShortAnswerSubmission(payload: unknown): ShortAnswerSubmissionRecord {
+  const d = (payload ?? {}) as Record<string, unknown>;
+  const rawSuggestion = (pick(d, "aiSuggestion", "ai_suggestion") ?? {}) as Record<string, unknown>;
+  return {
+    submissionUuid: String(pick(d, "submissionUuid", "submission_uuid") ?? ""),
+    assessmentUuid: String(pick(d, "assessmentUuid", "assessment_uuid") ?? ""),
+    learnerId: Number(pick(d, "learnerId", "learner_id") ?? 0),
+    answerText: String(pick(d, "answerText", "answer_text") ?? ""),
+    status: (pick(d, "status") as ShortAnswerSubmissionRecord["status"]) ?? "submitted",
+    aiSuggestion: {
+      scoreSuggestion: toNullableNumber(pick(rawSuggestion, "scoreSuggestion", "score_suggestion")),
+      feedbackText: (pick(rawSuggestion, "feedbackText", "feedback_text") as string | null) ?? null,
+      strengths: Array.isArray(rawSuggestion.strengths) ? rawSuggestion.strengths.map(String) : [],
+      improvements: Array.isArray(rawSuggestion.improvements) ? rawSuggestion.improvements.map(String) : [],
+      provider: (rawSuggestion.provider as string | null) ?? null,
+      model: (rawSuggestion.model as string | null) ?? null,
+    },
+    finalScore: toNullableNumber(pick(d, "finalScore", "final_score")),
+    finalFeedbackText: (pick(d, "finalFeedbackText", "final_feedback_text") as string | null) ?? null,
+    reviewNotes: (pick(d, "reviewNotes", "review_notes") as string | null) ?? null,
+    reviewerId: typeof pick(d, "reviewerId", "reviewer_id") === "number" ? (pick(d, "reviewerId", "reviewer_id") as number) : null,
+    reviewedAt: (pick(d, "reviewedAt", "reviewed_at") as string | null) ?? null,
+    createdAt: String(pick(d, "createdAt", "created_at") ?? ""),
+    updatedAt: String(pick(d, "updatedAt", "updated_at") ?? ""),
+  };
+}
+
+export type UpsertShortAnswerAssessmentPayload = {
+  title: string;
+  promptText: string;
+  rubricText: string;
+  maxScore: number;
+  status: ShortAnswerAssessmentRecord["status"];
+};
+
+export async function getManagedShortAnswerAssessment(courseUuid: string, moduleUuid: string): Promise<ShortAnswerAssessmentRecord | null> {
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/short-answer/management`,
+    { method: "GET", headers: buildAuthHeaders({ "Content-Type": "application/json" }) }
+  );
+  if (response.status === 404) return null;
+  const text = await response.text();
+  const payload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, payload);
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(payload, "Failed to load short-answer assessment."));
+  }
+  return normalizeShortAnswerAssessment(payload);
+}
+
+export async function upsertManagedShortAnswerAssessment(
+  courseUuid: string,
+  moduleUuid: string,
+  payload: UpsertShortAnswerAssessmentPayload
+): Promise<ShortAnswerAssessmentRecord> {
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/short-answer/management`,
+    {
+      method: "PUT",
+      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        title: payload.title.trim(),
+        promptText: payload.promptText.trim(),
+        rubricText: payload.rubricText.trim(),
+        maxScore: payload.maxScore,
+        status: payload.status,
+      }),
+    }
+  );
+  const text = await response.text();
+  const parsedPayload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, parsedPayload);
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(parsedPayload, "Failed to save short-answer assessment."));
+  }
+  return normalizeShortAnswerAssessment(parsedPayload);
+}
+
+export async function listManagedShortAnswerSubmissions(courseUuid: string, moduleUuid: string): Promise<ShortAnswerSubmissionRecord[]> {
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/short-answer/management/submissions`,
+    { method: "GET", headers: buildAuthHeaders({ "Content-Type": "application/json" }) }
+  );
+  if (response.status === 404) return [];
+  const text = await response.text();
+  const payload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, payload);
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(payload, "Failed to load short-answer submissions."));
+  }
+  return Array.isArray(payload) ? payload.map(normalizeShortAnswerSubmission) : [];
+}
+
+export async function reviewShortAnswerSubmission(
+  courseUuid: string,
+  moduleUuid: string,
+  submissionUuid: string,
+  payload: { finalScore: number; finalFeedbackText: string; reviewNotes?: string | null }
+): Promise<ShortAnswerSubmissionRecord> {
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/short-answer/management/submissions/${submissionUuid}/review`,
+    {
+      method: "PATCH",
+      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        finalScore: payload.finalScore,
+        finalFeedbackText: payload.finalFeedbackText.trim(),
+        reviewNotes: payload.reviewNotes?.trim() || null,
+      }),
+    }
+  );
+  const text = await response.text();
+  const parsedPayload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, parsedPayload);
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(parsedPayload, "Failed to review short-answer submission."));
+  }
+  return normalizeShortAnswerSubmission(parsedPayload);
+}
+
+export async function getLearnerShortAnswerAssessment(courseUuid: string, moduleUuid: string): Promise<ShortAnswerLearnerAssessment | null> {
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/short-answer`,
+    { method: "GET", headers: buildAuthHeaders({ "Content-Type": "application/json" }) }
+  );
+  if (response.status === 404) return null;
+  const text = await response.text();
+  const payload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, payload);
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(payload, "Failed to load short-answer assessment."));
+  }
+  const data = (payload ?? {}) as Record<string, unknown>;
+  const latestSubmission = pick(data, "latestSubmission", "latest_submission");
+  return {
+    assessment: normalizeShortAnswerAssessment(pick(data, "assessment")),
+    latestSubmission: latestSubmission ? normalizeShortAnswerSubmission(latestSubmission) : null,
+  };
+}
+
+export async function submitShortAnswer(courseUuid: string, moduleUuid: string, answerText: string): Promise<ShortAnswerSubmissionRecord> {
+  const response = await fetch(
+    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/short-answer/submissions`,
+    {
+      method: "POST",
+      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ answerText: answerText.trim() }),
+    }
+  );
+  const text = await response.text();
+  const payload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, payload);
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(payload, "Failed to submit short-answer response."));
+  }
+  return normalizeShortAnswerSubmission(payload);
 }
 
 // ---------------------------------------------------------------------------
