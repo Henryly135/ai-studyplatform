@@ -126,21 +126,29 @@ Acceptance:
 - Educators can generate content drafts from materials.
 - Generated outputs can be edited and saved.
 
-## Phase 7: Student Study Planner
+## Phase 7: Student Study Planner (Implemented)
 
-Goal: students can upload personal materials and receive personalised study plans.
+Goal: students can enter goals, material summaries, preferences, and available time, then receive personalised study plans.
 
-Implementation direction:
+Current completed scope:
 
 - Add a standalone Study Planner page.
-- Support material uploads, goals, needs, preferences, and available study time.
-- Generate a study workflow, staged plan, topic order, and rationale.
-- Later integrate with chat, recommendations, and learner profiles.
+- Support learning goals, target date, preferences, weekly availability, and material-summary input.
+- `learning-service` persists plan metadata, original input, generated content, status, and adjustment notes.
+- `ai-service` generates staged phases, topic order, review cadence, and rationale through an internal endpoint, with fallback when the provider fails.
+- Learners can view, adjust, archive/restore, and regenerate their own plans.
+- Coverage includes learner permissions, input validation, provider-mock success path, provider-failure fallback, plan save/read, and frontend lint/build.
+
+Future enhancements:
+
+- Support real material uploads and material content extraction instead of material summaries only.
+- Integrate with AI chat, recommendations, and learner profiles.
+- Add finer-grained source citation, learning-progress sync, and calendar views.
 
 Acceptance:
 
 - Students can generate a readable and adjustable study plan.
-- The plan references student inputs and uploaded materials.
+- The plan references student inputs and material summaries.
 
 ## Long-Term Direction
 

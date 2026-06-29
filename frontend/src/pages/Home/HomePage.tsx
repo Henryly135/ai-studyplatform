@@ -57,6 +57,7 @@ const SECTION_ICONS: Record<string, ReactNode> = {
   "managed-courses": <LuGraduationCap size={18} />,
   communication: <LuBell size={18} />,
   progress: <LuChartBar size={18} />,
+  "study-planner": <LuSparkles size={18} />,
   ai: <LuBot size={18} />,
   analytics: <LuChartBar size={18} />,
   "course-management": <LuLayoutDashboard size={18} />,
@@ -77,6 +78,7 @@ const SIDEBAR_GROUPS_BY_IDENTITY: Record<CurrentUserResponse["identity"], Sideba
     {
       label: "Growth",
       items: [
+        { sectionId: "study-planner" },
         { sectionId: "progress" },
         { sectionId: "ai" },
       ],
