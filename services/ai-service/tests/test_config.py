@@ -61,10 +61,10 @@ def test_ai_chat_provider_defaults_keep_gemini_compatibility() -> None:
 
 
 def test_ai_chat_provider_reads_deepseek_without_polluting_gemini() -> None:
-    # DeepSeek config is readable for the future adapter without changing Gemini key semantics.
+    # DeepSeek config is readable for the chat adapter without changing Gemini key semantics.
     settings = _reload_settings_with_env(
         AI_CHAT_PROVIDER="deepseek",
-        AI_CHAT_MODEL="deepseek-v4-flash",
+        AI_CHAT_MODEL="deepseek-chat",
         AI_CHAT_BASE_URL="https://api.deepseek.com",
         AI_CHAT_API_KEY="chat-key",
         DEEPSEEK_API_KEY="deepseek-key",
@@ -72,7 +72,7 @@ def test_ai_chat_provider_reads_deepseek_without_polluting_gemini() -> None:
     )
 
     assert settings.ai_chat_provider == "deepseek"
-    assert settings.ai_chat_model == "deepseek-v4-flash"
+    assert settings.ai_chat_model == "deepseek-chat"
     assert settings.ai_chat_base_url == "https://api.deepseek.com"
     assert settings.ai_chat_api_key == "chat-key"
     assert settings.deepseek_api_key == "deepseek-key"

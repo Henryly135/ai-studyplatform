@@ -41,11 +41,16 @@ class EmbeddingService:
     def __init__(self) -> None:
         if settings.ai_embedding_provider.strip().lower() != "gemini":
             raise invalid_request_error(
-                f"Unsupported AI_EMBEDDING_PROVIDER '{settings.ai_embedding_provider}'"
+                f"Unsupported AI_EMBEDDING_PROVIDER '{settings.ai_embedding_provider}'. "
+                "Only Gemini embeddings are currently configured. Use AI_EMBEDDING_PROVIDER=gemini "
+                "or add a provider-specific embedding adapter before reindexing materials."
             )
-        if not settings.gemini_api_key:
-            raise invalid_request_error("GEMINI_API_KEY is not configured")
-        self.client = genai.Client(api_key=settings.gemini_api_key)
+        if not settings.ai_embedding_api_key:
+            raise invalid_request_error(
+                "AI_EMBEDDING_API_KEY or GEMINI_API_KEY is not configured for Gemini embeddings. "
+                "Configure the embedding key and reindex affected materials."
+            )
+        self.client = genai.Client(api_key=settings.ai_embedding_api_key)
         self.langchain_embeddings = LangChainEmbeddingService()
 
     def count_document_tokens(self, *, text: str) -> TokenCountResult:

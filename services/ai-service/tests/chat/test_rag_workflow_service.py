@@ -23,6 +23,7 @@ from app.services.chat.rag_workflow_service import (
     generate_chat_reply,
     should_use_retrieval,
 )
+from app.services.providers import AIProviderError
 
 
 def _retrieval_result(*, score: float = 0.9, text: str = "neural network optimization") -> RetrievalResult:
@@ -216,18 +217,15 @@ def test_invoke_with_short_retries_raises_model_error_for_non_retryable_failure(
     assert exc_info.value.fallback_used is True
 
 
-def test_invoke_with_short_retries_maps_quota_client_errors(monkeypatch) -> None:
+def test_invoke_with_short_retries_maps_quota_provider_errors() -> None:
     # Tests quota-classified provider errors become AIChatQuotaError.
     from app.services.chat import rag_workflow_service
 
-    class FakeClientError(Exception):
-        pass
-
-    monkeypatch.setattr(rag_workflow_service.genai_errors, "ClientError", FakeClientError)
-
     with pytest.raises(AIChatQuotaError):
         rag_workflow_service._invoke_with_short_retries(
-            invoke_fn=lambda: (_ for _ in ()).throw(FakeClientError("quota 429")),
+            invoke_fn=lambda: (_ for _ in ()).throw(
+                AIProviderError("quota 429", error_type="quota", status_code=429)
+            ),
             orchestrator="direct_sdk",
             chain_name="plain_chat",
             fallback_used=False,

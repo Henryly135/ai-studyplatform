@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.services.profiles.global_profile_generation_service import (
@@ -66,6 +68,31 @@ def test_build_user_prompt_includes_validation_issues() -> None:
     assert "Learner preferences" in prompt
     assert "- Missing section" in prompt
     assert "previous output did not pass validation" in prompt
+
+
+def test_generate_once_uses_chat_provider_adapter(monkeypatch) -> None:
+    # Tests global profile generation calls the provider adapter with the configured chat model.
+    captured: dict[str, object] = {}
+
+    class FakeProvider:
+        def generate(self, request):
+            captured["request"] = request
+            return SimpleNamespace(text="# Generated Profile")
+
+    monkeypatch.setattr(
+        "app.services.profiles.global_profile_generation_service.get_chat_provider",
+        lambda: FakeProvider(),
+    )
+
+    result = GlobalProfileGenerationService()._generate_once(
+        preferences=_preferences(),
+        default_template="# Template",
+        validation_issues=[],
+    )
+
+    assert result == "# Generated Profile"
+    assert captured["request"].model
+    assert captured["request"].contents.startswith("Default profile template")
 
 
 @pytest.mark.parametrize(
