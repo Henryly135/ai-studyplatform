@@ -59,7 +59,7 @@ On Windows:
 copy .env.example .env
 ```
 
-Do not commit `.env`. Real secrets, SMTP passwords, Gemini API keys, and database passwords must stay in `.env` or deployment secrets.
+Do not commit `.env`. Real secrets, SMTP passwords, Gemini API keys, DeepSeek/OpenAI-compatible API keys, and database passwords must stay in `.env` or deployment secrets.
 
 The local demo admin account is included in `.env.example` so interviewers can try the admin console quickly:
 
@@ -80,6 +80,18 @@ SMTP_PASS=your_ses_smtp_password
 SMTP_FROM=your_email@example.com
 GEMINI_API_KEY=your_gemini_api_key
 ```
+
+The AI chat provider entry point is reserved for a future adapter:
+
+```env
+AI_CHAT_PROVIDER=deepseek
+AI_CHAT_BASE_URL=https://api.deepseek.com
+AI_CHAT_MODEL=deepseek-v4-flash
+AI_CHAT_API_KEY=your_local_deepseek_key
+DEEPSEEK_API_KEY=your_local_deepseek_key
+```
+
+This phase only prepares configuration. Existing AI calls still use the Gemini-compatible path; adding a DeepSeek key alone does not make current Gemini direct calls work. CI uses empty keys or mocks and does not require real AI provider keys.
 
 For public deployment, also change the default admin email, password, and name.
 

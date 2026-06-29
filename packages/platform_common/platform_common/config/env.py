@@ -2,6 +2,38 @@ import os
 from pathlib import Path
 
 
+def _strip_inline_comment(value: str) -> str:
+    in_quote: str | None = None
+    escaped = False
+    output: list[str] = []
+
+    for index, char in enumerate(value):
+        if escaped:
+            output.append(char)
+            escaped = False
+            continue
+
+        if char == "\\" and in_quote == '"':
+            output.append(char)
+            escaped = True
+            continue
+
+        if char in {"'", '"'}:
+            if in_quote is None:
+                in_quote = char
+            elif in_quote == char:
+                in_quote = None
+            output.append(char)
+            continue
+
+        if char == "#" and in_quote is None and (index == 0 or value[index - 1].isspace()):
+            break
+
+        output.append(char)
+
+    return "".join(output).strip()
+
+
 def load_project_env(start_path: str | Path) -> None:
     current_path = Path(start_path).resolve()
     env_path = None
@@ -20,7 +52,7 @@ def load_project_env(start_path: str | Path) -> None:
 
         key, value = line.split("=", 1)
         key = key.strip()
-        value = value.strip()
+        value = _strip_inline_comment(value.strip())
         if value and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
 
