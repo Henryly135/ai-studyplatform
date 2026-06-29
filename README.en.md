@@ -147,7 +147,7 @@ A clear interview walkthrough can use this order:
 3. **AI capability**: materials are indexed into PostgreSQL + pgvector; chat and quiz generation retrieve course context through RAG, then Gemini/LangChain generates grounded responses.
 4. **Microservice architecture**: identity, learning, communication, and AI services are exposed through nginx and backed by MySQL, PostgreSQL, Redis, MinIO, and Celery.
 5. **Quality and deployment**: Docker Compose reproduces the full runtime; GitHub Actions cover frontend build, backend tests, and infrastructure checks.
-6. **Next development**: build the student Study Planner first, then expand educator AI quiz drafts, short-answer assessment, and educator analytics.
+6. **Next development**: build the AI Provider Adapter and Student Study Planner first, then expand educator AI quiz drafts, short-answer assessment, and educator analytics.
 
 Technical points worth highlighting:
 
@@ -188,6 +188,7 @@ docker compose --env-file .env.example -f infra/docker-compose.yml config
 ## Next Development Areas
 
 - Educator-side AI quiz draft generation with human review.
+- AI Provider Adapter for OpenAI-compatible providers beyond Gemini.
 - Short-answer assessment beyond multiple-choice quizzes.
 - Educator analytics dashboard.
 - Student personalised Study Planner.

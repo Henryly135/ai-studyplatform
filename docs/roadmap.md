@@ -39,7 +39,27 @@ English version: [roadmap.en.md](roadmap.en.md)
 - 后端核心服务测试可单独运行。
 - 文档说明如何定位失败测试和服务日志。
 
-## 阶段 2：教师端 AI 测验生成
+## 阶段 2：AI Provider Adapter 与多模型支持
+
+目标：把当前 Gemini 绑定改造成可配置的 AI provider 层，支持以后接入 OpenAI、DeepSeek、Claude、OpenRouter 等模型供应商。
+
+实现方向：
+
+- 在 `ai-service` 中抽象 chat、embedding、结构化生成和错误处理接口，保留 Gemini 作为默认实现。
+- 增加 provider 配置，例如 `AI_CHAT_PROVIDER`、`AI_EMBEDDING_PROVIDER`、模型名、base URL 和对应 API key；兼容现有 `GEMINI_API_KEY`。
+- 优先支持 OpenAI-compatible API，用于接入 DeepSeek、OpenRouter 和其他兼容服务；再按需扩展 Claude 等专有 SDK。
+- 统一 token usage、quota/rate-limit、timeout、重试、日志和 prompt 记录字段。
+- 为 embedding provider 切换增加向量维度校验、索引版本标记和重新索引提示，避免新旧 embedding 混用。
+- 为聊天、RAG、测验生成、学习画像更新和材料索引增加 provider mock 测试。
+
+验收：
+
+- 通过 `.env` 切换 Gemini 与至少一个 OpenAI-compatible provider。
+- AI 聊天、RAG、测验生成和材料 embedding 能在新 provider 下跑通。
+- provider 错误能返回统一、可解释的错误信息。
+- 文档说明不同 provider 的配置方式、限制和重新索引要求。
+
+## 阶段 3：教师端 AI 测验生成
 
 目标：教师可以从模块材料或提示词生成可编辑测验草稿。
 
@@ -56,7 +76,7 @@ English version: [roadmap.en.md](roadmap.en.md)
 - 题目包含选项、答案、解释和来源依据。
 - 未经教师确认不能发布给学生。
 
-## 阶段 3：短答题评估
+## 阶段 4：短答题评估
 
 目标：增加一种选择题之外的评估方式。
 
@@ -73,7 +93,7 @@ English version: [roadmap.en.md](roadmap.en.md)
 - 学生可以提交答案。
 - 教师可以复核 AI 建议。
 
-## 阶段 4：教师端学习分析
+## 阶段 5：教师端学习分析
 
 目标：把 Dashboard 从统计展示升级为教学决策工具。
 
@@ -89,7 +109,7 @@ English version: [roadmap.en.md](roadmap.en.md)
 - 教师可以识别需要帮助的学生和高风险模块。
 - Dashboard 数据与后端聚合结果一致。
 
-## 阶段 5：教师端 AI 内容生成
+## 阶段 6：教师端 AI 内容生成
 
 目标：帮助教师快速生成教学材料草稿。
 
@@ -104,7 +124,7 @@ English version: [roadmap.en.md](roadmap.en.md)
 - 教师可以从材料生成内容草稿。
 - 生成结果可以编辑和保存。
 
-## 阶段 6：学生端 Study Planner
+## 阶段 7：学生端 Study Planner
 
 目标：让学生上传个人材料并获得个性化学习计划。
 
@@ -123,6 +143,7 @@ English version: [roadmap.en.md](roadmap.en.md)
 ## 长期方向
 
 - 更强的 AI 来源引用与结构化输出验证。
+- 可插拔 AI provider、成本控制和模型效果评估。
 - 更多评估形式，例如 concept map、peer review、mini project。
 - 更细粒度的画像更新和推荐解释。
 - 生产部署监控、日志分析和自动恢复。

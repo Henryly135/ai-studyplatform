@@ -39,7 +39,27 @@ Acceptance:
 - Backend service tests can be run independently.
 - Docs explain how to inspect failed tests and service logs.
 
-## Phase 2: Educator AI Quiz Generation
+## Phase 2: AI Provider Adapter and Multi-Model Support
+
+Goal: turn the current Gemini-specific implementation into a configurable AI provider layer that can later support OpenAI, DeepSeek, Claude, OpenRouter, and other model providers.
+
+Implementation direction:
+
+- Introduce provider interfaces in `ai-service` for chat, embeddings, structured generation, and error handling, while keeping Gemini as the default implementation.
+- Add provider configuration such as `AI_CHAT_PROVIDER`, `AI_EMBEDDING_PROVIDER`, model names, base URLs, and provider-specific API keys; keep backward compatibility with `GEMINI_API_KEY`.
+- Prioritise OpenAI-compatible APIs first so DeepSeek, OpenRouter, and similar services can be integrated through one adapter; add Claude or other dedicated SDKs later if needed.
+- Standardise token usage, quota/rate-limit handling, timeout handling, retries, logs, and prompt records.
+- Add embedding dimension checks, index-version metadata, and reindexing guidance when switching embedding providers, so old and new embeddings are not mixed accidentally.
+- Add provider mock tests for chat, RAG, quiz generation, learner profile updates, and material indexing.
+
+Acceptance:
+
+- `.env` can switch between Gemini and at least one OpenAI-compatible provider.
+- AI chat, RAG, quiz generation, and material embeddings work with the new provider.
+- Provider errors return consistent and explainable error responses.
+- Documentation explains provider setup, limitations, and reindexing requirements.
+
+## Phase 3: Educator AI Quiz Generation
 
 Goal: educators can generate editable quiz drafts from module materials or prompts.
 
@@ -56,7 +76,7 @@ Acceptance:
 - Questions include options, answers, explanations, and source grounding.
 - Questions cannot be published to learners without educator confirmation.
 
-## Phase 3: Short-Answer Assessment
+## Phase 4: Short-Answer Assessment
 
 Goal: add one assessment mode beyond multiple-choice quizzes.
 
@@ -73,7 +93,7 @@ Acceptance:
 - Learners can submit answers.
 - Educators can review AI suggestions.
 
-## Phase 4: Educator Analytics
+## Phase 5: Educator Analytics
 
 Goal: turn the dashboard into a teaching decision tool.
 
@@ -89,7 +109,7 @@ Acceptance:
 - Educators can identify learners needing help and high-risk modules.
 - Dashboard data matches backend aggregates.
 
-## Phase 5: Educator AI Content Generation
+## Phase 6: Educator AI Content Generation
 
 Goal: help educators create teaching-material drafts faster.
 
@@ -104,7 +124,7 @@ Acceptance:
 - Educators can generate content drafts from materials.
 - Generated outputs can be edited and saved.
 
-## Phase 6: Student Study Planner
+## Phase 7: Student Study Planner
 
 Goal: students can upload personal materials and receive personalised study plans.
 
@@ -123,6 +143,7 @@ Acceptance:
 ## Long-Term Direction
 
 - Stronger AI source citation and structured-output validation.
+- Pluggable AI providers, cost controls, and model-quality evaluation.
 - More assessment forms such as concept maps, peer review, and mini projects.
 - More granular profile updates and recommendation explanations.
 - Production deployment monitoring, log analysis, and recovery automation.

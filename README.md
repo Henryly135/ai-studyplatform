@@ -147,7 +147,7 @@ curl http://127.0.0.1:${NGINX_PORT}/api/ai/health
 3. **AI 能力**：材料被索引到 PostgreSQL + pgvector，聊天和测验生成通过 RAG 检索课程上下文，再由 Gemini/LangChain 生成 grounded response。
 4. **微服务架构**：identity、learning、communication、ai 四个 FastAPI 服务通过 nginx 统一暴露 API，内部使用 MySQL、PostgreSQL、Redis、MinIO 和 Celery。
 5. **质量与部署**：Docker Compose 可以复现完整运行环境，GitHub Actions 覆盖前端构建、后端测试和基础设施检查。
-6. **后续开发**：优先实现学生端 Study Planner，再扩展教师端 AI 测验草稿生成、短答题评估和教师端学习分析。
+6. **后续开发**：优先实现 AI Provider Adapter 和学生端 Study Planner，再扩展教师端 AI 测验草稿生成、短答题评估和教师端学习分析。
 
 可重点展开的技术点：
 
@@ -190,6 +190,7 @@ docker compose --env-file .env.example -f infra/docker-compose.yml config
 当前个人项目版本会继续围绕以下能力演进：
 
 - 教师端 AI 测验草稿生成与人工审核。
+- AI Provider Adapter，支持 Gemini 之外的 OpenAI-compatible provider。
 - 短答题等非选择题评估方式。
 - 教师端学习分析 Dashboard。
 - 学生端个性化 Study Planner。
