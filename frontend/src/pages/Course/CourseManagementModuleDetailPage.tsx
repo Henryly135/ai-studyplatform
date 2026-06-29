@@ -17,16 +17,19 @@ import {
   completeMultipartManagedModuleMaterialUpload,
   deleteManagedModule,
   deleteManagedModuleMaterial,
+  generateEducatorContentDraft,
   getMultipartManagedModuleMaterialPartUploadUrl,
   initMultipartManagedModuleMaterialUpload,
+  listEducatorContentDrafts,
   publishManagedModule,
   updateManagedModule,
+  updateEducatorContentDraft,
   uploadManagedModuleMaterial,
   getQuizAuthoring,
   setModulePrerequisite,
   removeModulePrerequisite,
 } from "../../services/course";
-import type { QuizRecord } from "../../types/course";
+import type { EducatorContentDraftGrounding, EducatorContentDraftRecord, EducatorContentDraftType, QuizRecord } from "../../types/course";
 import { emitAppRefresh } from "../../utils/refreshEvents";
 import type { CourseManagementOutletContext } from "./CourseManagementLayout";
 
@@ -171,6 +174,66 @@ function inferMaterialType(file: File) {
   return extension;
 }
 
+const CONTENT_DRAFT_TYPE_OPTIONS: Array<{ value: EducatorContentDraftType; label: string }> = [
+  { value: "summary", label: "Summary" },
+  { value: "learning_objectives", label: "Learning objectives" },
+  { value: "activity_suggestions", label: "Activity suggestions" },
+  { value: "differentiated_explanation", label: "Differentiated explanation" },
+  { value: "slide_outline", label: "Slide outline" },
+];
+
+function formatContentDraftType(value: EducatorContentDraftType) {
+  return CONTENT_DRAFT_TYPE_OPTIONS.find((option) => option.value === value)?.label ?? value;
+}
+
+function contentDraftStructuredText(draft: EducatorContentDraftRecord) {
+  const editableMarkdown = draft.structuredContent.editableMarkdown;
+  if (typeof editableMarkdown === "string" && editableMarkdown.trim()) {
+    return editableMarkdown;
+  }
+  return JSON.stringify(draft.structuredContent, null, 2);
+}
+
+function contentDraftGroundingText(draft: EducatorContentDraftRecord) {
+  return JSON.stringify(draft.grounding, null, 2);
+}
+
+function parseStructuredContentInput(value: string): Record<string, unknown> {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("Structured content is required.");
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return { editableMarkdown: trimmed };
+  }
+  return { editableMarkdown: trimmed };
+}
+
+function parseGroundingInput(value: string): EducatorContentDraftGrounding[] {
+  const parsed = JSON.parse(value.trim());
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error("Source grounding must be a non-empty JSON array.");
+  }
+  return parsed.map((item) => {
+    const row = (item ?? {}) as Record<string, unknown>;
+    const grounding = {
+      sourceTitle: String(row.sourceTitle ?? "").trim(),
+      sourceType: String(row.sourceType ?? "").trim(),
+      reference: String(row.reference ?? "").trim(),
+      rationale: String(row.rationale ?? "").trim(),
+    };
+    if (!grounding.sourceTitle || !grounding.sourceType || !grounding.reference || !grounding.rationale) {
+      throw new Error("Each grounding item needs sourceTitle, sourceType, reference, and rationale.");
+    }
+    return grounding;
+  });
+}
+
 function normalizeMultipartUploadUrl(uploadUrl: string) {
   if (typeof window === "undefined") {
     return uploadUrl;
@@ -249,6 +312,19 @@ function CourseManagementModuleDetailPage() {
   const [deletingMaterialUuid, setDeletingMaterialUuid] = useState<string | null>(null);
   const [deleteMaterialError, setDeleteMaterialError] = useState<string | null>(null);
   const [quiz, setQuiz] = useState<QuizRecord | null | undefined>(undefined); // undefined = loading
+  const [contentDrafts, setContentDrafts] = useState<EducatorContentDraftRecord[]>([]);
+  const [selectedContentDraftUuid, setSelectedContentDraftUuid] = useState("");
+  const [contentDraftType, setContentDraftType] = useState<EducatorContentDraftType>("summary");
+  const [contentDraftTitle, setContentDraftTitle] = useState("");
+  const [contentDraftPrompt, setContentDraftPrompt] = useState("");
+  const [contentDraftMaterialScope, setContentDraftMaterialScope] = useState("");
+  const [contentDraftText, setContentDraftText] = useState("");
+  const [contentDraftGrounding, setContentDraftGrounding] = useState("");
+  const [isLoadingContentDrafts, setIsLoadingContentDrafts] = useState(false);
+  const [isGeneratingContentDraft, setIsGeneratingContentDraft] = useState(false);
+  const [isSavingContentDraft, setIsSavingContentDraft] = useState(false);
+  const [contentDraftError, setContentDraftError] = useState<string | null>(null);
+  const [contentDraftSuccess, setContentDraftSuccess] = useState<string | null>(null);
   const [selectedPrerequisiteUuid, setSelectedPrerequisiteUuid] = useState(module?.prerequisiteModuleUuid ?? "");
   const [isSavingPrerequisite, setIsSavingPrerequisite] = useState(false);
   const [prerequisiteError, setPrerequisiteError] = useState<string | null>(null);
@@ -257,6 +333,10 @@ function CourseManagementModuleDetailPage() {
   const activeCourseUuidRef = useRef(course.courseUuid);
   const activeManagedModuleUuidRef = useRef<string | null>(null);
   const managedModuleUuid = module?.moduleUuid ?? null;
+  const selectedContentDraft = useMemo(
+    () => contentDrafts.find((draft) => draft.draftUuid === selectedContentDraftUuid) ?? null,
+    [contentDrafts, selectedContentDraftUuid]
+  );
 
   activeCourseUuidRef.current = course.courseUuid;
   activeManagedModuleUuidRef.current = managedModuleUuid;
@@ -322,6 +402,43 @@ function CourseManagementModuleDetailPage() {
       .catch(() => { if (!cancelled) setQuiz(null); });
     return () => { cancelled = true; };
   }, [course.courseUuid, module]);
+
+  useEffect(() => {
+    if (!module) return;
+    let cancelled = false;
+    setIsLoadingContentDrafts(true);
+    setContentDraftError(null);
+    listEducatorContentDrafts(course.courseUuid, module.moduleUuid)
+      .then((drafts) => {
+        if (cancelled) return;
+        setContentDrafts(drafts);
+        setSelectedContentDraftUuid(drafts[0]?.draftUuid ?? "");
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setContentDraftError(error instanceof Error ? error.message : "Failed to load content drafts.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingContentDrafts(false);
+      });
+    return () => { cancelled = true; };
+  }, [course.courseUuid, module]);
+
+  useEffect(() => {
+    if (!selectedContentDraft) {
+      setContentDraftTitle("");
+      setContentDraftText("");
+      setContentDraftGrounding("");
+      return;
+    }
+    setContentDraftType(selectedContentDraft.contentType);
+    setContentDraftTitle(selectedContentDraft.title);
+    setContentDraftPrompt(selectedContentDraft.teacherPrompt ?? "");
+    setContentDraftMaterialScope(selectedContentDraft.materialScope ?? "");
+    setContentDraftText(contentDraftStructuredText(selectedContentDraft));
+    setContentDraftGrounding(contentDraftGroundingText(selectedContentDraft));
+  }, [selectedContentDraft]);
 
   useEffect(() => {
     window.addEventListener("pagehide", abortActiveUploadSession);
@@ -545,6 +662,68 @@ function CourseManagementModuleDetailPage() {
     }
   };
 
+  const handleGenerateContentDraft = async () => {
+    setIsGeneratingContentDraft(true);
+    setContentDraftError(null);
+    setContentDraftSuccess(null);
+
+    try {
+      const draft = await generateEducatorContentDraft(course.courseUuid, module.moduleUuid, {
+        contentType: contentDraftType,
+        title: contentDraftTitle,
+        teacherPrompt: contentDraftPrompt,
+        materialScope: contentDraftMaterialScope,
+      });
+      setContentDrafts((drafts) => [draft, ...drafts.filter((item) => item.draftUuid !== draft.draftUuid)]);
+      setSelectedContentDraftUuid(draft.draftUuid);
+      setContentDraftSuccess(draft.isFallback ? "Fallback draft generated and saved." : "AI content draft generated and saved.");
+    } catch (error) {
+      setContentDraftError(error instanceof Error ? error.message : "Failed to generate content draft.");
+    } finally {
+      setIsGeneratingContentDraft(false);
+    }
+  };
+
+  const handleSaveContentDraft = async () => {
+    if (!selectedContentDraft) {
+      setContentDraftError("Generate or select a content draft first.");
+      return;
+    }
+    setIsSavingContentDraft(true);
+    setContentDraftError(null);
+    setContentDraftSuccess(null);
+
+    try {
+      const saved = await updateEducatorContentDraft(
+        course.courseUuid,
+        module.moduleUuid,
+        selectedContentDraft.draftUuid,
+        {
+          title: contentDraftTitle,
+          structuredContent: parseStructuredContentInput(contentDraftText),
+          grounding: parseGroundingInput(contentDraftGrounding),
+        }
+      );
+      setContentDrafts((drafts) => drafts.map((item) => (item.draftUuid === saved.draftUuid ? saved : item)));
+      setSelectedContentDraftUuid(saved.draftUuid);
+      setContentDraftSuccess("Content draft saved.");
+    } catch (error) {
+      setContentDraftError(error instanceof Error ? error.message : "Failed to save content draft.");
+    } finally {
+      setIsSavingContentDraft(false);
+    }
+  };
+
+  const handleCopyContentDraftToModuleEditor = () => {
+    if (!contentDraftText.trim()) {
+      setContentDraftError("Content draft is empty.");
+      return;
+    }
+    setContent(contentDraftText);
+    setSaveSuccess("Content draft copied into the module editor. Save module changes to apply it.");
+    setContentDraftSuccess(null);
+  };
+
   const eligiblePrerequisiteModules = course.modules.filter(
     (m) => (m.sortOrder ?? 0) < (module.sortOrder ?? 0)
   );
@@ -762,6 +941,139 @@ function CourseManagementModuleDetailPage() {
               </button>
             </div>
           </form>
+        </ManagementPanel>
+
+        <ManagementPanel title="AI content draft">
+          <div className="course-management-form course-management-form-single">
+            <label className="course-management-field course-management-field-full">
+              <span>Draft type</span>
+              <select
+                value={contentDraftType}
+                onChange={(event) => setContentDraftType(event.target.value as EducatorContentDraftType)}
+                disabled={isGeneratingContentDraft}
+              >
+                {CONTENT_DRAFT_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="course-management-field course-management-field-full">
+              <span>Draft title</span>
+              <input value={contentDraftTitle} onChange={(event) => setContentDraftTitle(event.target.value)} />
+            </label>
+
+            <label className="course-management-field course-management-field-full">
+              <span>Teacher prompt</span>
+              <textarea
+                value={contentDraftPrompt}
+                onChange={(event) => setContentDraftPrompt(event.target.value)}
+                rows={3}
+                placeholder="Optional focus, audience, or constraints"
+              />
+            </label>
+
+            <label className="course-management-field course-management-field-full">
+              <span>Material scope</span>
+              <textarea
+                value={contentDraftMaterialScope}
+                onChange={(event) => setContentDraftMaterialScope(event.target.value)}
+                rows={2}
+                placeholder="Optional material titles or sections"
+              />
+            </label>
+
+            {contentDrafts.length > 0 ? (
+              <label className="course-management-field course-management-field-full">
+                <span>Saved drafts</span>
+                <select
+                  value={selectedContentDraftUuid}
+                  onChange={(event) => setSelectedContentDraftUuid(event.target.value)}
+                >
+                  {contentDrafts.map((draft) => (
+                    <option key={draft.draftUuid} value={draft.draftUuid}>
+                      {formatContentDraftType(draft.contentType)} - {draft.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
+            {isLoadingContentDrafts ? (
+              <p className="course-management-inline-status course-management-field-full">Loading content drafts...</p>
+            ) : null}
+
+            {selectedContentDraft ? (
+              <div className="course-management-inline-note course-management-field-full">
+                <strong>
+                  {selectedContentDraft.isFallback ? "Fallback draft" : "AI draft"} · confidence{" "}
+                  {Math.round(selectedContentDraft.confidenceScore * 100)}%
+                </strong>
+                <span>
+                  {selectedContentDraft.provider ?? "unknown provider"}
+                  {selectedContentDraft.model ? ` / ${selectedContentDraft.model}` : ""}
+                  {selectedContentDraft.fallbackReason ? ` · ${selectedContentDraft.fallbackReason}` : ""}
+                </span>
+              </div>
+            ) : null}
+
+            <label className="course-management-field course-management-field-full">
+              <span>Structured content</span>
+              <textarea
+                value={contentDraftText}
+                onChange={(event) => setContentDraftText(event.target.value)}
+                rows={10}
+                placeholder="Generated draft content appears here"
+              />
+            </label>
+
+            <label className="course-management-field course-management-field-full">
+              <span>Source grounding JSON</span>
+              <textarea
+                value={contentDraftGrounding}
+                onChange={(event) => setContentDraftGrounding(event.target.value)}
+                rows={6}
+                placeholder='[{"sourceTitle":"...","sourceType":"pdf","reference":"...","rationale":"..."}]'
+              />
+            </label>
+
+            {contentDraftError ? (
+              <div className="course-management-inline-alert course-management-field-full">
+                <strong>Content draft action failed.</strong>
+                <span>{contentDraftError}</span>
+              </div>
+            ) : null}
+            {contentDraftSuccess ? <p className="course-management-inline-success">{contentDraftSuccess}</p> : null}
+
+            <div className="course-management-form-actions course-management-field-full">
+              <button
+                type="button"
+                className="course-management-action-button course-management-action-button-primary"
+                onClick={() => void handleGenerateContentDraft()}
+                disabled={isGeneratingContentDraft || isSavingContentDraft}
+              >
+                {isGeneratingContentDraft ? "Generating..." : "Generate draft"}
+              </button>
+              <button
+                type="button"
+                className="course-management-action-button"
+                onClick={() => void handleSaveContentDraft()}
+                disabled={!selectedContentDraft || isGeneratingContentDraft || isSavingContentDraft}
+              >
+                {isSavingContentDraft ? "Saving..." : "Save edited draft"}
+              </button>
+              <button
+                type="button"
+                className="course-management-action-button"
+                onClick={handleCopyContentDraftToModuleEditor}
+                disabled={!contentDraftText.trim()}
+              >
+                Copy to module editor
+              </button>
+            </div>
+          </div>
         </ManagementPanel>
       </div>
 
