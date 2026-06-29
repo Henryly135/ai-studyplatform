@@ -41,7 +41,18 @@ English version: [README.en.md](README.en.md)
 - 材料上传、分片上传、删除和公开访问。
 - 教师手动测验编辑、发布、学生作答。
 - AI 生成测验的上下文查询和题目写入。
+- 学生端 Study Planner 计划生成、读取、调整和重新生成。
 - 教师端课程与测验分析。
+
+学生端 Study Planner：
+
+- `POST /api/learning/study-plans`：学生创建学习计划。请求包含学习目标、每周可用时间、目标日期、偏好和材料摘要；`learning-service` 保存计划元数据、输入和用户可见计划内容，并通过内部接口调用 `ai-service` 生成计划内容。
+- `GET /api/learning/study-plans`：学生读取自己的学习计划列表。
+- `GET /api/learning/study-plans/{planUuid}`：学生读取自己的单个学习计划；其他用户或非拥有者不可访问。
+- `PATCH /api/learning/study-plans/{planUuid}`：学生调整自己的计划标题、状态、计划内容或备注。
+- `POST /api/learning/study-plans/{planUuid}/regenerate`：学生基于原始输入重新生成计划内容。
+
+以上接口仅限 learner 身份使用；`learning-service` 负责持久化，`ai-service` 只通过内部 `study-planner` 接口负责生成阶段计划、主题顺序、复习节奏和理由。
 
 核心文件：
 
@@ -51,6 +62,7 @@ English version: [README.en.md](README.en.md)
 - `services/learning-service/app/api/module_content.py`
 - `services/learning-service/app/api/quiz.py`
 - `services/learning-service/app/api/internal_quiz_generation.py`
+- `services/learning-service/app/api/study_planner.py`
 
 ## Communication API
 
@@ -76,6 +88,7 @@ English version: [README.en.md](README.en.md)
 - 材料索引任务注册、查询、重试和恢复。
 - 学习画像初始化和模块画像更新。
 - AI 测验生成 workflow。
+- Study Planner 内部生成接口，供 `learning-service` 调用。
 - Celery smoke task 和任务状态查询。
 
 核心文件：
@@ -85,6 +98,7 @@ English version: [README.en.md](README.en.md)
 - `services/ai-service/app/api/internal_index_jobs.py`
 - `services/ai-service/app/api/internal_profile_update.py`
 - `services/ai-service/app/api/internal_quiz_generation.py`
+- `services/ai-service/app/api/internal_study_planner.py`
 - `services/ai-service/app/api/profiles.py`
 
 ## 鉴权约定

@@ -41,7 +41,18 @@ Main capabilities:
 - Material upload, multipart upload, deletion, and public access.
 - Manual quiz authoring, publication, and learner attempts.
 - AI-generated quiz context lookup and generated-question persistence.
+- Learner Study Planner generation, lookup, adjustment, and regeneration.
 - Educator course and quiz analytics.
+
+Learner Study Planner:
+
+- `POST /api/learning/study-plans`: learner creates a study plan. The request includes the learning goal, weekly availability, target date, preferences, and material summaries; `learning-service` saves plan metadata, inputs, and learner-visible content, then calls `ai-service` through an internal endpoint to generate the plan content.
+- `GET /api/learning/study-plans`: learner lists their own study plans.
+- `GET /api/learning/study-plans/{planUuid}`: learner reads one owned study plan; other users and non-owners cannot access it.
+- `PATCH /api/learning/study-plans/{planUuid}`: learner adjusts the title, status, plan content, or notes for an owned plan.
+- `POST /api/learning/study-plans/{planUuid}/regenerate`: learner regenerates plan content from the original input.
+
+These endpoints are learner-only. `learning-service` owns persistence, while `ai-service` is called only through the internal `study-planner` endpoint to generate staged phases, topic order, review cadence, and rationale.
 
 Key files:
 
@@ -51,6 +62,7 @@ Key files:
 - `services/learning-service/app/api/module_content.py`
 - `services/learning-service/app/api/quiz.py`
 - `services/learning-service/app/api/internal_quiz_generation.py`
+- `services/learning-service/app/api/study_planner.py`
 
 ## Communication API
 
@@ -76,6 +88,7 @@ Main capabilities:
 - Material indexing job registration, status lookup, retry, and recovery.
 - Learner profile initialization and module profile updates.
 - AI quiz generation workflow.
+- Internal Study Planner generation endpoint for `learning-service`.
 - Celery smoke tasks and task status lookup.
 
 Key files:
@@ -85,6 +98,7 @@ Key files:
 - `services/ai-service/app/api/internal_index_jobs.py`
 - `services/ai-service/app/api/internal_profile_update.py`
 - `services/ai-service/app/api/internal_quiz_generation.py`
+- `services/ai-service/app/api/internal_study_planner.py`
 - `services/ai-service/app/api/profiles.py`
 
 ## Authentication

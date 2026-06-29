@@ -26,6 +26,7 @@ import HomeAiPage from "../pages/Home/HomeAiPage";
 import HomeOverviewPage from "../pages/Home/HomeOverviewPage";
 import HomePage from "../pages/Home/HomePage";
 import HomeSectionPage from "../pages/Home/HomeSectionPage";
+import StudyPlannerPage from "../pages/Home/StudyPlannerPage";
 import Login from "../pages/Login/Login";
 import EducatorInviteRegister from "../pages/Register/EducatorInviteRegister";
 import Register from "../pages/Register/Register";
@@ -81,6 +82,7 @@ function AppRoutes() {
                 <Route path="managed-courses" element={<HomeSectionPage sectionId="managed-courses" />} />
                 <Route path="communication" element={<HomeSectionPage sectionId="communication" />} />
                 <Route path="progress" element={<HomeSectionPage sectionId="progress" />} />
+                <Route path="study-planner" element={<StudyPlannerPage />} />
                 <Route path="ai" element={<HomeAiPage />} />
                 <Route path="ai/profile-init" element={<GlobalProfileInitPage />} />
                 <Route path="analytics" element={<HomeSectionPage sectionId="analytics" />} />

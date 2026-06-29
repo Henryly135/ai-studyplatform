@@ -292,5 +292,7 @@ ensure_index "${LEARNING_DB_NAME}" "quiz_attempts" "idx_quiz_attempts_quiz_learn
 ensure_index "${LEARNING_DB_NAME}" "quiz_attempts" "idx_quiz_attempts_module_learner_passed" "(module_id, learner_id, is_passed)"
 ensure_index "${LEARNING_DB_NAME}" "quiz_attempts" "idx_quiz_attempts_learner_id" "(learner_id)"
 ensure_index "${LEARNING_DB_NAME}" "quiz_attempt_answers" "idx_quiz_attempt_answers_attempt_order" "(quiz_attempt_id, question_order)"
+ensure_index "${LEARNING_DB_NAME}" "study_plans" "idx_study_plans_learner_updated" "(learner_id, updated_at)"
+ensure_index "${LEARNING_DB_NAME}" "study_plans" "idx_study_plans_status" "(status)"
 
 ensure_index "${COMMUNICATION_DB_NAME}" "course_forum_posts" "idx_course_forum_posts_course_pinned_created" "(course_id, is_pinned, pinned_at, created_at, post_id)"
