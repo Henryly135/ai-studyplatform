@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS educator_content_drafts (
+    content_draft_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    module_id BIGINT NOT NULL,
+    content_type ENUM('summary', 'learning_objectives', 'activity_suggestions', 'differentiated_explanation', 'slide_outline') NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    teacher_prompt TEXT NULL,
+    material_scope TEXT NULL,
+    structured_content_json JSON NOT NULL,
+    grounding_json JSON NOT NULL,
+    confidence_score DECIMAL(5,4) NOT NULL,
+    is_fallback BOOLEAN NOT NULL DEFAULT FALSE,
+    fallback_reason TEXT NULL,
+    provider_name VARCHAR(100) NULL,
+    provider_model VARCHAR(160) NULL,
+    created_by BIGINT NULL,
+    updated_by BIGINT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_educator_content_drafts_module FOREIGN KEY (module_id) REFERENCES modules (module_id) ON DELETE CASCADE,
+    INDEX idx_educator_content_drafts_module_updated (module_id, updated_at)
+) COMMENT='Stores educator-generated editable teaching content drafts with structured output and source grounding.';

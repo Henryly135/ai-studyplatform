@@ -15,6 +15,7 @@ from app.models.quiz_attempt_answers import QuizAttemptAnswer
 from app.models.study_plans import StudyPlan
 from app.models.short_answer_assessments import ShortAnswerAssessment
 from app.models.short_answer_submissions import ShortAnswerSubmission
+from app.models.educator_content_drafts import EducatorContentDraft
 
 __all__ = [
     "Course",
@@ -34,4 +35,5 @@ __all__ = [
     "StudyPlan",
     "ShortAnswerAssessment",
     "ShortAnswerSubmission",
+    "EducatorContentDraft",
 ]
