@@ -36,6 +36,12 @@ export const PROGRESS_SECTION: HomeSection = {
   path: "progress",
 };
 
+export const STUDY_PLANNER_SECTION: HomeSection = {
+  id: "study-planner",
+  title: "Study Planner",
+  path: "study-planner",
+};
+
 export const AI_SECTION: HomeSection = {
   id: "ai",
   title: "AI",
@@ -76,6 +82,7 @@ const HOME_SECTIONS_BY_IDENTITY: Record<Identity, HomeSection[]> = {
   Learner: [
     COURSE_CENTER_SECTION,
     MY_COURSES_SECTION,
+    STUDY_PLANNER_SECTION,
     COMMUNICATION_SECTION,
     AI_SECTION,
   ],
