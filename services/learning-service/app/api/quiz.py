@@ -4,13 +4,16 @@ from sqlalchemy.orm import Session
 from app.core.deps import require_identity_permission, require_identity_user
 from app.db.session import get_db_session
 from app.schemas.quiz import (
+    EducatorQuizDraftAcceptRequest,
+    EducatorQuizDraftGenerateRequest,
+    EducatorQuizDraftPreviewResponse,
     QuizAttemptHistoryResponse,
     QuizAttemptResultResponse,
     QuizAttemptStartResponse,
     QuizAttemptSubmitRequest,
     QuizAuthoringResponse,
-    QuizQuestionWriteRequest,
     QuizQuestionPageResponse,
+    QuizQuestionWriteRequest,
     QuizPublishRequest,
     QuizUpsertRequest,
 )
@@ -91,6 +94,53 @@ def list_quiz_authoring_questions(
         page=page,
         page_size=page_size,
         query=query,
+    )
+
+
+@router.post(
+    "/management/ai-draft",
+    summary="Preview AI Quiz Draft [Educator Owner/Admin]",
+    description="Generates an editable AI quiz draft preview from module materials without saving it to the quiz question pool.",
+    response_model=EducatorQuizDraftPreviewResponse,
+    response_model_exclude_none=True,
+)
+def generate_ai_quiz_draft(
+    course_uuid: str,
+    module_uuid: str,
+    payload: EducatorQuizDraftGenerateRequest,
+    current_user: dict = Depends(require_identity_permission(MODULE_UPDATE)),
+    session: Session = Depends(get_db_session),
+) -> EducatorQuizDraftPreviewResponse:
+    return QuizService(session).generate_educator_ai_draft(
+        course_uuid=course_uuid,
+        module_uuid=module_uuid,
+        payload=payload,
+        current_user=current_user,
+    )
+
+
+@router.post(
+    "/management/ai-draft/accept",
+    summary="Accept AI Quiz Draft [Educator Owner/Admin]",
+    description="Persists a reviewed AI quiz draft preview as the module's unpublished quiz authoring draft.",
+    response_model=QuizAuthoringResponse,
+    response_model_exclude_none=True,
+    status_code=status.HTTP_201_CREATED,
+)
+def accept_ai_quiz_draft(
+    course_uuid: str,
+    module_uuid: str,
+    payload: EducatorQuizDraftAcceptRequest,
+    include_questions: bool = True,
+    current_user: dict = Depends(require_identity_permission(MODULE_UPDATE)),
+    session: Session = Depends(get_db_session),
+) -> QuizAuthoringResponse:
+    return QuizService(session).accept_educator_ai_draft(
+        course_uuid=course_uuid,
+        module_uuid=module_uuid,
+        payload=payload,
+        current_user=current_user,
+        include_questions=include_questions,
     )
 
 

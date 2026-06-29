@@ -44,6 +44,7 @@ class QuizGenerationValidationService:
             {
                 "questionText": question.questionText.strip(),
                 "explanationText": question.explanationText.strip() if question.explanationText else None,
+                "sourceGrounding": question.sourceGrounding.strip(),
                 "sortOrder": question.sortOrder,
                 "isActive": True,
                 "options": normalized_options,

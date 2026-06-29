@@ -40,7 +40,7 @@ Main capabilities:
 - Course enrollment, unenrollment, and invite links.
 - Material upload, multipart upload, deletion, and public access.
 - Manual quiz authoring, publication, and learner attempts.
-- AI-generated quiz context lookup and generated-question persistence.
+- AI-generated quiz context lookup, generated-question persistence, and educator draft preview/acceptance.
 - Learner Study Planner generation, lookup, adjustment, and regeneration.
 - Educator course and quiz analytics.
 
@@ -53,6 +53,13 @@ Learner Study Planner:
 - `POST /api/learning/study-plans/{planUuid}/regenerate`: learner regenerates plan content from the original input.
 
 These endpoints are learner-only. `learning-service` owns persistence, while `ai-service` is called only through the internal `study-planner` endpoint to generate staged phases, topic order, review cadence, and rationale.
+
+Educator AI Quiz Draft:
+
+- `POST /api/learning/courses/{courseUuid}/modules/{moduleUuid}/quiz/management/ai-draft`: educator owner/admin generates an AI draft preview from module materials. The request includes title, question count, difficulty, question types, learning objectives, material scope, and educator instructions; `learning-service` calls internal `ai-service`, validates candidate counts, options, correct answers, and `sourceGrounding`, and does not write the question pool.
+- `POST /api/learning/courses/{courseUuid}/modules/{moduleUuid}/quiz/management/ai-draft/accept`: educator accepts a reviewed preview into the existing quiz authoring draft. The request can replace or append questions; saved results remain unpublished/draft and continue through the existing edit and publish flow.
+
+These endpoints are limited to educator owner/admin users with module update permission. `learning-service` persists quiz metadata, questions, options, and per-question source grounding; `ai-service` only generates candidate content.
 
 Key files:
 
@@ -88,6 +95,7 @@ Main capabilities:
 - Material indexing job registration, status lookup, retry, and recovery.
 - Learner profile initialization and module profile updates.
 - AI quiz generation workflow.
+- Internal educator AI quiz draft generation endpoint for `learning-service`.
 - Internal Study Planner generation endpoint for `learning-service`.
 - Celery smoke tasks and task status lookup.
 
@@ -100,6 +108,10 @@ Key files:
 - `services/ai-service/app/api/internal_quiz_generation.py`
 - `services/ai-service/app/api/internal_study_planner.py`
 - `services/ai-service/app/api/profiles.py`
+
+Internal AI quiz endpoint:
+
+- `POST /api/ai/internal/quiz-generation/educator-draft`: internal endpoint called only by `learning-service` with the internal token. It returns candidate questions, retrieval context, and the plan; each question includes `sourceGrounding`. nginx should not expose this endpoint directly to browsers.
 
 ## Authentication
 
