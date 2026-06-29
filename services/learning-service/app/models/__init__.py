@@ -12,6 +12,7 @@ from app.models.quiz_questions import QuizQuestion
 from app.models.quiz_question_options import QuizQuestionOption
 from app.models.quiz_attempts import QuizAttempt
 from app.models.quiz_attempt_answers import QuizAttemptAnswer
+from app.models.study_plans import StudyPlan
 
 __all__ = [
     "Course",
@@ -28,4 +29,5 @@ __all__ = [
     "QuizQuestionOption",
     "QuizAttempt",
     "QuizAttemptAnswer",
+    "StudyPlan",
 ]
