@@ -48,7 +48,7 @@ English version: [roadmap.en.md](roadmap.en.md)
 
 - 在 `ai-service` 中抽象 chat、embedding、结构化生成和错误处理接口，保留 Gemini 作为默认实现。
 - 增加 provider 配置，例如 `AI_CHAT_PROVIDER`、`AI_EMBEDDING_PROVIDER`、模型名、base URL 和对应 API key；兼容现有 `GEMINI_API_KEY`。
-- 配置层已预留 `AI_CHAT_*`、`DEEPSEEK_API_KEY` 和 `AI_EMBEDDING_API_KEY` 入口；业务调用链接入仍属于后续 adapter 工作。
+- Chat provider adapter 已接入 `AI_CHAT_*`、`DEEPSEEK_API_KEY` 和 `GEMINI_API_KEY` 兼容路径；embedding provider 仍独立配置，切换前需要新增 adapter 并重新索引材料。
 - 优先支持 OpenAI-compatible API，用于接入 DeepSeek、OpenRouter 和其他兼容服务；再按需扩展 Claude 等专有 SDK。
 - 统一 token usage、quota/rate-limit、timeout、重试、日志和 prompt 记录字段。
 - 为 embedding provider 切换增加向量维度校验、索引版本标记和重新索引提示，避免新旧 embedding 混用。

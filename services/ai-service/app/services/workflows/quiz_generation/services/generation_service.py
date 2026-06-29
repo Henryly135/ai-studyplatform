@@ -4,11 +4,9 @@ import json
 import logging
 import time
 
-from google import genai
-from google.genai import errors as genai_errors, types
-
 from app.core.config import settings
 from app.core.prompts import get_prompt_template
+from app.services.providers import AIProviderConfigurationError, AIProviderError, ChatGenerationRequest, get_chat_provider
 from app.services.workflows.quiz_generation.schemas import (
     QuizGenerationCandidateSetRead,
     QuizGenerationContextRead,
@@ -37,9 +35,6 @@ class QuizCandidateGenerationService:
         plan: QuizGenerationPlanRead,
         profile_context: QuizGenerationProfileContextRead | None = None,
     ) -> QuizGenerationCandidateSetRead:
-        if not settings.gemini_api_key:
-            raise invalid_request_error("GEMINI_API_KEY is not configured")
-
         prompt_template = get_prompt_template(self.PROMPT_TEMPLATE_NAME)
         prompt = self._build_prompt(
             request=request,
@@ -48,22 +43,28 @@ class QuizCandidateGenerationService:
             plan=plan,
             profile_context=profile_context,
         )
-        client = genai.Client(api_key=settings.gemini_api_key)
+        try:
+            provider = get_chat_provider()
+        except AIProviderConfigurationError as exc:
+            raise invalid_request_error(str(exc)) from exc
+
         response = None
         for attempt in range(1, self.MAX_PROVIDER_ATTEMPTS + 1):
             try:
-                response = client.models.generate_content(
-                    model=settings.ai_demo_model_name,
-                    config=types.GenerateContentConfig(
+                response = provider.generate(
+                    ChatGenerationRequest(
+                        model=settings.ai_chat_model,
                         system_instruction=prompt_template.system_instruction,
+                        contents=prompt,
                         temperature=0.2,
                         max_output_tokens=4000,
                         response_mime_type="application/json",
-                    ),
-                    contents=prompt,
+                    )
                 )
                 break
-            except genai_errors.ServerError as exc:
+            except AIProviderError as exc:
+                if exc.error_type not in {"provider_timeout", "transient_network_error"}:
+                    raise invalid_request_error(f"Quiz generation failed: {exc}") from exc
                 if attempt >= self.MAX_PROVIDER_ATTEMPTS:
                     raise http_error(
                         status_code=503,
@@ -72,7 +73,7 @@ class QuizCandidateGenerationService:
                     ) from exc
                 backoff_seconds = self.RETRY_BACKOFF_SECONDS[min(attempt - 1, len(self.RETRY_BACKOFF_SECONDS) - 1)]
                 logger.warning(
-                    "Quiz generation hit Gemini provider error; retrying",
+                    "Quiz generation hit AI provider error; retrying",
                     extra={
                         "attempt": attempt,
                         "maxAttempts": self.MAX_PROVIDER_ATTEMPTS,
@@ -80,8 +81,6 @@ class QuizCandidateGenerationService:
                     },
                 )
                 time.sleep(backoff_seconds)
-            except genai_errors.ClientError as exc:
-                raise invalid_request_error(f"Quiz generation failed: {exc}") from exc
 
         content = (response.text or "").strip()
         if not content:

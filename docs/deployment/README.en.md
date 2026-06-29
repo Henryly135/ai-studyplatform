@@ -17,7 +17,7 @@ Rules:
 - Do not commit `.env`.
 - `.env.example` includes a local demo admin account; other real secrets remain safe placeholders.
 - Put real secrets in local `.env`, server environment variables, or GitHub Secrets.
-- Keep DeepSeek/OpenAI-compatible keys only in local `.env` or deployment secrets; this phase prepares configuration only and does not connect DeepSeek to existing AI calls.
+- Keep DeepSeek/OpenAI-compatible keys only in local `.env` or deployment secrets; chat can use them through the provider adapter, while embeddings remain separately configured.
 
 Local demo admin account:
 
@@ -37,12 +37,12 @@ SMTP_FROM=your_email@example.com
 GEMINI_API_KEY=your_gemini_api_key
 AI_CHAT_PROVIDER=deepseek
 AI_CHAT_BASE_URL=https://api.deepseek.com
-AI_CHAT_MODEL=deepseek-v4-flash
+AI_CHAT_MODEL=deepseek-chat
 AI_CHAT_API_KEY=your_local_deepseek_key
 DEEPSEEK_API_KEY=your_local_deepseek_key
 ```
 
-`GEMINI_API_KEY` remains the compatibility entry point for current Gemini logic. `AI_CHAT_*` and `DEEPSEEK_API_KEY` are the future provider-adapter configuration entry points, and setting a DeepSeek key alone does not replace current Gemini calls.
+Gemini remains the default chat provider and still supports `GEMINI_API_KEY`. DeepSeek/OpenRouter and other OpenAI-compatible chat providers use `AI_CHAT_PROVIDER`, `AI_CHAT_BASE_URL`, `AI_CHAT_MODEL`, and `AI_CHAT_API_KEY`. The embedding provider is configured separately and currently only supports Gemini; changing embedding providers requires adding an adapter and reindexing materials.
 
 ## Docker Compose
 

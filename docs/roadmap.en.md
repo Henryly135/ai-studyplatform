@@ -48,7 +48,7 @@ Implementation direction:
 
 - Introduce provider interfaces in `ai-service` for chat, embeddings, structured generation, and error handling, while keeping Gemini as the default implementation.
 - Add provider configuration such as `AI_CHAT_PROVIDER`, `AI_EMBEDDING_PROVIDER`, model names, base URLs, and provider-specific API keys; keep backward compatibility with `GEMINI_API_KEY`.
-- The configuration layer now reserves `AI_CHAT_*`, `DEEPSEEK_API_KEY`, and `AI_EMBEDDING_API_KEY`; wiring business calls into adapters remains later adapter work.
+- The chat provider adapter now uses `AI_CHAT_*`, `DEEPSEEK_API_KEY`, and `GEMINI_API_KEY` compatibility paths; embedding providers remain separately configured and require a dedicated adapter plus material reindexing before switching.
 - Prioritise OpenAI-compatible APIs first so DeepSeek, OpenRouter, and similar services can be integrated through one adapter; add Claude or other dedicated SDKs later if needed.
 - Standardise token usage, quota/rate-limit handling, timeout handling, retries, logs, and prompt records.
 - Add embedding dimension checks, index-version metadata, and reindexing guidance when switching embedding providers, so old and new embeddings are not mixed accidentally.
