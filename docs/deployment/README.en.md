@@ -75,6 +75,12 @@ CI workflow:
 
 CI uses `scripts/create-ci-env.sh` to generate a safe placeholder `.env.ci`, so it does not require real Gemini, SMTP, or production secrets. Future feature tests are collected automatically when placed in the relevant service `tests/` directory.
 
+Branch workflow:
+
+- Module branches open pull requests into `develop` first.
+- `develop` then opens pull requests into `main`.
+- `Main PR Guard` blocks non-`develop` branches from merging directly into `main`.
+
 Deployment workflows:
 
 - `deploy-dev.yml` default branch: `develop`.

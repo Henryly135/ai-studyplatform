@@ -1,0 +1,25 @@
+name: Main PR Guard
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  only-develop-to-main:
+    name: Only develop can target main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate source branch
+        run: |
+          echo "PR base branch: ${{ github.event.pull_request.base.ref }}"
+          echo "PR head branch: ${{ github.event.pull_request.head.ref }}"
+          if [ "${{ github.event.pull_request.head.ref }}" != "develop" ]; then
+            echo "Pull requests into main must come from develop."
+            echo "Open feature, fix, or refactor work into develop first."
+            exit 1
+          fi
+          echo "Branch flow check passed."

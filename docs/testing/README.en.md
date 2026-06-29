@@ -6,7 +6,7 @@ Testing is organized into backend pytest, frontend lint/build, Docker Compose va
 
 ## GitHub CI/CD Gate
 
-`.github/workflows/ci.yml` is the current quality gate. It runs on pushes to `main`, `feature/**`, `fix/**`, and `refactor/**`, and on pull requests targeting `main`.
+`.github/workflows/ci.yml` is the current quality gate. It runs on pushes to `main`, `develop`, `feature/**`, `fix/**`, and `refactor/**`, and on pull requests targeting `develop` or `main`.
 
 CI always runs:
 
@@ -31,6 +31,14 @@ Every new feature should add tests with the feature change:
 - AI feature tests must mock providers and must not depend on real external API keys.
 - Permission, error-handling, and cross-service flows should cover success and failure paths.
 - Frontend changes must at least pass lint/build; once Vitest or Playwright is introduced, put the test command in `frontend/package.json` and wire it into CI.
+
+## Branch and PR Workflow
+
+- Create each module branch from the latest `develop`, for example `feature/study-planner`.
+- Open module pull requests into `develop` first, and merge only after CI passes.
+- When `develop` reaches a demo-ready state, open a pull request from `develop` into `main`.
+- Pull requests into `main` must come from `develop`; other source branches are blocked by `Main PR Guard`.
+- Keep `main` as the stable branch containing only CI-verified work.
 
 ## Backend Tests
 

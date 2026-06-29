@@ -6,7 +6,7 @@ English version: [README.en.md](README.en.md)
 
 ## GitHub CI/CD 门禁
 
-`.github/workflows/ci.yml` 是当前唯一质量门禁，push 到 `main`、`feature/**`、`fix/**`、`refactor/**`，以及 PR 到 `main` 时都会运行。
+`.github/workflows/ci.yml` 是当前质量门禁，push 到 `main`、`develop`、`feature/**`、`fix/**`、`refactor/**`，以及 PR 到 `develop` 或 `main` 时都会运行。
 
 CI 固定执行：
 
@@ -31,6 +31,14 @@ docker compose --env-file .env.ci -f infra/docker-compose.yml config --quiet
 - AI 功能测试必须 mock provider，不能依赖真实外部 API key。
 - 涉及权限、错误处理、跨服务调用的数据流，需要覆盖成功路径和失败路径。
 - 前端变更至少通过 lint/build；引入 Vitest 或 Playwright 后，测试命令统一放入 `frontend/package.json` 并接入 CI。
+
+## 分支与 PR 工作流
+
+- 每个模块从最新 `develop` 创建独立分支，例如 `feature/study-planner`。
+- 模块分支先开 PR 到 `develop`，CI 通过后合并。
+- `develop` 达到可展示状态后，再开 PR 到 `main`。
+- PR 到 `main` 必须来自 `develop`，其他来源会被 `Main PR Guard` 拦截。
+- `main` 只保留已通过 CI 的稳定版本。
 
 ## 后端测试
 

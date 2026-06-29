@@ -75,6 +75,12 @@ CI workflow：
 
 CI 使用 `scripts/create-ci-env.sh` 生成安全占位 `.env.ci`，不依赖真实 Gemini、SMTP 或生产密钥。后续新功能测试只要放入对应服务 `tests/` 目录，就会被 CI 自动执行。
 
+分支工作流：
+
+- 模块分支先 PR 到 `develop`。
+- `develop` 再 PR 到 `main`。
+- `Main PR Guard` 会阻止非 `develop` 分支直接合并到 `main`。
+
 部署 workflow：
 
 - `deploy-dev.yml` 默认部署分支：`develop`。
