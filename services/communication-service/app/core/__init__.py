@@ -1,0 +1,1 @@
+"""Communication service core configuration."""

@@ -1,0 +1,58 @@
+.terms-page {
+  min-height: 100vh;
+  padding: 3rem 1.5rem;
+  background: var(--color-bg, #f9fafb);
+}
+
+.terms-container {
+  max-width: 720px;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 12px;
+  padding: 2.5rem 3rem;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.terms-header h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.terms-effective {
+  color: #6b7280;
+  font-size: 0.875rem;
+  margin-bottom: 2rem;
+}
+
+.terms-container section {
+  margin-bottom: 1.75rem;
+}
+
+.terms-container h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.terms-container p,
+.terms-container li {
+  font-size: 0.9rem;
+  line-height: 1.7;
+  color: #374151;
+}
+
+.terms-container ul {
+  padding-left: 1.25rem;
+  margin-top: 0.25rem;
+}
+
+.terms-container li {
+  margin-bottom: 0.4rem;
+}
+
+.terms-back {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #e5e7eb;
+}

@@ -1,0 +1,728 @@
+﻿name: ${COMPOSE_PROJECT_NAME:-ai-studyplatform}
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      TZ: ${APP_TIMEZONE}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_SHARED_USER: ${MYSQL_SHARED_USER}
+      MYSQL_SHARED_PASSWORD: ${MYSQL_SHARED_PASSWORD}
+      MYSQL_TCP_PORT: ${MYSQL_INTERNAL_PORT}
+      IDENTITY_DB_NAME: ${IDENTITY_DB_NAME}
+      IDENTITY_DB_USER: ${IDENTITY_DB_USER}
+      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD}
+      COMMUNICATION_DB_NAME: ${COMMUNICATION_DB_NAME}
+      COMMUNICATION_DB_USER: ${COMMUNICATION_DB_USER}
+      COMMUNICATION_DB_PASSWORD: ${COMMUNICATION_DB_PASSWORD}
+      LEARNING_DB_NAME: ${LEARNING_DB_NAME}
+      LEARNING_DB_USER: ${LEARNING_DB_USER}
+      LEARNING_DB_PASSWORD: ${LEARNING_DB_PASSWORD}
+    ports:
+      - "${MYSQL_PORT}:${MYSQL_INTERNAL_PORT}"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../database:/bootstrap:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -P $$MYSQL_TCP_PORT -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres-ai:
+    image: pgvector/pgvector:pg17
+    environment:
+      TZ: ${APP_TIMEZONE}
+      POSTGRES_DB: ${AI_DB_NAME}
+      POSTGRES_USER: ${AI_DB_USER}
+      POSTGRES_PASSWORD: ${AI_DB_PASSWORD}
+    ports:
+      - "${AI_DB_EXTERNAL_PORT}:${AI_DB_PORT}"
+    volumes:
+      - postgres_ai_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    environment:
+      TZ: ${APP_TIMEZONE}
+      REDIS_INTERNAL_PORT: ${REDIS_INTERNAL_PORT}
+    ports:
+      - "${REDIS_PORT}:${REDIS_INTERNAL_PORT}"
+    volumes:
+      - redis_data:/data
+    command: sh -c "redis-server --appendonly yes --port $${REDIS_INTERNAL_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p $$REDIS_INTERNAL_PORT ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis-quiz:
+    image: redis:7-alpine
+    environment:
+      TZ: ${APP_TIMEZONE}
+      QUIZ_REDIS_INTERNAL_PORT: ${QUIZ_REDIS_INTERNAL_PORT}
+    ports:
+      - "${QUIZ_REDIS_PORT}:${QUIZ_REDIS_INTERNAL_PORT}"
+    command: sh -c "redis-server --save '' --appendonly no --port $${QUIZ_REDIS_INTERNAL_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p $$QUIZ_REDIS_INTERNAL_PORT ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    environment:
+      TZ: ${APP_TIMEZONE}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+      MINIO_API_PORT: ${MINIO_API_PORT}
+      MINIO_CONSOLE_PORT: ${MINIO_CONSOLE_PORT}
+    ports:
+      - "${MINIO_API_PORT}:${MINIO_API_PORT}"
+      - "${MINIO_CONSOLE_PORT}:${MINIO_CONSOLE_PORT}"
+    volumes:
+      - minio_data:/data
+    command: server /data --address ":${MINIO_API_PORT}" --console-address ":${MINIO_CONSOLE_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:$$MINIO_API_PORT/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    environment:
+      TZ: ${APP_TIMEZONE}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      AI_PROFILE_BUCKET: ${AI_PROFILE_BUCKET}
+      MINIO_API_PORT: ${MINIO_API_PORT}
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ../services/ai-service/app/assets/templates:/bootstrap/profile-templates:ro
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >
+        mc alias set local "http://minio:$$MINIO_API_PORT" "$$MINIO_ACCESS_KEY" "$$MINIO_SECRET_KEY" &&
+        mc mb --ignore-existing "local/$$MINIO_BUCKET" &&
+        mc anonymous set download "local/$$MINIO_BUCKET" &&
+        mc mb --ignore-existing "local/$$AI_PROFILE_BUCKET" &&
+        mc anonymous set private "local/$$AI_PROFILE_BUCKET" &&
+        mc cp "/bootstrap/profile-templates/default_global_profile_v1.md" "local/$$AI_PROFILE_BUCKET/templates/global/default_global_profile_v1.md" &&
+        mc cp "/bootstrap/profile-templates/default_module_profile_v1.json" "local/$$AI_PROFILE_BUCKET/templates/module/default_module_profile_v1.json"
+
+  postgres-schema-apply:
+    image: pgvector/pgvector:pg17
+    environment:
+      TZ: ${APP_TIMEZONE}
+      PGPASSWORD: ${AI_DB_PASSWORD}
+      AI_DB_HOST: postgres-ai
+      AI_DB_PORT: ${AI_DB_PORT}
+      AI_DB_NAME: ${AI_DB_NAME}
+      AI_DB_USER: ${AI_DB_USER}
+      AI_EMBEDDING_DIMENSION: ${AI_EMBEDDING_DIMENSION:-1536}
+    volumes:
+      - ../database/ai-init:/bootstrap/ai-init:ro
+    depends_on:
+      postgres-ai:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - >
+        for f in /bootstrap/ai-init/*.sql; do
+          echo "Applying $$f";
+          psql -v ON_ERROR_STOP=1 -v AI_EMBEDDING_DIMENSION="$$AI_EMBEDDING_DIMENSION" -h "$$AI_DB_HOST" -p "$$AI_DB_PORT" -U "$$AI_DB_USER" -d "$$AI_DB_NAME" -f "$$f";
+        done
+
+  mysql-schema-apply:
+    image: mysql:8.0
+    environment:
+      TZ: ${APP_TIMEZONE}
+      MYSQL_HOST: mysql
+      MYSQL_INTERNAL_PORT: ${MYSQL_INTERNAL_PORT}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_SHARED_USER: ${MYSQL_SHARED_USER}
+      MYSQL_SHARED_PASSWORD: ${MYSQL_SHARED_PASSWORD}
+      IDENTITY_DB_NAME: ${IDENTITY_DB_NAME}
+      IDENTITY_DB_USER: ${IDENTITY_DB_USER}
+      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD}
+      DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL:-eduplatform.aibot@gmail.com}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-Eduadmin123!}
+      DEFAULT_ADMIN_FULL_NAME: ${DEFAULT_ADMIN_FULL_NAME:-Edu Platform Admin}
+      COMMUNICATION_DB_NAME: ${COMMUNICATION_DB_NAME}
+      COMMUNICATION_DB_USER: ${COMMUNICATION_DB_USER}
+      COMMUNICATION_DB_PASSWORD: ${COMMUNICATION_DB_PASSWORD}
+      LEARNING_DB_NAME: ${LEARNING_DB_NAME}
+      LEARNING_DB_USER: ${LEARNING_DB_USER}
+      LEARNING_DB_PASSWORD: ${LEARNING_DB_PASSWORD}
+    volumes:
+      - ../database:/bootstrap:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - /bootstrap/mysql-apply/apply_mysql_schemas.sh
+
+  identity-service:
+    build:
+      context: ..
+      dockerfile: services/identity-service/Dockerfile
+    working_dir: /app
+    command: uvicorn app.main:app --host 0.0.0.0 --port ${IDENTITY_PORT} --reload
+    environment:
+      TZ: ${APP_TIMEZONE}
+      APP_TIMEZONE: ${APP_TIMEZONE}
+      IDENTITY_PORT: ${IDENTITY_PORT}
+      DB_HOST: mysql
+      DB_PORT: ${MYSQL_INTERNAL_PORT}
+      DB_USER: ${IDENTITY_DB_USER}
+      DB_PASSWORD: ${IDENTITY_DB_PASSWORD}
+      DB_NAME: ${IDENTITY_DB_NAME}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TLS: ${SMTP_TLS:-true}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      PUBLIC_FRONTEND_URL: ${PUBLIC_FRONTEND_URL:-}
+      PUBLIC_FRONTEND_PORT: ${PUBLIC_FRONTEND_PORT:-}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      VERIFY_EMAIL_PATH: ${VERIFY_EMAIL_PATH:-/auth/verify-email}
+      IDENTITY_SERVICE_URL: ${IDENTITY_SERVICE_URL}
+      AI_SERVICE_URL: ${AI_SERVICE_URL}
+      COMMUNICATION_SERVICE_URL: ${COMMUNICATION_SERVICE_URL}
+      LEARNING_SERVICE_URL: ${LEARNING_SERVICE_URL}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_INTERNAL_PORT}
+      REDIS_DB: ${REDIS_DB}
+      CELERY_BROKER_URL: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_RESULT_BACKEND: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER}
+      IDENTITY_CELERY_TASK_DEFAULT_QUEUE: ${IDENTITY_CELERY_TASK_DEFAULT_QUEUE:-identity.default}
+      COMMUNICATION_CELERY_TASK_DEFAULT_QUEUE: ${COMMUNICATION_CELERY_TASK_DEFAULT_QUEUE:-communication.notifications}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-2}
+      CELERY_TASK_TIME_LIMIT: ${CELERY_TASK_TIME_LIMIT:-300}
+      CELERY_TASK_SOFT_TIME_LIMIT: ${CELERY_TASK_SOFT_TIME_LIMIT:-240}
+      CELERY_RESULT_EXPIRES: ${CELERY_RESULT_EXPIRES:-3600}
+      CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: ${CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP:-true}
+    ports:
+      - "${IDENTITY_PORT}:${IDENTITY_PORT}"
+    volumes:
+      - ../services/identity-service:/app
+      - ../packages/platform_common:/packages/platform_common
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mysql-schema-apply:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen(f\"http://localhost:{os.environ['IDENTITY_PORT']}/health\")"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  communication-service:
+    build:
+      context: ..
+      dockerfile: services/communication-service/Dockerfile
+    working_dir: /app
+    command: uvicorn app.main:app --host 0.0.0.0 --port ${COMMUNICATION_PORT} --reload
+    environment:
+      TZ: ${APP_TIMEZONE}
+      COMMUNICATION_PORT: ${COMMUNICATION_PORT}
+      DB_HOST: mysql
+      DB_PORT: ${MYSQL_INTERNAL_PORT}
+      DB_USER: ${COMMUNICATION_DB_USER}
+      DB_PASSWORD: ${COMMUNICATION_DB_PASSWORD}
+      DB_NAME: ${COMMUNICATION_DB_NAME}
+      IDENTITY_SERVICE_URL: ${IDENTITY_SERVICE_URL}
+      AI_SERVICE_URL: ${AI_SERVICE_URL}
+      COMMUNICATION_SERVICE_URL: ${COMMUNICATION_SERVICE_URL}
+      LEARNING_SERVICE_URL: ${LEARNING_SERVICE_URL}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      PUBLIC_FRONTEND_URL: ${PUBLIC_FRONTEND_URL:-}
+      PUBLIC_FRONTEND_PORT: ${PUBLIC_FRONTEND_PORT:-}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_INTERNAL_PORT}
+      REDIS_DB: ${REDIS_DB}
+      CELERY_BROKER_URL: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_RESULT_BACKEND: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER}
+      COMMUNICATION_CELERY_TASK_DEFAULT_QUEUE: ${COMMUNICATION_CELERY_TASK_DEFAULT_QUEUE:-communication.notifications}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-2}
+      CELERY_TASK_TIME_LIMIT: ${CELERY_TASK_TIME_LIMIT:-300}
+      CELERY_TASK_SOFT_TIME_LIMIT: ${CELERY_TASK_SOFT_TIME_LIMIT:-240}
+      CELERY_RESULT_EXPIRES: ${CELERY_RESULT_EXPIRES:-3600}
+      CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: ${CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP:-true}
+    ports:
+      - "${COMMUNICATION_PORT}:${COMMUNICATION_PORT}"
+    volumes:
+      - ../services/communication-service:/app
+      - ../packages/platform_common:/packages/platform_common
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mysql-schema-apply:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen(f\"http://localhost:{os.environ['COMMUNICATION_PORT']}/health\")"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  communication-worker:
+    build:
+      context: ..
+      dockerfile: services/communication-service/Dockerfile
+    working_dir: /app
+    command: celery -A app.core.celery_app.celery_app worker --loglevel=info -Q ${COMMUNICATION_CELERY_TASK_DEFAULT_QUEUE:-communication.notifications}
+    environment:
+      TZ: ${APP_TIMEZONE}
+      APP_TIMEZONE: ${APP_TIMEZONE}
+      COMMUNICATION_PORT: ${COMMUNICATION_PORT}
+      DB_HOST: mysql
+      DB_PORT: ${MYSQL_INTERNAL_PORT}
+      DB_USER: ${COMMUNICATION_DB_USER}
+      DB_PASSWORD: ${COMMUNICATION_DB_PASSWORD}
+      DB_NAME: ${COMMUNICATION_DB_NAME}
+      IDENTITY_SERVICE_URL: ${IDENTITY_SERVICE_URL}
+      AI_SERVICE_URL: ${AI_SERVICE_URL}
+      COMMUNICATION_SERVICE_URL: ${COMMUNICATION_SERVICE_URL}
+      LEARNING_SERVICE_URL: ${LEARNING_SERVICE_URL}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      PUBLIC_FRONTEND_URL: ${PUBLIC_FRONTEND_URL:-}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_INTERNAL_PORT}
+      REDIS_DB: ${REDIS_DB}
+      CELERY_BROKER_URL: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_RESULT_BACKEND: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER}
+      COMMUNICATION_CELERY_TASK_DEFAULT_QUEUE: ${COMMUNICATION_CELERY_TASK_DEFAULT_QUEUE:-communication.notifications}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-2}
+      CELERY_TASK_TIME_LIMIT: ${CELERY_TASK_TIME_LIMIT:-300}
+      CELERY_TASK_SOFT_TIME_LIMIT: ${CELERY_TASK_SOFT_TIME_LIMIT:-240}
+      CELERY_RESULT_EXPIRES: ${CELERY_RESULT_EXPIRES:-3600}
+      CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: ${CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP:-true}
+    volumes:
+      - ../services/communication-service:/app
+      - ../packages/platform_common:/packages/platform_common
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mysql-schema-apply:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  learning-service:
+    build:
+      context: ..
+      dockerfile: services/learning-service/Dockerfile
+    working_dir: /app
+    command: uvicorn app.main:app --host 0.0.0.0 --port ${LEARNING_PORT} --reload
+    environment:
+      TZ: ${APP_TIMEZONE}
+      APP_TIMEZONE: ${APP_TIMEZONE}
+      LEARNING_PORT: ${LEARNING_PORT}
+      DB_HOST: mysql
+      DB_PORT: ${MYSQL_INTERNAL_PORT}
+      DB_USER: ${LEARNING_DB_USER}
+      DB_PASSWORD: ${LEARNING_DB_PASSWORD}
+      DB_NAME: ${LEARNING_DB_NAME}
+      IDENTITY_SERVICE_URL: ${IDENTITY_SERVICE_URL}
+      AI_SERVICE_URL: ${AI_SERVICE_URL}
+      COMMUNICATION_SERVICE_URL: ${COMMUNICATION_SERVICE_URL}
+      LEARNING_SERVICE_URL: ${LEARNING_SERVICE_URL}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      PUBLIC_FRONTEND_URL: ${PUBLIC_FRONTEND_URL:-}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_INTERNAL_PORT}
+      REDIS_DB: ${REDIS_DB}
+      CELERY_BROKER_URL: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_RESULT_BACKEND: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER}
+      CELERY_TASK_DEFAULT_QUEUE: ${LEARNING_CELERY_TASK_DEFAULT_QUEUE:-learning.quiz}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-2}
+      CELERY_TASK_TIME_LIMIT: ${CELERY_TASK_TIME_LIMIT:-300}
+      CELERY_TASK_SOFT_TIME_LIMIT: ${CELERY_TASK_SOFT_TIME_LIMIT:-240}
+      CELERY_RESULT_EXPIRES: ${CELERY_RESULT_EXPIRES:-3600}
+      CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: ${CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP:-true}
+      QUIZ_REDIS_HOST: ${QUIZ_REDIS_HOST}
+      QUIZ_REDIS_PORT: ${QUIZ_REDIS_INTERNAL_PORT}
+      QUIZ_REDIS_DB: ${QUIZ_REDIS_DB}
+      QUIZ_REDIS_URL: redis://${QUIZ_REDIS_HOST}:${QUIZ_REDIS_INTERNAL_PORT}/${QUIZ_REDIS_DB}
+      QUIZ_ATTEMPT_SESSION_GRACE_SECONDS: ${QUIZ_ATTEMPT_SESSION_GRACE_SECONDS:-300}
+      QUIZ_ATTEMPT_SESSION_FALLBACK_TTL_SECONDS: ${QUIZ_ATTEMPT_SESSION_FALLBACK_TTL_SECONDS:-7200}
+      QUIZ_ATTEMPT_SUBMIT_LOCK_SECONDS: ${QUIZ_ATTEMPT_SUBMIT_LOCK_SECONDS:-60}
+      QUIZ_ATTEMPT_COUNTER_TTL_SECONDS: ${QUIZ_ATTEMPT_COUNTER_TTL_SECONDS:-2592000}
+      LEARNING_MATERIAL_ROOT: ${LEARNING_MATERIAL_ROOT}
+      LEARNING_MATERIAL_PUBLIC_BASE_URL: ${LEARNING_MATERIAL_PUBLIC_BASE_URL}
+      LEARNING_MATERIAL_AI_QUEUE: ${LEARNING_MATERIAL_AI_QUEUE}
+      OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL}
+      MINIO_SIGNED_URL_EXPIRES_SECONDS: ${MINIO_SIGNED_URL_EXPIRES_SECONDS}
+    ports:
+      - "${LEARNING_PORT}:${LEARNING_PORT}"
+    volumes:
+      - ../services/learning-service:/app
+      - ../packages/platform_common:/packages/platform_common
+      - ../storage/learning-materials:${LEARNING_MATERIAL_ROOT}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mysql-schema-apply:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      redis-quiz:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen(f\"http://localhost:{os.environ['LEARNING_PORT']}/health\")"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  learning-worker:
+    build:
+      context: ..
+      dockerfile: services/learning-service/Dockerfile
+    working_dir: /app
+    command: celery -A app.core.celery_app.celery_app worker --loglevel=info -Q ${LEARNING_CELERY_TASK_DEFAULT_QUEUE:-learning.quiz}
+    environment:
+      TZ: ${APP_TIMEZONE}
+      APP_TIMEZONE: ${APP_TIMEZONE}
+      LEARNING_PORT: ${LEARNING_PORT}
+      DB_HOST: mysql
+      DB_PORT: ${MYSQL_INTERNAL_PORT}
+      DB_USER: ${LEARNING_DB_USER}
+      DB_PASSWORD: ${LEARNING_DB_PASSWORD}
+      DB_NAME: ${LEARNING_DB_NAME}
+      IDENTITY_SERVICE_URL: ${IDENTITY_SERVICE_URL}
+      AI_SERVICE_URL: ${AI_SERVICE_URL}
+      COMMUNICATION_SERVICE_URL: ${COMMUNICATION_SERVICE_URL}
+      LEARNING_SERVICE_URL: ${LEARNING_SERVICE_URL}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      PUBLIC_FRONTEND_URL: ${PUBLIC_FRONTEND_URL:-}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_INTERNAL_PORT}
+      REDIS_DB: ${REDIS_DB}
+      CELERY_BROKER_URL: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_RESULT_BACKEND: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER}
+      CELERY_TASK_DEFAULT_QUEUE: ${LEARNING_CELERY_TASK_DEFAULT_QUEUE:-learning.quiz}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-2}
+      CELERY_TASK_TIME_LIMIT: ${CELERY_TASK_TIME_LIMIT:-300}
+      CELERY_TASK_SOFT_TIME_LIMIT: ${CELERY_TASK_SOFT_TIME_LIMIT:-240}
+      CELERY_RESULT_EXPIRES: ${CELERY_RESULT_EXPIRES:-3600}
+      CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: ${CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP:-true}
+      QUIZ_REDIS_HOST: ${QUIZ_REDIS_HOST}
+      QUIZ_REDIS_PORT: ${QUIZ_REDIS_INTERNAL_PORT}
+      QUIZ_REDIS_DB: ${QUIZ_REDIS_DB}
+      QUIZ_REDIS_URL: redis://${QUIZ_REDIS_HOST}:${QUIZ_REDIS_INTERNAL_PORT}/${QUIZ_REDIS_DB}
+      QUIZ_ATTEMPT_SESSION_GRACE_SECONDS: ${QUIZ_ATTEMPT_SESSION_GRACE_SECONDS:-300}
+      QUIZ_ATTEMPT_SESSION_FALLBACK_TTL_SECONDS: ${QUIZ_ATTEMPT_SESSION_FALLBACK_TTL_SECONDS:-7200}
+      QUIZ_ATTEMPT_SUBMIT_LOCK_SECONDS: ${QUIZ_ATTEMPT_SUBMIT_LOCK_SECONDS:-60}
+      QUIZ_ATTEMPT_COUNTER_TTL_SECONDS: ${QUIZ_ATTEMPT_COUNTER_TTL_SECONDS:-2592000}
+      LEARNING_MATERIAL_ROOT: ${LEARNING_MATERIAL_ROOT}
+      LEARNING_MATERIAL_PUBLIC_BASE_URL: ${LEARNING_MATERIAL_PUBLIC_BASE_URL}
+      LEARNING_MATERIAL_AI_QUEUE: ${LEARNING_MATERIAL_AI_QUEUE}
+      OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL}
+      MINIO_SIGNED_URL_EXPIRES_SECONDS: ${MINIO_SIGNED_URL_EXPIRES_SECONDS}
+    volumes:
+      - ../services/learning-service:/app
+      - ../packages/platform_common:/packages/platform_common
+      - ../storage/learning-materials:${LEARNING_MATERIAL_ROOT}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mysql-schema-apply:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      redis-quiz:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  ai-service:
+    build:
+      context: ..
+      dockerfile: services/ai-service/Dockerfile
+    working_dir: /app
+    command: uvicorn app.main:app --host 0.0.0.0 --port ${AI_SERVICE_PORT} --reload
+    environment:
+      TZ: ${APP_TIMEZONE}
+      AI_SERVICE_PORT: ${AI_SERVICE_PORT}
+      AI_DB_HOST: postgres-ai
+      AI_DB_PORT: ${AI_DB_PORT}
+      AI_DB_USER: ${AI_DB_USER}
+      AI_DB_PASSWORD: ${AI_DB_PASSWORD}
+      AI_DB_NAME: ${AI_DB_NAME}
+      AI_EMBEDDING_PROVIDER: ${AI_EMBEDDING_PROVIDER:-gemini}
+      AI_EMBEDDING_ORCHESTRATOR: ${AI_EMBEDDING_ORCHESTRATOR:-langchain}
+      AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-gemini-embedding-001}
+      AI_EMBEDDING_OUTPUT_DIMENSION: ${AI_EMBEDDING_OUTPUT_DIMENSION:-1536}
+      AI_EMBEDDING_TASK_TYPE: ${AI_EMBEDDING_TASK_TYPE:-RETRIEVAL_DOCUMENT}
+      AI_EMBEDDING_VERSION: ${AI_EMBEDDING_VERSION:-gemini-embedding-001@1536}
+      AI_EMBEDDING_BATCH_SIZE: ${AI_EMBEDDING_BATCH_SIZE:-16}
+      AI_EMBEDDING_DIMENSION: ${AI_EMBEDDING_DIMENSION:-1536}
+      AI_CHAT_ORCHESTRATOR: ${AI_CHAT_ORCHESTRATOR:-langchain}
+      IDENTITY_SERVICE_URL: ${IDENTITY_SERVICE_URL}
+      AI_SERVICE_URL: ${AI_SERVICE_URL}
+      COMMUNICATION_SERVICE_URL: ${COMMUNICATION_SERVICE_URL}
+      LEARNING_SERVICE_URL: ${LEARNING_SERVICE_URL}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_INTERNAL_PORT}
+      REDIS_DB: ${REDIS_DB}
+      CELERY_BROKER_URL: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_RESULT_BACKEND: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER}
+      CELERY_TASK_DEFAULT_QUEUE: ${CELERY_TASK_DEFAULT_QUEUE:-ai.default}
+      LEARNING_MATERIAL_AI_QUEUE: ${LEARNING_MATERIAL_AI_QUEUE}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-2}
+      CELERY_TASK_TIME_LIMIT: ${CELERY_TASK_TIME_LIMIT:-300}
+      CELERY_TASK_SOFT_TIME_LIMIT: ${CELERY_TASK_SOFT_TIME_LIMIT:-240}
+      CELERY_RESULT_EXPIRES: ${CELERY_RESULT_EXPIRES:-3600}
+      CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: ${CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP:-true}
+      LANGGRAPH_CHECKPOINT_ENABLED: ${LANGGRAPH_CHECKPOINT_ENABLED:-true}
+      LANGGRAPH_CHECKPOINT_REDIS_URL: ${LANGGRAPH_CHECKPOINT_REDIS_URL:-redis://redis:6379/1}
+      LANGGRAPH_CHECKPOINT_KEY_PREFIX: ${LANGGRAPH_CHECKPOINT_KEY_PREFIX:-ai.langgraph}
+      QUIZ_GENERATION_RUN_REDIS_URL: ${QUIZ_GENERATION_RUN_REDIS_URL:-redis://redis:6379/1}
+      QUIZ_GENERATION_RUN_KEY_PREFIX: ${QUIZ_GENERATION_RUN_KEY_PREFIX:-ai.quiz_generation}
+      QUIZ_GENERATION_RUN_TTL_SECONDS: ${QUIZ_GENERATION_RUN_TTL_SECONDS:-3600}
+      OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      AI_PROFILE_BUCKET: ${AI_PROFILE_BUCKET}
+      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL}
+      MINIO_SIGNED_URL_EXPIRES_SECONDS: ${MINIO_SIGNED_URL_EXPIRES_SECONDS}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_DEMO_MODEL_NAME: ${AI_DEMO_MODEL_NAME:-gemini-2.5-flash}
+    ports:
+      - "${AI_SERVICE_PORT}:${AI_SERVICE_PORT}"
+    volumes:
+      - ../services/ai-service:/app
+      - ../packages/platform_common:/packages/platform_common
+      - ../storage/learning-materials:${LEARNING_MATERIAL_ROOT}
+    depends_on:
+      postgres-ai:
+        condition: service_healthy
+      postgres-schema-apply:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen(f\"http://localhost:{os.environ['AI_SERVICE_PORT']}/health\")"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ai-worker:
+    build:
+      context: ..
+      dockerfile: services/ai-service/Dockerfile
+    working_dir: /app
+    command: celery -A app.core.celery_app.celery_app worker --loglevel=info -Q ${CELERY_TASK_DEFAULT_QUEUE:-ai.default},${LEARNING_MATERIAL_AI_QUEUE:-ai.material.index}
+    environment:
+      TZ: ${APP_TIMEZONE}
+      APP_TIMEZONE: ${APP_TIMEZONE}
+      AI_SERVICE_PORT: ${AI_SERVICE_PORT}
+      AI_DB_HOST: postgres-ai
+      AI_DB_PORT: ${AI_DB_PORT}
+      AI_DB_USER: ${AI_DB_USER}
+      AI_DB_PASSWORD: ${AI_DB_PASSWORD}
+      AI_DB_NAME: ${AI_DB_NAME}
+      AI_EMBEDDING_PROVIDER: ${AI_EMBEDDING_PROVIDER:-gemini}
+      AI_EMBEDDING_ORCHESTRATOR: ${AI_EMBEDDING_ORCHESTRATOR:-langchain}
+      AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-gemini-embedding-001}
+      AI_EMBEDDING_OUTPUT_DIMENSION: ${AI_EMBEDDING_OUTPUT_DIMENSION:-1536}
+      AI_EMBEDDING_TASK_TYPE: ${AI_EMBEDDING_TASK_TYPE:-RETRIEVAL_DOCUMENT}
+      AI_EMBEDDING_VERSION: ${AI_EMBEDDING_VERSION:-gemini-embedding-001@1536}
+      AI_EMBEDDING_BATCH_SIZE: ${AI_EMBEDDING_BATCH_SIZE:-16}
+      AI_EMBEDDING_DIMENSION: ${AI_EMBEDDING_DIMENSION:-1536}
+      AI_CHAT_ORCHESTRATOR: ${AI_CHAT_ORCHESTRATOR:-langchain}
+      IDENTITY_SERVICE_URL: ${IDENTITY_SERVICE_URL}
+      AI_SERVICE_URL: ${AI_SERVICE_URL}
+      COMMUNICATION_SERVICE_URL: ${COMMUNICATION_SERVICE_URL}
+      LEARNING_SERVICE_URL: ${LEARNING_SERVICE_URL}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_INTERNAL_PORT}
+      REDIS_DB: ${REDIS_DB}
+      CELERY_BROKER_URL: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_RESULT_BACKEND: redis://${REDIS_HOST}:${REDIS_INTERNAL_PORT}/${REDIS_DB}
+      CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER}
+      CELERY_TASK_DEFAULT_QUEUE: ${CELERY_TASK_DEFAULT_QUEUE:-ai.default}
+      LEARNING_MATERIAL_AI_QUEUE: ${LEARNING_MATERIAL_AI_QUEUE}
+      CELERY_WORKER_CONCURRENCY: ${CELERY_WORKER_CONCURRENCY:-2}
+      CELERY_TASK_TIME_LIMIT: ${CELERY_TASK_TIME_LIMIT:-300}
+      CELERY_TASK_SOFT_TIME_LIMIT: ${CELERY_TASK_SOFT_TIME_LIMIT:-240}
+      CELERY_RESULT_EXPIRES: ${CELERY_RESULT_EXPIRES:-3600}
+      CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP: ${CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP:-true}
+      LANGGRAPH_CHECKPOINT_ENABLED: ${LANGGRAPH_CHECKPOINT_ENABLED:-true}
+      LANGGRAPH_CHECKPOINT_REDIS_URL: ${LANGGRAPH_CHECKPOINT_REDIS_URL:-redis://redis:6379/1}
+      LANGGRAPH_CHECKPOINT_KEY_PREFIX: ${LANGGRAPH_CHECKPOINT_KEY_PREFIX:-ai.langgraph}
+      QUIZ_GENERATION_RUN_REDIS_URL: ${QUIZ_GENERATION_RUN_REDIS_URL:-redis://redis:6379/1}
+      QUIZ_GENERATION_RUN_KEY_PREFIX: ${QUIZ_GENERATION_RUN_KEY_PREFIX:-ai.quiz_generation}
+      QUIZ_GENERATION_RUN_TTL_SECONDS: ${QUIZ_GENERATION_RUN_TTL_SECONDS:-3600}
+      OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      AI_PROFILE_BUCKET: ${AI_PROFILE_BUCKET}
+      MINIO_PUBLIC_BASE_URL: ${MINIO_PUBLIC_BASE_URL}
+      MINIO_SIGNED_URL_EXPIRES_SECONDS: ${MINIO_SIGNED_URL_EXPIRES_SECONDS}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_DEMO_MODEL_NAME: ${AI_DEMO_MODEL_NAME:-gemini-2.5-flash}
+    volumes:
+      - ../services/ai-service:/app
+      - ../packages/platform_common:/packages/platform_common
+      - ../storage/learning-materials:${LEARNING_MATERIAL_ROOT}
+    depends_on:
+      postgres-ai:
+        condition: service_healthy
+      postgres-schema-apply:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  db-migrate-identity:
+    image: mysql:8.0
+    profiles: ["tools"]   # This service is only included when the "tools" profile is activated, e.g. with `docker compose --profile tools run --rm db-migrate-identity`
+    environment:
+      TZ: ${APP_TIMEZONE}
+      MYSQL_DATABASE: ${IDENTITY_DB_NAME}
+      MYSQL_USER: ${IDENTITY_DB_USER}
+      MYSQL_PASSWORD: ${IDENTITY_DB_PASSWORD}
+      MYSQL_INTERNAL_PORT: ${MYSQL_INTERNAL_PORT}
+    volumes:
+      - ../database/migrations/identity:/migrations:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - >
+        for f in /migrations/*.sql; do
+          echo "Applying $$f";
+          mysql -hmysql -P"$$MYSQL_INTERNAL_PORT" -u"$$MYSQL_USER" -p"$$MYSQL_PASSWORD" "$$MYSQL_DATABASE" < "$$f";
+        done
+
+  db-migrate-learning:
+    image: mysql:8.0
+    profiles: ["tools"]   # This service is only included when the "tools" profile is activated, e.g. with `docker compose --profile tools run --rm db-migrate-learning`
+    environment:
+      TZ: ${APP_TIMEZONE}
+      MYSQL_DATABASE: ${LEARNING_DB_NAME}
+      MYSQL_USER: ${LEARNING_DB_USER}
+      MYSQL_PASSWORD: ${LEARNING_DB_PASSWORD}
+      MYSQL_INTERNAL_PORT: ${MYSQL_INTERNAL_PORT}
+    volumes:
+      - ../database/migrations/learning:/migrations:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - >
+        for f in /migrations/*.sql; do
+          echo "Applying $$f";
+          mysql -hmysql -P"$$MYSQL_INTERNAL_PORT" -u"$$MYSQL_USER" -p"$$MYSQL_PASSWORD" "$$MYSQL_DATABASE" < "$$f";
+        done
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    working_dir: /app
+    command: sh -c "npm install && npm run build && npm run preview -- --host 0.0.0.0 --port ${FRONTEND_PORT} --strictPort"
+    environment:
+      TZ: ${APP_TIMEZONE}
+      FRONTEND_PORT: ${FRONTEND_PORT}
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    ports:
+      # Optional: keep direct frontend host access for debugging; primary access should go through nginx.
+      - "${FRONTEND_PORT}:${FRONTEND_PORT}"
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+    depends_on:
+      identity-service:
+        condition: service_healthy
+      communication-service:
+        condition: service_healthy
+      learning-service:
+        condition: service_healthy
+      ai-service:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:alpine
+    environment:
+      TZ: ${APP_TIMEZONE}
+      FRONTEND_PORT: ${FRONTEND_PORT}
+      IDENTITY_PORT: ${IDENTITY_PORT}
+      COMMUNICATION_PORT: ${COMMUNICATION_PORT}
+      LEARNING_PORT: ${LEARNING_PORT}
+      AI_SERVICE_PORT: ${AI_SERVICE_PORT}
+      MINIO_API_PORT: ${MINIO_API_PORT}
+      MINIO_CONSOLE_PORT: ${MINIO_CONSOLE_PORT}
+    ports:
+      - "${NGINX_PORT}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      - frontend
+      - identity-service
+      - communication-service
+      - learning-service
+      - ai-service
+
+volumes:
+  mysql_data:
+  postgres_ai_data:
+  redis_data:
+  minio_data:

@@ -1,0 +1,54 @@
+﻿# Local env files
+.env
+.env.*
+!.env.example
+
+# Python services
+backend/.venv/
+services/**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+.python-version
+
+# Node/Vite (frontend)
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+frontend/.cache/
+frontend/.eslintcache
+frontend/logs/
+frontend/*.log
+frontend/*.local
+frontend/lerna-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+*.temp
+*.bak
+*.orig
+.DS_Store
+Thumbs.db
+
+# Test / coverage artifacts
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+coverage.json
+**/coverage.json
+*.egg-info/
+**/*.egg-info/
+
+# Uploaded learning materials
+storage/learning-materials/

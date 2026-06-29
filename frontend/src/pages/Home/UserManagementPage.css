@@ -1,0 +1,234 @@
+.user-management-page {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.user-management-toast {
+  position: fixed;
+  top: 80px;
+  right: clamp(12px, 4vw, 42px);
+  z-index: 220;
+  min-width: min(360px, calc(100vw - 28px));
+  max-width: 480px;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(16, 185, 129, 0.42);
+  border-left-width: 5px;
+  border-radius: 1rem;
+  background: rgba(236, 253, 245, 0.95);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(7px);
+}
+
+.user-management-toast strong {
+  color: #047857;
+  font-size: 0.84rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.user-management-toast span {
+  color: #065f46;
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+.user-management-toast-success {
+  border-color: rgba(16, 185, 129, 0.42);
+  border-left-color: #10b981;
+  background: rgba(236, 253, 245, 0.95);
+}
+
+.user-management-card {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  background:
+    radial-gradient(circle at top left, rgba(240, 253, 250, 0.65), transparent 28rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 255, 0.98));
+  border: 1px solid rgba(219, 228, 239, 0.95);
+  border-radius: 24px;
+  padding: 28px 48px 40px;
+  min-height: 720px;
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.07);
+}
+
+.user-management-toolbar {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.user-management-search,
+.user-management-select {
+  height: 46px;
+  border: 1px solid #d8e2ef;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #1e293b;
+  font-size: 15px;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.user-management-search {
+  width: 280px;
+  padding: 0 16px;
+}
+
+.user-management-select {
+  min-width: 140px;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.user-management-search:focus,
+.user-management-select:focus {
+  border-color: rgba(15, 118, 110, 0.48);
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.1);
+}
+
+.user-management-table-wrapper {
+  max-width: 100%;
+  margin-top: 44px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+.user-management-feedback {
+  margin: 32px 0 0;
+  text-align: center;
+  font-size: 15px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.user-management-feedback-error {
+  color: #b91c1c;
+}
+
+.user-management-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+
+.user-management-table thead th {
+  text-align: left;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+  padding: 16px 18px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fbff;
+}
+
+.user-management-table tbody td {
+  padding: 18px;
+  font-size: 16px;
+  color: #1e293b;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.user-management-table tbody tr:hover {
+  background: #f5fbfa;
+}
+
+.user-management-inline-select {
+  min-width: 140px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #d8e2ef;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1e293b;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.user-management-inline-select:focus {
+  border-color: rgba(15, 118, 110, 0.48);
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.1);
+}
+
+.user-management-inline-select:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.role-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 92px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+
+.role-admin {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+.role-educator {
+  background: #ecfeff;
+  color: #0f766e;
+}
+
+.role-learner {
+  background: #f5f3ff;
+  color: #7c3aed;
+}
+
+.empty-state {
+  text-align: center;
+  color: #94a3b8;
+  padding: 36px 0 !important;
+}
+
+@media (max-width: 768px) {
+  .user-management-card {
+    border-radius: 18px;
+    padding: 24px 14px;
+    min-height: auto;
+  }
+
+  .user-management-title {
+    font-size: 32px;
+  }
+
+  .user-management-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .user-management-search,
+  .user-management-select {
+    width: 100%;
+  }
+
+  .user-management-table-wrapper {
+    margin-top: 24px;
+  }
+
+  .user-management-table thead th,
+  .user-management-table tbody td {
+    padding: 14px 12px;
+    font-size: 14px;
+  }
+}

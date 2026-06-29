@@ -1,0 +1,16 @@
+fastapi
+sqlalchemy
+psycopg[binary]
+pgvector
+uvicorn[standard]
+google-genai
+langgraph
+langchain-core
+langchain-google-genai
+celery[redis]
+redis
+minio>=7.2,<8
+pypdf>=5,<6
+python-docx>=1.1,<2
+pytest
+pytest-cov

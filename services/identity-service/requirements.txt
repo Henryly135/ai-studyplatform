@@ -1,0 +1,10 @@
+﻿fastapi
+uvicorn[standard]
+pydantic[email]
+SQLAlchemy>=2.0,<3
+PyMySQL>=1.1,<2
+cryptography>=42,<45
+PyJWT>=2.8,<3
+celery[redis]>=5.4,<6
+pytest
+pytest-cov

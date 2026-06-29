@@ -1,0 +1,46 @@
+name: Deploy Dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to deploy"
+        required: true
+        default: "develop"
+      project_dir:
+        description: "Project directory on remote Server"
+        required: true
+        default: "~/ai-studyplatform"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-dev:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_DEV }}
+
+      - name: Add host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.SERVER_PORT_DEV }}" "${{ secrets.SERVER_HOST_DEV }}" >> ~/.ssh/known_hosts
+
+      # Step 1：pull latest code to Dev server, ensuring code is safely on disk before executing deployment script
+      - name: Update Code on Dev server
+        run: |
+          ssh -p "${{ secrets.SERVER_PORT_DEV }}" "${{ secrets.SERVER_USER_DEV }}@${{ secrets.SERVER_HOST_DEV }}" \
+            "bash -lc 'cd ${{ github.event.inputs.project_dir }} && git fetch origin && git checkout ${{ github.event.inputs.branch }} && git reset --hard origin/${{ github.event.inputs.branch }}'"
+
+      # Setp 2: execute deployment script on Dev server, ensuring deployment is executed after code is safely updated
+      - name: Execute Deployment Script
+        run: |
+          ssh -p "${{ secrets.SERVER_PORT_DEV }}" "${{ secrets.SERVER_USER_DEV }}@${{ secrets.SERVER_HOST_DEV }}" \
+            "bash -lc 'cd ${{ github.event.inputs.project_dir }} && chmod +x scripts/deploy-dev.sh && BRANCH=${{ github.event.inputs.branch }} ./scripts/deploy-dev.sh'"

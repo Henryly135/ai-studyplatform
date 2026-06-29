@@ -1,0 +1,1243 @@
+.notifications-page {
+  width: 100%;
+  min-width: 0;
+}
+
+.notifications-page-recipient {
+  height: 100%;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.notifications-recipient-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 1.5rem;
+  height: 100%;
+  min-height: 0;
+}
+
+.notifications-recipient-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0;
+}
+
+.notifications-recipient-profile {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.notifications-recipient-avatar {
+  width: 4.6rem;
+  height: 4.6rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #eef2f7 0%, #e5e7eb 100%);
+  color: #1f2937;
+  font: 500 2rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-profile-copy {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.notifications-recipient-profile-copy h1 {
+  margin: 0;
+  color: #111827;
+  font: 700 2rem/1.1 "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-profile-copy p {
+  margin: 0;
+  color: #6b7280;
+  font: 500 0.94rem/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-mark-all {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.9rem;
+  padding: 0 1rem;
+  border: 1px solid #111827;
+  background: #ffffff;
+  color: #111827;
+  font: 600 0.92rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.notifications-recipient-mark-all:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.notifications-recipient-board {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  min-height: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 1.25rem;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+}
+
+.notifications-recipient-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem 1.5rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.notifications-recipient-titlebar p {
+  margin: 0;
+  color: #6b7280;
+  font: 500 0.95rem/1.5 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.72fr) minmax(0, 1.68fr);
+  align-items: stretch;
+  min-height: 0;
+}
+
+.notifications-recipient-grid > .notifications-recipient-list {
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.notifications-recipient-list-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.85rem;
+  padding: 1.2rem 1.15rem;
+  border: 0;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notifications-recipient-list-item-selected {
+  background: #eaf0fa;
+}
+
+.notifications-recipient-list-item-unread .notifications-recipient-list-item-copy strong::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  display: inline-block;
+  margin-right: 0.45rem;
+  border-radius: 999px;
+  background: #0f758d;
+  vertical-align: middle;
+}
+
+.notifications-recipient-list-item-icon {
+  color: #111827;
+  line-height: 0;
+  padding-top: 0.15rem;
+}
+
+.notifications-recipient-list-item-copy {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.notifications-recipient-list-item-copy strong {
+  color: #111827;
+  font: 600 0.98rem/1.55 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-list-item-copy span {
+  color: #6b7280;
+  font: 500 0.92rem/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-detail {
+  min-height: 0;
+  padding: 0;
+  background: #ffffff;
+  overflow-y: auto;
+}
+
+.notifications-recipient-message {
+  display: grid;
+  align-content: start;
+  min-height: min-content;
+}
+
+.notifications-recipient-message-header {
+  padding: 1rem 1.35rem 0.9rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.notifications-recipient-message-header h3 {
+  margin: 0.75rem 0 0;
+  color: #111827;
+  font: 700 1.15rem/1.35 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-message-header p {
+  margin: 0.55rem 0 0;
+  color: #6b7280;
+  font: 500 0.92rem/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-message-body {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+  padding: 1.35rem;
+}
+
+.notifications-recipient-message-body > p {
+  margin: 0;
+  color: #111827;
+  font: 500 1rem/1.7 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-greeting {
+  font-weight: 600;
+}
+
+.notifications-recipient-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  color: #6b7280;
+  font: 500 0.9rem/1.5 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-summary strong {
+  color: #111827;
+  font-weight: 600;
+}
+
+.notifications-recipient-primary-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.notifications-recipient-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  padding-top: 0.25rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.notifications-page-recipient {
+  height: 100%;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.notifications-recipient-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 1.5rem;
+  height: 100%;
+  min-height: 0;
+}
+
+.notifications-recipient-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0;
+}
+
+.notifications-recipient-profile {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.notifications-recipient-avatar {
+  width: 4.6rem;
+  height: 4.6rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #eef2f7 0%, #e5e7eb 100%);
+  color: #1f2937;
+  font: 500 2rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-profile-copy {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.notifications-recipient-profile-copy h1 {
+  margin: 0;
+  color: #111827;
+  font: 700 2rem/1.1 "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-profile-copy p {
+  margin: 0;
+  color: #6b7280;
+  font: 500 0.94rem/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-mark-all {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 2.9rem;
+  padding: 0 1rem;
+  border: 1px solid #111827;
+  background: #ffffff;
+  color: #111827;
+  font: 600 0.92rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.notifications-recipient-mark-all:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.notifications-recipient-board {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  min-height: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 1.25rem;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+}
+
+.notifications-recipient-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem 1.5rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.notifications-recipient-titlebar p {
+  margin: 0;
+  color: #6b7280;
+  font: 500 0.95rem/1.5 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.72fr) minmax(0, 1.68fr);
+  align-items: stretch;
+  min-height: 0;
+}
+
+.notifications-recipient-grid > .notifications-recipient-list {
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.notifications-recipient-list-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.85rem;
+  padding: 1.2rem 1.15rem;
+  border: 0;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notifications-recipient-list-item-selected {
+  background: #eaf0fa;
+}
+
+.notifications-recipient-list-item-unread .notifications-recipient-list-item-copy strong::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  display: inline-block;
+  margin-right: 0.45rem;
+  border-radius: 999px;
+  background: #0f758d;
+  vertical-align: middle;
+}
+
+.notifications-recipient-list-item-icon {
+  color: #111827;
+  line-height: 0;
+  padding-top: 0.15rem;
+}
+
+.notifications-recipient-list-item-copy {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.notifications-recipient-list-item-copy strong {
+  color: #111827;
+  font: 600 0.98rem/1.55 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-list-item-copy span {
+  color: #6b7280;
+  font: 500 0.92rem/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-detail {
+  min-height: 0;
+  padding: 0;
+  background: #ffffff;
+  overflow-y: auto;
+}
+
+.notifications-recipient-message {
+  display: grid;
+  align-content: start;
+  min-height: min-content;
+}
+
+.notifications-recipient-message-header {
+  padding: 1rem 1.35rem 0.9rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.notifications-recipient-message-header h3 {
+  margin: 0.75rem 0 0;
+  color: #111827;
+  font: 700 1.15rem/1.35 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-message-header p {
+  margin: 0.55rem 0 0;
+  color: #6b7280;
+  font: 500 0.92rem/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-message-body {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+  padding: 1.35rem;
+}
+
+.notifications-recipient-message-body > p {
+  margin: 0;
+  color: #111827;
+  font: 500 1rem/1.7 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-greeting {
+  font-weight: 600;
+}
+
+.notifications-recipient-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  color: #6b7280;
+  font: 500 0.9rem/1.5 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-summary strong {
+  color: #111827;
+  font-weight: 600;
+}
+
+.notifications-recipient-primary-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.notifications-recipient-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  padding-top: 0.25rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.notifications-toast {
+  position: fixed;
+  top: 80px;
+  right: clamp(12px, 4vw, 42px);
+  z-index: 240;
+  min-width: min(360px, calc(100vw - 28px));
+  max-width: 480px;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(16, 185, 129, 0.42);
+  border-left-width: 5px;
+  border-radius: 1rem;
+  background: rgba(236, 253, 245, 0.95);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(7px);
+}
+
+.notifications-toast strong {
+  color: #047857;
+  font: 700 0.84rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.notifications-toast span {
+  color: #065f46;
+  font: 500 0.95rem/1.3 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-shell {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.notifications-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.9fr);
+  gap: 1rem;
+  padding: 1.6rem;
+  border: 1px solid rgba(219, 228, 239, 0.95);
+  border-radius: 1.35rem;
+  background:
+    radial-gradient(circle at top left, rgba(204, 251, 241, 0.56), transparent 44%),
+    radial-gradient(circle at top right, rgba(219, 234, 254, 0.82), transparent 42%),
+    linear-gradient(135deg, #ffffff 0%, #f7fbff 52%, #f8f4ec 100%);
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.08);
+}
+
+.notifications-hero-copy {
+  display: grid;
+  gap: 0.8rem;
+  align-content: center;
+}
+
+.notifications-panel-kicker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 0.45rem 0.82rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #dbeafe, #ccfbf1);
+  color: #0f4c81;
+  font: 700 0.76rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.notifications-hero-copy h1 {
+  color: #1e293b;
+  font: 700 3rem/1 "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+  letter-spacing: -0.04em;
+}
+
+.notifications-hero-copy p {
+  max-width: 48rem;
+  color: #64748b;
+  font: 500 1rem/1.65 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-summary-grid {
+  display: grid;
+  gap: 0.85rem;
+  align-content: stretch;
+}
+
+.notifications-summary-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid rgba(219, 228, 239, 0.95);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.055);
+}
+
+.notifications-summary-icon {
+  width: 2.4rem;
+  height: 2.4rem;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #3159b4;
+}
+
+.notifications-summary-card strong {
+  color: #0f172a;
+  font: 700 1.45rem/1 "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-summary-card span {
+  color: #64748b;
+  font: 600 0.88rem/1.4 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-workspace {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.95fr) minmax(320px, 0.9fr);
+  gap: 1rem;
+  min-height: 44rem;
+}
+
+.notifications-list-panel,
+.notifications-detail-panel {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid rgba(219, 228, 239, 0.95);
+  border-radius: 1.2rem;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.06);
+}
+
+.notifications-detail-panel {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.notifications-toolbar {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.notifications-search {
+  min-height: 2.95rem;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0 0.95rem;
+  border: 1px solid #d8e2ef;
+  border-radius: 0.9rem;
+  background: #ffffff;
+  color: #64748b;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.notifications-search:focus-within {
+  border-color: rgba(15, 118, 110, 0.48);
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.1);
+}
+
+.notifications-search input,
+.notifications-select,
+.notifications-field input,
+.notifications-field textarea {
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #0f172a;
+  font: 500 0.95rem/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-search input::placeholder,
+.notifications-field input::placeholder,
+.notifications-field textarea::placeholder {
+  color: #94a3b8;
+}
+
+.notifications-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.notifications-select,
+.notifications-toggle,
+.notifications-primary-button,
+.notifications-secondary-button {
+  min-height: 2.7rem;
+  border-radius: 999px;
+  font: 600 0.9rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-select {
+  min-width: 10rem;
+  padding: 0 0.95rem;
+  border: 1px solid #dbe4ef;
+  background: #fff;
+}
+
+.notifications-toggle,
+.notifications-secondary-button {
+  padding: 0 0.95rem;
+  border: 1px solid #dbe4ef;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+}
+
+.notifications-toggle-active {
+  border-color: #b9d7ff;
+  background: #edf5ff;
+  color: #1d4ed8;
+}
+
+.notifications-primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0 1.05rem;
+  border: 1px solid #0f758d;
+  background: #0f758d;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.notifications-primary-button:disabled,
+.notifications-secondary-button:disabled,
+.notifications-icon-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.notifications-list-meta,
+.notifications-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  color: #64748b;
+  font: 500 0.88rem/1.4 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 0.8rem;
+  padding-right: 0.25rem;
+}
+
+.notifications-list-item {
+  display: grid;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 1.1rem;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+  cursor: pointer;
+  text-align: left;
+  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.notifications-list-item:hover {
+  transform: translateY(-1px);
+  border-color: #c7d7fe;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.05);
+}
+
+.notifications-list-item-selected {
+  border-color: #9fc5ff;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f8ff 100%);
+  box-shadow: 0 12px 26px rgba(59, 130, 246, 0.08);
+}
+
+.notifications-list-item-unread {
+  border-left: 4px solid #0f758d;
+}
+
+.notifications-list-item-top,
+.notifications-list-item-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.notifications-type-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 0.38rem 0.75rem;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #2952a6;
+  font: 700 0.74rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  letter-spacing: 0.04em;
+}
+
+.notifications-list-item-top time,
+.notifications-list-item-footer,
+.notifications-list-item-footer em {
+  color: #64748b;
+  font: 500 0.84rem/1.35 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-list-item strong {
+  color: #0f172a;
+  font: 700 1.02rem/1.35 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-list-item p {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: #475569;
+  font: 500 0.92rem/1.55 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-empty-state,
+.notifications-empty-detail {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.45rem;
+  padding: 1.8rem;
+  border: 1px dashed #cbd5e1;
+  border-radius: 1.2rem;
+  background: #f8fbff;
+  color: #64748b;
+  text-align: center;
+}
+
+.notifications-empty-state strong,
+.notifications-empty-detail strong {
+  color: #0f172a;
+  font: 700 1rem/1.35 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-empty-state span,
+.notifications-empty-detail span {
+  font: 500 0.92rem/1.55 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-detail {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.notifications-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.notifications-detail-header h2 {
+  margin-top: 0.8rem;
+  color: #0f172a;
+  font: 700 2rem/1.05 "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+  letter-spacing: -0.04em;
+}
+
+.notifications-detail-header p {
+  margin-top: 0.65rem;
+  color: #475569;
+  font: 500 0.98rem/1.7 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-detail-actions,
+.notifications-detail-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.notifications-icon-button {
+  width: 2.55rem;
+  height: 2.55rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #dbe4ef;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+}
+
+.notifications-icon-button-danger {
+  color: #b91c1c;
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.notifications-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.95rem;
+}
+
+.notifications-detail-grid div,
+.notifications-detail-section,
+.notifications-modal-note,
+.notifications-recipient-picker {
+  padding: 1rem 1.05rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 1.15rem;
+  background: #fbfdff;
+}
+
+.notifications-detail-grid dt,
+.notifications-detail-section h3,
+.notifications-recipient-picker h3,
+.notifications-modal-note h3 {
+  margin-bottom: 0.4rem;
+  color: #64748b;
+  font: 700 0.78rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.notifications-detail-grid dd,
+.notifications-recipient-picker p,
+.notifications-modal-note p {
+  color: #0f172a;
+  font: 600 0.92rem/1.55 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-detail-section {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.notifications-detail-section pre {
+  min-height: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #334155;
+  font: 500 0.87rem/1.6 "IBM Plex Mono", "Consolas", monospace;
+}
+
+.notifications-feedback {
+  color: #64748b;
+  font: 500 0.95rem/1.5 "IBM Plex Sans", "Segoe UI", sans-serif;
+  text-align: center;
+}
+
+.notifications-feedback-error {
+  color: #b91c1c;
+}
+
+.notifications-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 260;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(4px);
+}
+
+.notifications-modal {
+  width: min(980px, 100%);
+  max-height: min(90vh, 860px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: #ffffff;
+  border-radius: 1.6rem;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.22);
+  overflow: hidden;
+}
+
+.notifications-modal-header,
+.notifications-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.4rem;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.notifications-modal-header h2 {
+  margin-top: 0.55rem;
+  color: #0f172a;
+  font: 700 2rem/1 "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-modal-close {
+  width: 2.4rem;
+  height: 2.4rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #dbe4ef;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.notifications-modal-body {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem 1.4rem;
+}
+
+.notifications-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.95rem;
+}
+
+.notifications-field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.notifications-field-full {
+  grid-column: 1 / -1;
+}
+
+.notifications-field span {
+  color: #475569;
+  font: 700 0.84rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-field input,
+.notifications-field textarea,
+.notifications-recipient-search {
+  min-height: 2.95rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid #dbe4ef;
+  border-radius: 1rem;
+  background: #fff;
+}
+
+.notifications-field textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+.notifications-recipient-picker {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.notifications-recipient-picker-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.notifications-pill-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding: 0 0.8rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font: 700 0.78rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-search {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0 1rem;
+  color: #64748b;
+}
+
+.notifications-recipient-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.notifications-recipient-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2rem;
+  padding: 0 0.75rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  cursor: pointer;
+}
+
+.notifications-recipient-picker .notifications-recipient-list {
+  max-height: 18rem;
+  overflow-y: auto;
+  display: grid;
+  gap: 0.6rem;
+  padding-right: 0.2rem;
+}
+
+.notifications-recipient-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.95rem 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 1rem;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+}
+
+.notifications-recipient-option strong {
+  display: block;
+  color: #0f172a;
+  font: 700 0.94rem/1.35 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-option span,
+.notifications-recipient-option em {
+  color: #64748b;
+  font: 500 0.84rem/1.4 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.notifications-recipient-option-selected {
+  border-color: #93c5fd;
+  background: #f5f9ff;
+}
+
+.notifications-modal-note p {
+  margin-top: 0.25rem;
+}
+
+.notifications-modal-actions {
+  justify-content: flex-end;
+  border-top: 1px solid #edf2f7;
+  border-bottom: 0;
+}
+
+@media (max-width: 1080px) {
+  .notifications-page-recipient {
+    height: auto;
+    overflow: visible;
+  }
+
+  .notifications-recipient-shell,
+  .notifications-recipient-board {
+    height: auto;
+  }
+
+  .notifications-hero,
+  .notifications-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .notifications-recipient-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .notifications-recipient-grid > .notifications-recipient-list {
+    border-right: 0;
+    border-bottom: 1px solid #e5e7eb;
+    max-height: 24rem;
+  }
+}
+
+@media (max-width: 760px) {
+  .notifications-hero-copy h1 {
+    font-size: 2.3rem;
+  }
+
+  .notifications-list-panel,
+  .notifications-detail-panel,
+  .notifications-modal-body,
+  .notifications-modal-header,
+  .notifications-modal-actions {
+    padding: 1rem;
+  }
+
+  .notifications-form-grid,
+  .notifications-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .notifications-toolbar-actions,
+  .notifications-detail-actions-row,
+  .notifications-pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .notifications-select,
+  .notifications-toggle,
+  .notifications-primary-button,
+  .notifications-secondary-button {
+    width: 100%;
+  }
+
+  .notifications-recipient-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .notifications-recipient-mark-all {
+    width: 100%;
+  }
+
+  .notifications-recipient-profile {
+    align-items: flex-start;
+  }
+
+  .notifications-recipient-profile-copy h1,
+  .notifications-recipient-titlebar h2 {
+    font-size: 1.8rem;
+  }
+
+  .notifications-recipient-summary,
+  .notifications-recipient-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .notifications-recipient-summary {
+    display: grid;
+    gap: 0.25rem;
+  }
+
+  .notifications-recipient-actions {
+    display: grid;
+  }
+}

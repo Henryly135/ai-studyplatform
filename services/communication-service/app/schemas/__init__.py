@@ -1,0 +1,43 @@
+from app.schemas.forum import (
+    CourseForumCommentCreateRequest,
+    CourseForumCommentRead,
+    CourseForumCommentUpdateRequest,
+    CourseForumPostCreateRequest,
+    CourseForumPostRead,
+    CourseForumPostUpdateRequest,
+    PaginatedCourseForumCommentResponse,
+    PaginatedCourseForumPostResponse,
+)
+from app.schemas.notification import (
+    MarkAllNotificationsReadResponse,
+    NotificationCreateRequest,
+    PaginatedNotificationResponse,
+    NotificationRead,
+    NotificationRecipientRead,
+    NotificationRecipientStateResponse,
+    NotificationRecipientWrite,
+    NotificationUnreadCountResponse,
+    NotificationUpdateRequest,
+    PaginatedNotificationRecipientResponse,
+)
+
+__all__ = [
+    "CourseForumCommentCreateRequest",
+    "CourseForumCommentRead",
+    "CourseForumCommentUpdateRequest",
+    "CourseForumPostCreateRequest",
+    "CourseForumPostRead",
+    "CourseForumPostUpdateRequest",
+    "MarkAllNotificationsReadResponse",
+    "NotificationCreateRequest",
+    "PaginatedNotificationResponse",
+    "NotificationRead",
+    "NotificationRecipientRead",
+    "NotificationRecipientStateResponse",
+    "NotificationRecipientWrite",
+    "NotificationUnreadCountResponse",
+    "NotificationUpdateRequest",
+    "PaginatedCourseForumCommentResponse",
+    "PaginatedCourseForumPostResponse",
+    "PaginatedNotificationRecipientResponse",
+]

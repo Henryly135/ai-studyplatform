@@ -1,0 +1,465 @@
+.educator-requests-page {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.educator-requests-toast {
+  position: fixed;
+  top: 80px;
+  right: clamp(12px, 4vw, 42px);
+  z-index: 220;
+  min-width: min(360px, calc(100vw - 28px));
+  max-width: 480px;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(16, 185, 129, 0.42);
+  border-left-width: 5px;
+  border-radius: 1rem;
+  background: rgba(236, 253, 245, 0.95);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(7px);
+}
+
+.educator-requests-toast strong {
+  color: #047857;
+  font-size: 0.84rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.educator-requests-toast span {
+  color: #065f46;
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+.educator-requests-card {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  background:
+    radial-gradient(circle at top left, rgba(240, 253, 250, 0.65), transparent 28rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 255, 0.98));
+  border: 1px solid rgba(219, 228, 239, 0.95);
+  border-radius: 24px;
+  padding: 56px 48px 40px;
+  min-height: 720px;
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.07);
+}
+
+.educator-requests-feedback {
+  margin: 32px 0 0;
+  text-align: center;
+  font-size: 15px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.educator-requests-feedback-error {
+  color: #b91c1c;
+}
+
+.educator-requests-grid {
+  min-width: 0;
+  margin-top: 40px;
+  display: grid;
+  gap: 20px;
+}
+
+.educator-requests-panel {
+  min-width: 0;
+  border: 1px solid rgba(219, 228, 239, 0.95);
+  border-radius: 20px;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.05);
+}
+
+.educator-requests-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.educator-requests-panel-header h2 {
+  margin: 0;
+  color: #0f172a;
+  font: 700 1.3rem/1.2 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.educator-requests-panel-header p {
+  margin: 8px 0 0;
+  color: #64748b;
+  font: 500 0.95rem/1.5 "IBM Plex Sans", "Segoe UI", sans-serif;
+  overflow-wrap: anywhere;
+}
+
+.educator-requests-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  height: 42px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #dbeafe, #ccfbf1);
+  color: #0f4c81;
+  font: 700 0.96rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.educator-requests-table-wrapper {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.educator-requests-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.educator-requests-table thead th {
+  text-align: left;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fbff;
+}
+
+.educator-requests-table tbody td {
+  padding: 16px;
+  font-size: 15px;
+  color: #1e293b;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: top;
+}
+
+.educator-requests-table thead th:last-child,
+.educator-requests-table tbody td:last-child {
+  width: 96px;
+  text-align: right;
+}
+
+.educator-requests-table tbody td:last-child {
+  vertical-align: top;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.educator-requests-table tbody tr:hover {
+  background: #f5fbfa;
+}
+
+.educator-requests-table tbody td.educator-requests-empty {
+  text-align: center;
+  vertical-align: middle;
+  color: #94a3b8;
+  padding: 30px 0 !important;
+}
+
+.educator-requests-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 90px;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font: 700 0.86rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  text-transform: capitalize;
+}
+
+.educator-requests-status-pending {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.educator-requests-status-approved {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.educator-requests-status-rejected {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.educator-requests-link,
+.educator-requests-close,
+.educator-requests-action {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 12px;
+  font: 600 0.92rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.educator-requests-link {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #d8e2ef;
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.educator-requests-link:hover {
+  transform: translateY(-1px);
+  border-color: rgba(15, 118, 110, 0.28);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+}
+
+.educator-requests-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.44);
+}
+
+.educator-requests-modal {
+  width: min(100%, 980px);
+  max-height: min(92vh, 920px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(219, 228, 239, 0.95);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, #ffffff, #f8fbff);
+  box-shadow: 0 22px 50px rgba(15, 23, 42, 0.28);
+  padding: 28px;
+  box-sizing: border-box;
+}
+
+.educator-requests-modal-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.educator-requests-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 10px;
+  margin-right: -4px;
+}
+
+.educator-requests-modal-kicker {
+  display: inline-block;
+  margin-bottom: 10px;
+  color: #64748b;
+  font: 700 0.76rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.educator-requests-modal-header h2 {
+  margin: 0;
+  color: #0f172a;
+  font: 700 1.9rem/1.1 "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.educator-requests-close {
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  padding: 0;
+  border: 1px solid #dbe4ef;
+  border-radius: 999px;
+  background: #fff;
+  color: #475569;
+  font: 700 1.4rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  line-height: 0;
+}
+
+.educator-requests-close svg {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.educator-requests-detail {
+  display: grid;
+  gap: 18px;
+}
+
+.educator-requests-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.educator-requests-detail-card {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid rgba(219, 228, 239, 0.95);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+}
+
+.educator-requests-detail-card h3 {
+  margin: 0;
+  color: #0f172a;
+  font: 700 1.05rem/1.2 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.educator-requests-detail-card dl {
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.educator-requests-detail-card dl div {
+  display: grid;
+  gap: 4px;
+}
+
+.educator-requests-detail-card dt {
+  color: #64748b;
+  font: 600 0.84rem/1.2 "IBM Plex Sans", "Segoe UI", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.educator-requests-detail-card dd {
+  margin: 0;
+  color: #1e293b;
+  font: 500 0.96rem/1.55 "IBM Plex Sans", "Segoe UI", sans-serif;
+  word-break: break-word;
+}
+
+.educator-requests-supporting-text {
+  margin: 0;
+  color: #334155;
+  font: 500 0.96rem/1.7 "IBM Plex Sans", "Segoe UI", sans-serif;
+  white-space: pre-wrap;
+}
+
+.educator-requests-file-link {
+  color: #1d4ed8;
+  font: 600 0.94rem/1.4 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.educator-requests-textarea {
+  width: 100%;
+  min-height: 124px;
+  resize: vertical;
+  padding: 14px 16px;
+  border: 1px solid #dbe1ea;
+  border-radius: 16px;
+  outline: none;
+  color: #0f172a;
+  font: 500 0.95rem/1.6 "IBM Plex Sans", "Segoe UI", sans-serif;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.educator-requests-textarea:focus {
+  border-color: rgba(15, 118, 110, 0.48);
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.1);
+}
+
+.educator-requests-textarea:disabled {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+.educator-requests-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.educator-requests-action {
+  border: 1px solid transparent;
+  transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+}
+
+.educator-requests-action:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: saturate(1.04);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+}
+
+.educator-requests-action:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.educator-requests-action-reject {
+  background: #fff1f2;
+  color: #be123c;
+  border-color: #fecdd3;
+}
+
+.educator-requests-action-approve {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+
+.educator-requests-reviewed-note {
+  margin: 0;
+  color: #64748b;
+  font: 500 0.94rem/1.5 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+@media (max-width: 900px) {
+  .educator-requests-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .educator-requests-card {
+    border-radius: 18px;
+    padding: 24px 16px;
+    min-height: auto;
+  }
+
+  .educator-requests-title {
+    font-size: 32px;
+  }
+
+  .educator-requests-panel {
+    padding: 18px;
+  }
+
+  .educator-requests-panel-header,
+  .educator-requests-modal-header,
+  .educator-requests-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .educator-requests-modal {
+    width: calc(100vw - 28px);
+    max-height: calc(100vh - 28px);
+    padding: 20px;
+  }
+}

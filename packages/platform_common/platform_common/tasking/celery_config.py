@@ -1,0 +1,28 @@
+def build_celery_config(
+    *,
+    app_timezone: str,
+    task_default_queue: str,
+    broker_connection_retry_on_startup: bool,
+    task_always_eager: bool,
+    worker_concurrency: int,
+    task_time_limit: int,
+    task_soft_time_limit: int,
+    result_expires: int,
+) -> dict:
+    return {
+        "task_default_queue": task_default_queue,
+        "task_serializer": "json",
+        "result_serializer": "json",
+        "accept_content": ["json"],
+        "timezone": app_timezone,
+        "enable_utc": True,
+        "task_track_started": True,
+        "worker_prefetch_multiplier": 1,
+        "task_acks_late": True,
+        "broker_connection_retry_on_startup": broker_connection_retry_on_startup,
+        "task_always_eager": task_always_eager,
+        "worker_concurrency": worker_concurrency,
+        "task_time_limit": task_time_limit,
+        "task_soft_time_limit": task_soft_time_limit,
+        "result_expires": result_expires,
+    }
