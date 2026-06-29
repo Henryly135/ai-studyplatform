@@ -87,11 +87,13 @@ class QuizQuestionRepository:
         explanation_text: str | None,
         sort_order: int,
         is_active: bool,
+        source_grounding: str | None = None,
     ) -> QuizQuestion:
         question = QuizQuestion(
             quiz_id=quiz_id,
             question_text=question_text,
             explanation_text=explanation_text,
+            source_grounding=source_grounding,
             sort_order=sort_order,
             is_active=is_active,
         )
@@ -105,12 +107,14 @@ class QuizQuestionRepository:
         *,
         question_text: str | None = None,
         explanation_text: str | None = None,
+        source_grounding: str | None = None,
         sort_order: int | None = None,
         is_active: bool | None = None,
     ) -> QuizQuestion:
         if question_text is not None:
             question.question_text = question_text
         question.explanation_text = explanation_text
+        question.source_grounding = source_grounding
         if sort_order is not None:
             question.sort_order = sort_order
         if is_active is not None:

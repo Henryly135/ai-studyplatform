@@ -70,6 +70,7 @@ def test_quiz_generation_graph_runner(monkeypatch):
                 {
                     "questionText": "Which statement is correct?",
                     "explanationText": "Because ownership matters",
+                    "sourceGrounding": "Memory Ownership notes, ownership basics.",
                     "sortOrder": 1,
                     "isActive": True,
                     "options": [

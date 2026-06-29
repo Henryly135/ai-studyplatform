@@ -106,6 +106,7 @@ class QuizCandidateGenerationService:
                 {
                     "questionText": "Example question?",
                     "explanationText": "Why the correct answer is right.",
+                    "sourceGrounding": "Concise citation or source note from the retrieved module context.",
                     "sortOrder": 1,
                     "isActive": True,
                     "options": [
@@ -128,6 +129,7 @@ class QuizCandidateGenerationService:
             f"{json.dumps(plan.model_dump(mode='json'), ensure_ascii=True, indent=2)}\n\n"
             "Required output JSON shape:\n"
             f"{json.dumps(output_shape, ensure_ascii=True, indent=2)}\n"
+            "Each question's sourceGrounding must name the retrieved material, heading, or chunk basis in one concise sentence.\n"
         )
 
     def _profile_context_payload(self, profile_context: QuizGenerationProfileContextRead | None) -> dict:
