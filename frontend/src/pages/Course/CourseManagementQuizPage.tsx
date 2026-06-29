@@ -2,8 +2,22 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate, useOutletContext, useParams } from "react-router-dom";
 
 import ManagementPanel from "../../components/course-management/ManagementPanel";
-import type { QuizOptionDraft, QuizQuestionDraft, QuizRecord } from "../../types/course";
-import { getQuizAuthoring, listQuizAuthoringQuestions, publishQuiz, upsertQuiz } from "../../services/course";
+import type {
+  EducatorQuizDraftDifficulty,
+  EducatorQuizDraftPreview,
+  EducatorQuizQuestionType,
+  QuizOptionDraft,
+  QuizQuestionDraft,
+  QuizRecord,
+} from "../../types/course";
+import {
+  acceptEducatorQuizDraft,
+  generateEducatorQuizDraftPreview,
+  getQuizAuthoring,
+  listQuizAuthoringQuestions,
+  publishQuiz,
+  upsertQuiz,
+} from "../../services/course";
 import { emitAppRefresh } from "../../utils/refreshEvents";
 import type { CourseManagementOutletContext } from "./CourseManagementLayout";
 
@@ -26,6 +40,7 @@ function makeEmptyQuestion(sortOrder: number): QuizQuestionDraft {
     questionUuid: null,
     questionText: "",
     explanationText: "",
+    sourceGrounding: "",
     sortOrder,
     isActive: true,
     options: [0, 1, 2, 3].map((i) => makeEmptyOption(i + 1, i)),
@@ -55,9 +70,20 @@ type QuestionEditorProps = {
   onDelete: () => void;
   isOnly: boolean;
   defaultExpanded?: boolean;
+  showLifecycleControls?: boolean;
+  radioGroupPrefix?: string;
 };
 
-function QuestionEditor({ question, index, onChange, onDelete, isOnly, defaultExpanded = false }: QuestionEditorProps) {
+function QuestionEditor({
+  question,
+  index,
+  onChange,
+  onDelete,
+  isOnly,
+  defaultExpanded = false,
+  showLifecycleControls = true,
+  radioGroupPrefix = "quiz-question",
+}: QuestionEditorProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   const setOptionField = (
@@ -161,7 +187,7 @@ function QuestionEditor({ question, index, onChange, onDelete, isOnly, defaultEx
                 <label className="quiz-option-radio" title="Mark as correct answer">
                   <input
                     type="radio"
-                    name={`correct-${question.sortOrder}`}
+                    name={`${radioGroupPrefix}-correct-${question.sortOrder}`}
                     checked={opt.isCorrect}
                     onChange={() => setCorrectOption(optIndex)}
                   />
@@ -199,26 +225,38 @@ function QuestionEditor({ question, index, onChange, onDelete, isOnly, defaultEx
             )}
           </div>
 
-          <div className="quiz-question-actions">
-            <label className="course-management-checkbox">
-              <input
-                type="checkbox"
-                checked={question.isActive}
-                onChange={(e) => onChange({ ...question, isActive: e.target.checked })}
-              />
-              <span>Active (included in question pool)</span>
-            </label>
-            <button
-              type="button"
-              className="course-management-action-button"
-              onClick={onDelete}
-              disabled={isOnly}
-              title={isOnly ? "Quiz must have at least one question" : "Delete this question"}
-              style={{ marginLeft: "auto", color: "#dc2626", borderColor: "#fca5a5" }}
-            >
-              Delete question
-            </button>
-          </div>
+          <label className="course-management-field course-management-field-full">
+            <span>Source grounding</span>
+            <textarea
+              value={question.sourceGrounding}
+              onChange={(e) => onChange({ ...question, sourceGrounding: e.target.value })}
+              rows={2}
+              placeholder="Optional: material, heading, or retrieved chunk supporting this question"
+            />
+          </label>
+
+          {showLifecycleControls && (
+            <div className="quiz-question-actions">
+              <label className="course-management-checkbox">
+                <input
+                  type="checkbox"
+                  checked={question.isActive}
+                  onChange={(e) => onChange({ ...question, isActive: e.target.checked })}
+                />
+                <span>Active (included in question pool)</span>
+              </label>
+              <button
+                type="button"
+                className="course-management-action-button"
+                onClick={onDelete}
+                disabled={isOnly}
+                title={isOnly ? "Quiz must have at least one question" : "Delete this question"}
+                style={{ marginLeft: "auto", color: "#dc2626", borderColor: "#fca5a5" }}
+              >
+                Delete question
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -265,6 +303,19 @@ function CourseManagementQuizPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
+  // AI draft generation state
+  const [draftQuestionCount, setDraftQuestionCount] = useState("5");
+  const [draftDifficulty, setDraftDifficulty] = useState<EducatorQuizDraftDifficulty>("mixed");
+  const [draftQuestionTypes, setDraftQuestionTypes] = useState<EducatorQuizQuestionType[]>(["multiple_choice"]);
+  const [draftLearningObjectives, setDraftLearningObjectives] = useState("");
+  const [draftMaterialScope, setDraftMaterialScope] = useState("");
+  const [draftInstructions, setDraftInstructions] = useState("");
+  const [replaceExistingQuestions, setReplaceExistingQuestions] = useState(true);
+  const [draftPreview, setDraftPreview] = useState<EducatorQuizDraftPreview | null>(null);
+  const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+  const [isAcceptingDraft, setIsAcceptingDraft] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+
   // Publish state
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
@@ -306,6 +357,8 @@ function CourseManagementQuizPage() {
     setQuestionSearch("");
     setAppliedQuestionSearch("");
     setQuestionLoadError(null);
+    setDraftPreview(null);
+    setDraftError(null);
 
     getQuizAuthoring(course.courseUuid, module.moduleUuid, { includeQuestions: false })
       .then((loaded) => {
@@ -320,6 +373,7 @@ function CourseManagementQuizPage() {
             setTimeLimitSecs("");
           }
           setQuestionCountPerAttempt(String(loaded.questionCountPerAttempt));
+          setDraftQuestionCount(String(Math.max(1, loaded.questionCountPerAttempt)));
           setShuffleQuestions(loaded.shuffleQuestions);
           setShuffleOptions(loaded.shuffleOptions);
           setQuestionTotal(loaded.availableQuestionCount);
@@ -382,6 +436,31 @@ function CourseManagementQuizPage() {
     void loadQuestionPage(safePage, appliedQuestionSearch);
   };
 
+  const toggleDraftQuestionType = (type: EducatorQuizQuestionType) => {
+    setDraftQuestionTypes((current) => {
+      if (current.includes(type)) {
+        return current.filter((existing) => existing !== type);
+      }
+      return [...current, type];
+    });
+  };
+
+  const updateDraftPreviewQuestion = (index: number, updates: Partial<QuizQuestionDraft>) => {
+    setDraftPreview((current) => {
+      if (!current) return current;
+      const questions = current.candidateSet.questions.map((question, questionIndex) =>
+        questionIndex === index ? { ...question, ...updates } : question
+      );
+      return {
+        ...current,
+        candidateSet: {
+          ...current.candidateSet,
+          questions,
+        },
+      };
+    });
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaveError(null);
@@ -433,6 +512,104 @@ function CourseManagementQuizPage() {
       setSaveError(err instanceof Error ? err.message : "Failed to save quiz.");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleGenerateDraft = async () => {
+    setDraftError(null);
+    setSaveError(null);
+    setSaveSuccess(null);
+    setPublishError(null);
+
+    const questionCount = Number(draftQuestionCount) || 0;
+    if (questionCount < 1 || questionCount > 20) {
+      setDraftError("Choose between 1 and 20 generated questions.");
+      return;
+    }
+    if (draftQuestionTypes.length === 0) {
+      setDraftError("Choose at least one question type.");
+      return;
+    }
+
+    const mins = Number(timeLimitMinutes) || 0;
+    const secs = Number(timeLimitSecs) || 0;
+    const totalSeconds = mins * 60 + secs || null;
+    const learningObjectives = draftLearningObjectives
+      .split("\n")
+      .map((objective) => objective.trim())
+      .filter(Boolean);
+
+    setIsGeneratingDraft(true);
+    try {
+      const preview = await generateEducatorQuizDraftPreview(
+        course.courseUuid,
+        module.moduleUuid,
+        {
+          title: title.trim() || null,
+          questionCount,
+          difficulty: draftDifficulty,
+          questionTypes: draftQuestionTypes,
+          learningObjectives,
+          materialScope: draftMaterialScope.trim() || null,
+          additionalInstructions: draftInstructions.trim() || null,
+          replaceExistingQuestions,
+          timeLimitSeconds: totalSeconds,
+          shuffleQuestions,
+          shuffleOptions,
+        }
+      );
+      setDraftPreview(preview);
+      setDraftQuestionCount(String(preview.questionCount));
+      setSaveSuccess("AI quiz draft preview generated. Accept it to save it to the question pool.");
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : "Failed to generate quiz draft.");
+    } finally {
+      setIsGeneratingDraft(false);
+    }
+  };
+
+  const handleDiscardDraft = () => {
+    setDraftPreview(null);
+    setDraftError(null);
+    setSaveSuccess(null);
+  };
+
+  const handleAcceptDraft = async () => {
+    if (!draftPreview) return;
+    setDraftError(null);
+    setSaveError(null);
+    setSaveSuccess(null);
+    setPublishError(null);
+
+    const missingSourceIndex = draftPreview.candidateSet.questions.findIndex((question) => !question.sourceGrounding.trim());
+    if (missingSourceIndex >= 0) {
+      setDraftError(`Question ${missingSourceIndex + 1} is missing source grounding.`);
+      return;
+    }
+
+    setIsAcceptingDraft(true);
+    try {
+      const accepted = await acceptEducatorQuizDraft(course.courseUuid, module.moduleUuid, draftPreview, { includeQuestions: true });
+      setQuiz(accepted);
+      setTitle(accepted.title);
+      setQuestionCountPerAttempt(String(accepted.questionCountPerAttempt));
+      setDraftQuestionCount(String(accepted.questionCountPerAttempt));
+      setShuffleQuestions(accepted.shuffleQuestions);
+      setShuffleOptions(accepted.shuffleOptions);
+      setQuestions(accepted.questions);
+      setQuestionPage(1);
+      setQuestionTotal(accepted.availableQuestionCount);
+      setQuestionTotalPages(Math.max(1, Math.ceil(accepted.availableQuestionCount / QUESTIONS_PAGE_SIZE)));
+      setAppliedQuestionSearch("");
+      setQuestionSearch("");
+      setPendingDeletions([]);
+      setDraftPreview(null);
+      emitAppRefresh({ scope: "course:quiz", courseUuid: course.courseUuid, moduleUuid: module.moduleUuid });
+      setSaveSuccess("AI quiz draft accepted as an unpublished quiz draft.");
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : "Failed to accept quiz draft.");
+    } finally {
+      setIsAcceptingDraft(false);
     }
   };
 
@@ -503,6 +680,169 @@ function CourseManagementQuizPage() {
 
       {!isLoading && (
         <form onSubmit={handleSave}>
+          <ManagementPanel title="AI quiz draft" style={{ marginBottom: "1.25rem" }}>
+            <div className="course-management-form">
+              <div className="course-management-inline-note course-management-field-full">
+                <strong>Generate editable draft questions from module materials.</strong>
+                <span>Generation creates a preview first. Accept the preview to save it as an unpublished quiz draft.</span>
+              </div>
+
+              <label className="course-management-field">
+                <span>Generated question count</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={draftQuestionCount}
+                  onChange={(e) => setDraftQuestionCount(e.target.value)}
+                />
+              </label>
+
+              <label className="course-management-field">
+                <span>Difficulty</span>
+                <select
+                  value={draftDifficulty}
+                  onChange={(e) => setDraftDifficulty(e.target.value as EducatorQuizDraftDifficulty)}
+                >
+                  <option value="mixed">Mixed</option>
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </label>
+
+              <div className="course-management-field">
+                <span>Question types</span>
+                <label className="course-management-checkbox" style={{ marginTop: "0.45rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={draftQuestionTypes.includes("multiple_choice")}
+                    onChange={() => toggleDraftQuestionType("multiple_choice")}
+                  />
+                  <span>Multiple choice</span>
+                </label>
+                <label className="course-management-checkbox" style={{ marginTop: "0.45rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={draftQuestionTypes.includes("true_false")}
+                    onChange={() => toggleDraftQuestionType("true_false")}
+                  />
+                  <span>True/false</span>
+                </label>
+              </div>
+
+              <label className="course-management-checkbox">
+                <input
+                  type="checkbox"
+                  checked={replaceExistingQuestions}
+                  onChange={(e) => setReplaceExistingQuestions(e.target.checked)}
+                />
+                <span>Replace existing draft question pool</span>
+              </label>
+
+              <label className="course-management-field course-management-field-full">
+                <span>Learning objectives</span>
+                <textarea
+                  value={draftLearningObjectives}
+                  onChange={(e) => setDraftLearningObjectives(e.target.value)}
+                  rows={3}
+                  placeholder="One objective per line"
+                />
+              </label>
+
+              <label className="course-management-field course-management-field-full">
+                <span>Material scope</span>
+                <textarea
+                  value={draftMaterialScope}
+                  onChange={(e) => setDraftMaterialScope(e.target.value)}
+                  rows={2}
+                  placeholder="Optional: focus on uploaded lecture notes, tutorial 3, or a concept range"
+                />
+              </label>
+
+              <label className="course-management-field course-management-field-full">
+                <span>Additional instructions</span>
+                <textarea
+                  value={draftInstructions}
+                  onChange={(e) => setDraftInstructions(e.target.value)}
+                  rows={3}
+                  placeholder="Optional: avoid trick questions, include one applied scenario, etc."
+                />
+              </label>
+
+              {draftError && (
+                <div className="course-management-inline-alert course-management-field-full">
+                  <strong>Unable to generate draft.</strong>
+                  <span>{draftError}</span>
+                </div>
+              )}
+
+              <div className="course-management-form-actions course-management-field-full">
+                <button
+                  type="button"
+                  className="course-management-action-button course-management-action-button-primary"
+                  onClick={handleGenerateDraft}
+                  disabled={isGeneratingDraft || isAcceptingDraft}
+                >
+                  {isGeneratingDraft ? "Generating preview…" : draftPreview ? "Regenerate preview" : "Generate preview"}
+                </button>
+              </div>
+
+              {draftPreview && (
+                <div className="course-management-field-full" style={{ display: "grid", gap: "0.85rem" }}>
+                  <div className="course-management-inline-note">
+                    <strong>
+                      Preview: {draftPreview.candidateSet.questionCount} question
+                      {draftPreview.candidateSet.questionCount === 1 ? "" : "s"}
+                    </strong>
+                    <span>
+                      {draftPreview.replaceExistingQuestions ? "Accepting will replace the current draft question pool." : "Accepting will append to the current draft question pool."}
+                      {" "}
+                      {draftPreview.retrievalUsed
+                        ? `${draftPreview.sourceChunkCount} source chunk${draftPreview.sourceChunkCount === 1 ? "" : "s"} used.`
+                        : "No retrieved source chunks were returned."}
+                    </span>
+                  </div>
+
+                  <div className="quiz-questions-list">
+                    {draftPreview.candidateSet.questions.map((question, questionIndex) => (
+                      <QuestionEditor
+                        key={questionIndex}
+                        question={question}
+                        index={questionIndex}
+                        onChange={(updatedQuestion) => updateDraftPreviewQuestion(questionIndex, updatedQuestion)}
+                        onDelete={() => undefined}
+                        isOnly
+                        defaultExpanded
+                        showLifecycleControls={false}
+                        radioGroupPrefix={`ai-draft-preview-${questionIndex}`}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="course-management-form-actions">
+                    <button
+                      type="button"
+                      className="course-management-action-button course-management-action-button-primary"
+                      onClick={handleAcceptDraft}
+                      disabled={isGeneratingDraft || isAcceptingDraft}
+                    >
+                      {isAcceptingDraft ? "Accepting…" : "Accept preview"}
+                    </button>
+                    <button
+                      type="button"
+                      className="course-management-action-button"
+                      onClick={handleDiscardDraft}
+                      disabled={isGeneratingDraft || isAcceptingDraft}
+                    >
+                      Discard preview
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </ManagementPanel>
+
           {/* Settings panel — full width single row */}
           <ManagementPanel title="Quiz settings" style={{ marginBottom: "1.25rem" }}>
             <div className="course-management-form">
