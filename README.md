@@ -59,7 +59,7 @@ Windows 可以使用：
 copy .env.example .env
 ```
 
-`.env` 只用于本地或部署环境，不能提交到 Git。真实密钥、SMTP 密码、Gemini API Key 和数据库密码都应只写入 `.env` 或部署平台的 secret。
+`.env` 只用于本地或部署环境，不能提交到 Git。真实密钥、SMTP 密码、Gemini API Key、DeepSeek/OpenAI-compatible API Key 和数据库密码都应只写入 `.env` 或部署平台的 secret。
 
 本地 demo 默认管理员账号已经写在 `.env.example` 中，方便面试官试用后台：
 
@@ -80,6 +80,18 @@ SMTP_PASS=your_ses_smtp_password
 SMTP_FROM=your_email@example.com
 GEMINI_API_KEY=your_gemini_api_key
 ```
+
+AI chat provider 配置入口已经预留给后续 adapter：
+
+```env
+AI_CHAT_PROVIDER=deepseek
+AI_CHAT_BASE_URL=https://api.deepseek.com
+AI_CHAT_MODEL=deepseek-v4-flash
+AI_CHAT_API_KEY=your_local_deepseek_key
+DEEPSEEK_API_KEY=your_local_deepseek_key
+```
+
+当前阶段只是配置准备，现有 AI 调用链仍使用 Gemini 兼容路径；仅配置 DeepSeek key 不会自动让 Gemini 直连功能可用。CI 使用空 key 或 mock，不需要真实 AI provider key。
 
 如果部署到公网环境，请同时修改默认管理员邮箱、密码和姓名。
 
