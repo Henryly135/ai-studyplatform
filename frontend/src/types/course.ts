@@ -74,6 +74,7 @@ export type QuizQuestionDraft = {
   questionUuid: string | null;
   questionText: string;
   explanationText: string;
+  sourceGrounding: string;
   sortOrder: number;
   isActive: boolean;
   options: QuizOptionDraft[];
@@ -90,6 +91,40 @@ export type QuizRecord = {
   shuffleQuestions: boolean;
   shuffleOptions: boolean;
   questions: QuizQuestionDraft[];
+};
+
+export type EducatorQuizDraftDifficulty = "easy" | "medium" | "hard" | "mixed";
+export type EducatorQuizQuestionType = "multiple_choice" | "true_false";
+
+export type EducatorQuizDraftPayload = {
+  title?: string | null;
+  questionCount: number;
+  difficulty: EducatorQuizDraftDifficulty;
+  questionTypes: EducatorQuizQuestionType[];
+  learningObjectives: string[];
+  materialScope?: string | null;
+  additionalInstructions?: string | null;
+  replaceExistingQuestions: boolean;
+  timeLimitSeconds?: number | null;
+  shuffleQuestions: boolean;
+  shuffleOptions: boolean;
+};
+
+export type EducatorQuizDraftPreview = {
+  title: string;
+  questionCount: number;
+  difficulty: EducatorQuizDraftDifficulty;
+  questionTypes: EducatorQuizQuestionType[];
+  replaceExistingQuestions: boolean;
+  timeLimitSeconds: number | null;
+  shuffleQuestions: boolean;
+  shuffleOptions: boolean;
+  retrievalUsed: boolean;
+  sourceChunkCount: number;
+  candidateSet: {
+    questionCount: number;
+    questions: QuizQuestionDraft[];
+  };
 };
 
 export type QuizQuestionPage = {

@@ -68,6 +68,7 @@ def _generation_response() -> QuizGenerationRunResponse:
                 {
                     "questionText": "Which statement is correct?",
                     "explanationText": "Because ownership matters",
+                    "sourceGrounding": "Memory Ownership notes, ownership basics.",
                     "sortOrder": 1,
                     "isActive": True,
                     "options": [
@@ -78,6 +79,7 @@ def _generation_response() -> QuizGenerationRunResponse:
                 {
                     "questionText": "True or false?",
                     "explanationText": "Because heap and stack differ",
+                    "sourceGrounding": "Memory Ownership notes, heap vs stack.",
                     "sortOrder": 2,
                     "isActive": True,
                     "options": [

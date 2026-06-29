@@ -61,22 +61,30 @@ Acceptance:
 - Provider errors return consistent and explainable error responses.
 - Documentation explains provider setup, limitations, and reindexing requirements.
 
-## Phase 3: Educator AI Quiz Generation
+## Phase 3: Educator AI Quiz Generation (Implemented)
 
 Goal: educators can generate editable quiz drafts from module materials or prompts.
 
-Implementation direction:
+Current completed scope:
 
-- Reuse the existing quiz generation workflow in `ai-service` and add educator generation runs.
+- Reuse the existing quiz generation workflow in `ai-service` and add an internal educator generation endpoint.
 - Support difficulty, question types, question count, learning objectives, material scope, and educator instructions.
-- Persist generated results into `learning-service` quiz drafts instead of publishing directly.
-- Add generate, preview, edit, accept, discard, and regenerate flows to the course-management quiz page.
+- Return generated results as a preview first; persist them to `learning-service` only after educator acceptance as an unpublished/draft quiz.
+- Support replacing or appending to the existing question pool while preserving the existing quiz authoring/publish flow.
+- Store per-question `sourceGrounding`, visible and adjustable in the frontend preview.
+- Add question type controls plus generate preview, accept, discard, and regenerate flows to the course-management quiz page.
 
 Acceptance:
 
 - Educators can generate quiz drafts.
 - Questions include options, answers, explanations, and source grounding.
 - Questions cannot be published to learners without educator confirmation.
+
+Future enhancements:
+
+- Support richer question types and rubrics.
+- Add short-lived server-side draft preview storage so unaccepted previews can be restored across devices.
+- Link source grounding to finer-grained material citations.
 
 ## Phase 4: Short-Answer Assessment
 
