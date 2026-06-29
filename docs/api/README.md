@@ -43,7 +43,7 @@ English version: [README.en.md](README.en.md)
 - AI 生成测验的上下文查询、题目写入和教师端草稿预览/接受。
 - 短答题评估：教师 rubric、学生提交、AI 建议反馈和教师复核。
 - 学生端 Study Planner 计划生成、读取、调整和重新生成。
-- 教师端课程与测验分析。
+- 教师端课程、测验和教学洞察分析。
 
 学生端 Study Planner：
 
@@ -72,6 +72,14 @@ English version: [README.en.md](README.en.md)
 - `POST /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer/submissions`：学生提交答案；`learning-service` 保存提交前调用内部 `ai-service` 获取建议分数、反馈、strengths 和 improvements。
 
 短答题学生接口要求 learner 身份、课程报名和模块解锁；教师管理接口要求模块更新权限。AI 建议只作为草稿反馈，最终分数和可见反馈由教师复核接口确认。
+
+教师端学习分析：
+
+- `GET /api/learning/courses/me/analytics`：教师读取自己课程的报名汇总，包括课程数、总报名、活跃报名、完成报名和平均进度。
+- `GET /api/learning/courses/me/analytics/quiz`：教师读取自己课程中各模块 quiz 的尝试数、唯一学生数、平均分、通过率和平均耗时。
+- `GET /api/learning/courses/me/analytics/teaching-insights`：教师读取教学洞察聚合，只统计当前教师拥有的课程。响应包含 `moduleBottlenecks`（模块 enrolled/started/completed/completionRate/avgProgressPercent 和卡点信号）、`atRiskLearners`（低进度、久未访问、未完成模块较多的学生）、`completionTrends`（按日期聚合的模块完成数）和 `assessmentSignals`（quiz 低通过率/低均分，以及短答题 AI/最终均分和待复核数量）。
+
+以上学习分析接口仅限具备教师课程管理权限的用户使用；聚合由 `learning-service` 基于课程报名、模块进度、quiz attempt 和短答题提交表计算，不调用 `ai-service`。
 
 核心文件：
 
