@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -178,3 +178,61 @@ class QuizModuleStatsItem(BaseModel):
 
 class EducatorQuizAnalyticsResponse(BaseModel):
     items: list[QuizModuleStatsItem]
+
+
+class ModuleBottleneckInsightItem(BaseModel):
+    courseUuid: str
+    courseTitle: str
+    moduleUuid: str
+    moduleTitle: str
+    enrolledLearnerCount: int
+    startedLearnerCount: int
+    completedLearnerCount: int
+    completionRate: float | None
+    avgProgressPercent: float | None
+    signals: list[str]
+
+
+class AtRiskLearnerInsightItem(BaseModel):
+    courseUuid: str
+    courseTitle: str
+    learnerId: int
+    learnerUuid: str
+    progressPercent: float
+    completedModuleCount: int
+    totalModuleCount: int
+    incompleteModuleCount: int
+    lastAccessedAt: datetime | None
+    riskReasons: list[str]
+
+
+class CompletionTrendInsightItem(BaseModel):
+    courseUuid: str
+    courseTitle: str
+    bucketDate: date
+    completedCount: int
+
+
+class AssessmentSignalInsightItem(BaseModel):
+    courseUuid: str
+    courseTitle: str
+    moduleUuid: str
+    moduleTitle: str
+    quizTitle: str | None
+    quizAttemptCount: int
+    quizAvgScorePercent: float | None
+    quizPassRate: float | None
+    shortAnswerTitle: str | None
+    shortAnswerSubmissionCount: int
+    shortAnswerAvgAiScore: float | None
+    shortAnswerAvgFinalScore: float | None
+    shortAnswerMaxScore: float | None
+    shortAnswerPendingReviewCount: int
+    signals: list[str]
+
+
+class EducatorTeachingInsightsResponse(BaseModel):
+    moduleBottlenecks: list[ModuleBottleneckInsightItem]
+    atRiskLearners: list[AtRiskLearnerInsightItem]
+    completionTrends: list[CompletionTrendInsightItem]
+    assessmentSignals: list[AssessmentSignalInsightItem]

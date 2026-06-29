@@ -11,6 +11,7 @@ from app.schemas.course import (
     CourseUpdateRequest,
     EducatorAnalyticsResponse,
     EducatorQuizAnalyticsResponse,
+    EducatorTeachingInsightsResponse,
     PaginatedCourseSummaryResponse,
 )
 from app.services.course_catalog_service import CourseCatalogService
@@ -167,6 +168,20 @@ def get_my_quiz_analytics(
     session: Session = Depends(get_db_session),
 ) -> EducatorQuizAnalyticsResponse:
     return CourseManagementService(session).get_educator_quiz_analytics(current_user=current_user)
+
+
+@router.get(
+    "/me/analytics/teaching-insights",
+    summary="Get My Teaching Insights [Educator]",
+    description="Returns module bottlenecks, at-risk learners, completion trends, and assessment signals for courses owned by the current educator.",
+    response_model=EducatorTeachingInsightsResponse,
+    response_model_exclude_none=True,
+)
+def get_my_teaching_insights(
+    current_user: dict = Depends(require_identity_permission(COURSE_CREATE)),
+    session: Session = Depends(get_db_session),
+) -> EducatorTeachingInsightsResponse:
+    return CourseManagementService(session).get_educator_teaching_insights(current_user=current_user)
 
 
 @router.get(

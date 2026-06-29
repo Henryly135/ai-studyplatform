@@ -336,3 +336,61 @@ export type QuizModuleStatsItem = {
 export type EducatorQuizAnalytics = {
   items: QuizModuleStatsItem[];
 };
+
+export type ModuleBottleneckInsightItem = {
+  courseUuid: string;
+  courseTitle: string;
+  moduleUuid: string;
+  moduleTitle: string;
+  enrolledLearnerCount: number;
+  startedLearnerCount: number;
+  completedLearnerCount: number;
+  completionRate: number | null;
+  avgProgressPercent: number | null;
+  signals: string[];
+};
+
+export type AtRiskLearnerInsightItem = {
+  courseUuid: string;
+  courseTitle: string;
+  learnerId: number;
+  learnerUuid: string;
+  progressPercent: number;
+  completedModuleCount: number;
+  totalModuleCount: number;
+  incompleteModuleCount: number;
+  lastAccessedAt: string | null;
+  riskReasons: string[];
+};
+
+export type CompletionTrendInsightItem = {
+  courseUuid: string;
+  courseTitle: string;
+  bucketDate: string;
+  completedCount: number;
+};
+
+export type AssessmentSignalInsightItem = {
+  courseUuid: string;
+  courseTitle: string;
+  moduleUuid: string;
+  moduleTitle: string;
+  quizTitle: string | null;
+  quizAttemptCount: number;
+  quizAvgScorePercent: number | null;
+  quizPassRate: number | null;
+  shortAnswerTitle: string | null;
+  shortAnswerSubmissionCount: number;
+  shortAnswerAvgAiScore: number | null;
+  shortAnswerAvgFinalScore: number | null;
+  shortAnswerMaxScore: number | null;
+  shortAnswerPendingReviewCount: number;
+  signals: string[];
+};
+
+export type EducatorTeachingInsights = {
+  moduleBottlenecks: ModuleBottleneckInsightItem[];
+  atRiskLearners: AtRiskLearnerInsightItem[];
+  completionTrends: CompletionTrendInsightItem[];
+  assessmentSignals: AssessmentSignalInsightItem[];
+};
