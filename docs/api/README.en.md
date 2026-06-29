@@ -41,6 +41,7 @@ Main capabilities:
 - Material upload, multipart upload, deletion, and public access.
 - Manual quiz authoring, publication, and learner attempts.
 - AI-generated quiz context lookup, generated-question persistence, and educator draft preview/acceptance.
+- Short-answer assessment: educator rubrics, learner submissions, AI suggested feedback, and educator review.
 - Learner Study Planner generation, lookup, adjustment, and regeneration.
 - Educator course and quiz analytics.
 
@@ -61,6 +62,17 @@ Educator AI Quiz Draft:
 
 These endpoints are limited to educator owner/admin users with module update permission. `learning-service` persists quiz metadata, questions, options, and per-question source grounding; `ai-service` only generates candidate content.
 
+Short-Answer Assessment:
+
+- `PUT /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer/management`: educator owner/admin creates or updates the module short-answer assessment, including title, prompt, rubric, max score, and status.
+- `GET /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer/management`: educator reads the module short-answer assessment.
+- `GET /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer/management/submissions`: educator lists learner submissions, AI suggested scores, and feedback.
+- `PATCH /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer/management/submissions/{submissionUuid}/review`: educator reviews a submission and publishes final score and feedback.
+- `GET /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer`: learner reads the published short-answer assessment and their latest submission.
+- `POST /api/learning/courses/{courseUuid}/modules/{moduleUuid}/short-answer/submissions`: learner submits an answer; before persistence, `learning-service` calls internal `ai-service` for suggested score, feedback, strengths, and improvements.
+
+Learner endpoints require learner identity, course enrollment, and module unlock. Educator management endpoints require module update permission. AI feedback is advisory until the educator review endpoint confirms final score and visible feedback.
+
 Key files:
 
 - `services/learning-service/app/api/course_management.py`
@@ -68,6 +80,7 @@ Key files:
 - `services/learning-service/app/api/module_management.py`
 - `services/learning-service/app/api/module_content.py`
 - `services/learning-service/app/api/quiz.py`
+- `services/learning-service/app/api/short_answer.py`
 - `services/learning-service/app/api/internal_quiz_generation.py`
 - `services/learning-service/app/api/study_planner.py`
 
@@ -96,6 +109,7 @@ Main capabilities:
 - Learner profile initialization and module profile updates.
 - AI quiz generation workflow.
 - Internal educator AI quiz draft generation endpoint for `learning-service`.
+- Internal short-answer evaluation endpoint for `learning-service`.
 - Internal Study Planner generation endpoint for `learning-service`.
 - Celery smoke tasks and task status lookup.
 
@@ -112,6 +126,7 @@ Key files:
 Internal AI quiz endpoint:
 
 - `POST /api/ai/internal/quiz-generation/educator-draft`: internal endpoint called only by `learning-service` with the internal token. It returns candidate questions, retrieval context, and the plan; each question includes `sourceGrounding`. nginx should not expose this endpoint directly to browsers.
+- `POST /api/ai/internal/short-answer/evaluate`: internal endpoint called only by `learning-service` with the internal token. It accepts prompt, rubric, max score, and learner answer, then returns suggested score, feedback, strengths, and improvements. The current implementation is a mock-friendly local evaluator that can later be replaced by a provider-backed workflow.
 
 ## Authentication
 

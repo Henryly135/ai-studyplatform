@@ -71,6 +71,15 @@ function CourseModulePage() {
                   <span>quiz</span>
                 </Link>
               )}
+              {module.hasPublishedShortAnswer && (
+                <Link
+                  to={`/course/${course.courseUuid}/modules/${module.moduleUuid}/short-answer`}
+                  className="course-material-card course-material-card-link"
+                >
+                  <strong>{module.shortAnswerTitle ?? "Short-answer assessment"}</strong>
+                  <span>assessment</span>
+                </Link>
+              )}
             </div>
           </article>
         ) : null}

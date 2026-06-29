@@ -25,6 +25,7 @@ from app.repositories.module_repository import ModuleRepository
 from app.repositories.course_enrollment_repository import CourseEnrollmentRepository
 from app.repositories.course_repository import CourseRepository
 from app.repositories.quiz_repository import QuizRepository
+from app.repositories.short_answer_assessment_repository import ShortAnswerAssessmentRepository
 from app.schemas.course import (
     CourseDetailResponse,
     CourseSummaryResponse,
@@ -53,6 +54,7 @@ class CourseCatalogService:
         self.module_progress = ModuleProgressRepository(session)
         self.enrollments = CourseEnrollmentRepository(session)
         self.quizzes = QuizRepository(session)
+        self.short_answer_assessments = ShortAnswerAssessmentRepository(session)
         self.identity_users = IdentityUserClient()
         self.unlocking = ModuleUnlockingService(session)
 
@@ -449,6 +451,11 @@ class CourseCatalogService:
         quiz = self.quizzes.get_by_module_id(module.module_id)
         from app.models.quizzes import QuizStatus
         has_published_quiz = quiz is not None and quiz.status == QuizStatus.PUBLISHED
+        short_answer = self.short_answer_assessments.get_by_module_id(module.module_id)
+        from app.models.short_answer_assessments import ShortAnswerAssessmentStatus
+        has_published_short_answer = (
+            short_answer is not None and short_answer.status == ShortAnswerAssessmentStatus.PUBLISHED
+        )
         learner_id = current_user.get("id")
         is_learner = current_user.get("identity") == "Learner" and isinstance(learner_id, int)
         progress = (
@@ -486,6 +493,8 @@ class CourseCatalogService:
             hasPublishedQuiz=has_published_quiz,
             quizTitle=quiz.title if has_published_quiz else None,
             quizTimeLimitSeconds=quiz.time_limit_seconds if has_published_quiz else None,
+            hasPublishedShortAnswer=has_published_short_answer,
+            shortAnswerTitle=short_answer.title if has_published_short_answer else None,
             progressStatus=progress_status,
             isCompleted=is_completed,
             completedAt=completed_at,
