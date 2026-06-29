@@ -65,6 +65,8 @@ class ModuleResponse(BaseModel):
     hasPublishedQuiz: bool = False
     quizTitle: str | None = None
     quizTimeLimitSeconds: int | None = None
+    hasPublishedShortAnswer: bool = False
+    shortAnswerTitle: str | None = None
     progressStatus: str | None = None
     isCompleted: bool = False
     completedAt: datetime | None = None

@@ -852,6 +852,16 @@ function CourseManagementModuleDetailPage() {
         </div>
       </ManagementPanel>
 
+      <ManagementPanel title="Short-answer assessment" style={{ marginBottom: "1.25rem" }}>
+        <Link
+          to={`/course/${course.courseUuid}/management/modules/${module.moduleUuid}/short-answer${managementSearchSuffix}`}
+          className="course-management-create-module-card"
+        >
+          <span className="course-management-create-module-plus" aria-hidden="true" />
+          <strong>Manage short-answer assessment</strong>
+        </Link>
+      </ManagementPanel>
+
       {/* Quiz section */}
       <ManagementPanel title="Quiz">
         {quiz ? (
