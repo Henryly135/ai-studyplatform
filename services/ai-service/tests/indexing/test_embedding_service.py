@@ -10,8 +10,6 @@ from app.services.indexing.embedding_service import EmbeddingService
 
 def _settings(**overrides):
     values = {
-        "ai_embedding_provider": "gemini",
-        "ai_embedding_api_key": "embedding-key",
         "ai_embedding_orchestrator": "direct",
         "ai_embedding_model": "embedding-model",
         "ai_embedding_version": "embedding-v1",
@@ -32,20 +30,6 @@ def test_extract_token_count_supports_object_dict_and_serializers() -> None:
     assert service._extract_token_count(SimpleNamespace(to_dict=lambda: {"total_tokens": 9})) == 9
     assert service._extract_token_count(SimpleNamespace(to_json_dict=lambda: {"total_tokens": 10})) == 10
     assert service._extract_token_count(None) is None
-
-
-def test_embedding_service_rejects_non_gemini_provider_with_reindex_guidance(monkeypatch) -> None:
-    # Tests unsupported embedding providers fail clearly and tell operators to reindex after configuration.
-    monkeypatch.setattr(
-        "app.services.indexing.embedding_service.settings",
-        _settings(ai_embedding_provider="deepseek"),
-    )
-
-    with pytest.raises(Exception) as exc_info:
-        EmbeddingService()
-
-    assert "Unsupported AI_EMBEDDING_PROVIDER 'deepseek'" in str(exc_info.value)
-    assert "reindexing materials" in str(exc_info.value)
 
 
 def test_normalize_vector_returns_unit_vector_and_rejects_zero() -> None:

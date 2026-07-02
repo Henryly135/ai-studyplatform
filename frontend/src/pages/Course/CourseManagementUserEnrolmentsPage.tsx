@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { LuChevronDown, LuChevronUp } from "react-icons/lu";
 
+import { getStoredCurrentUser } from "../../services/api";
 import {
   deactivateCourseInviteLink,
   generateCourseInviteLink,
@@ -11,12 +12,11 @@ import {
 import type { CourseEnrollmentLearnerRecord } from "../../types/course";
 import type { CourseInviteLinkResponse } from "../../types/admin";
 import type { CourseManagementOutletContext } from "./CourseManagementLayout";
-import type { CurrentUserResponse } from "../../types/auth";
 import { copyTextToClipboard } from "../../utils/clipboard";
 
 function formatDateTime(value: string | null) {
   if (!value) {
-    return "Not available yet";
+    return "暂不可用";
   }
 
   const parsed = new Date(value);
@@ -48,18 +48,7 @@ function CourseManagementUserEnrolmentsPage() {
   const [expandedLearnerUuid, setExpandedLearnerUuid] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const currentUser = useMemo(() => {
-    const raw = localStorage.getItem("currentUser");
-    if (!raw) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(raw) as CurrentUserResponse;
-    } catch {
-      return null;
-    }
-  }, []);
+  const [currentUser] = useState(() => getStoredCurrentUser());
   const isAdmin = currentUser?.identity === "Admin";
   const isEducator = currentUser?.identity === "Educator";
 
@@ -109,10 +98,31 @@ function CourseManagementUserEnrolmentsPage() {
   }, [course.courseUuid]);
 
   useEffect(() => {
-    if (!isEducator && !isAdmin) return;
+    if (!isEducator && !isAdmin) return undefined;
+
+    let cancelled = false;
+    setInviteError(null);
+
     listCourseInviteLinks(course.courseUuid)
-      .then(setInviteLinks)
-      .catch(() => setInviteLinks([]));
+      .then((links) => {
+        if (!cancelled) {
+          setInviteLinks(links);
+        }
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setInviteLinks([]);
+          setInviteError(
+            loadError instanceof Error
+              ? loadError.message
+              : "Failed to load invite links."
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [course.courseUuid, isEducator, isAdmin]);
 
   const handleGenerateInviteLink = async () => {
@@ -176,10 +186,10 @@ function CourseManagementUserEnrolmentsPage() {
     <section className="course-management-page">
       <div className="course-management-section-heading">
         <div>
-          <span className="course-surface-badge">User Enrolments</span>
-          <h1>Track enrolled learners</h1>
-          <p>Review the active learner list for this course and monitor enrollment progress at a glance.</p>
-          {isAdmin && course.educatorName ? <p>Created by {course.educatorName}</p> : null}
+          <span className="course-surface-badge">用户报名</span>
+          <h1>追踪已报名学生</h1>
+          <p>查看该课程的活跃学生名单，并快速了解报名进度。</p>
+          {isAdmin && course.educatorName ? <p>创建者 {course.educatorName}</p> : null}
         </div>
       </div>
 
@@ -194,13 +204,11 @@ function CourseManagementUserEnrolmentsPage() {
 
       {(isEducator || isAdmin) ? (
         <div className="course-management-panel" style={{ marginBottom: "1.5rem", padding: "1.25rem 1.5rem" }}>
-          <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Invite Students</h3>
-          <p style={{ color: "var(--color-text-muted, #6b7280)", fontSize: "0.875rem", marginBottom: "1rem" }}>
-            Generate a shareable link for learners to self-enrol in this course.
+          <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>邀请学生</h3>
+          <p style={{ color: "var(--color-text-muted, #6b7280)", fontSize: "0.875rem", marginBottom: "1rem" }}>生成可分享链接，让学生自行加入这门课程。
           </p>
           {!isCoursePublished && (
-            <p style={{ color: "#f59e0b", fontSize: "0.875rem", marginBottom: "0.75rem" }}>
-              The course must be published before invite links can be generated.
+            <p style={{ color: "#f59e0b", fontSize: "0.875rem", marginBottom: "0.75rem" }}>课程发布后才能生成邀请链接。
             </p>
           )}
           <button
@@ -265,7 +273,7 @@ function CourseManagementUserEnrolmentsPage() {
                       color: link.isActive ? "#16a34a" : "#6b7280",
                       whiteSpace: "nowrap",
                     }}>
-                      {link.isActive ? "Active" : "Inactive"}
+                      {link.isActive ? "Active" : "停用"}
                     </span>
                     {link.isActive && (
                       <>
@@ -282,7 +290,7 @@ function CourseManagementUserEnrolmentsPage() {
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {copiedUuid === link.inviteUuid ? "Copied!" : "Copy"}
+                          {copiedUuid === link.inviteUuid ? "已复制！" : "复制"}
                         </button>
                         <button
                           type="button"
@@ -297,8 +305,7 @@ function CourseManagementUserEnrolmentsPage() {
                             cursor: "pointer",
                             whiteSpace: "nowrap",
                           }}
-                        >
-                          Deactivate
+                        >停用
                         </button>
                       </>
                     )}
@@ -312,15 +319,15 @@ function CourseManagementUserEnrolmentsPage() {
 
       {error ? (
         <div className="course-management-inline-alert">
-          <strong>Unable to load enrolled learners.</strong>
+          <strong>无法加载已报名学生。</strong>
           <span>{error}</span>
         </div>
       ) : null}
 
       {!loading && enrollments.length === 0 ? (
         <div className="course-empty-state">
-          <strong>No enrolled learners yet</strong>
-          <p>This course does not have active learner enrollments at the moment.</p>
+          <strong>暂无已报名学生</strong>
+          <p>这门课程当前还没有活跃学生报名。</p>
         </div>
       ) : null}
 
@@ -362,35 +369,35 @@ function CourseManagementUserEnrolmentsPage() {
               {expandedLearnerUuid === enrollment.learnerUuid ? (
                 <div className="course-management-enrolment-grid">
                   <div className="course-management-key-value">
-                    <span>Email</span>
+                    <span>邮箱</span>
                     <strong>{enrollment.learnerEmail || "Not provided"}</strong>
                   </div>
                   <div className="course-management-key-value">
-                    <span>Identity</span>
-                    <strong>{enrollment.learnerIdentity || "Learner"}</strong>
+                    <span>身份</span>
+                    <strong>{enrollment.learnerIdentity || "学生"}</strong>
                   </div>
                   <div className="course-management-key-value">
-                    <span>Account status</span>
-                    <strong>{enrollment.learnerAccountStatus || "Unknown"}</strong>
+                    <span>账号状态</span>
+                    <strong>{enrollment.learnerAccountStatus || "未知"}</strong>
                   </div>
                   <div className="course-management-key-value">
-                    <span>Email verified</span>
-                    <strong>{enrollment.learnerEmailVerified ? "Verified" : "Pending"}</strong>
+                    <span>邮箱已验证</span>
+                    <strong>{enrollment.learnerEmailVerified ? "Verified" : "待处理"}</strong>
                   </div>
                   <div className="course-management-key-value">
-                    <span>Progress</span>
+                    <span>进度</span>
                     <strong>{formatProgress(enrollment)}</strong>
                   </div>
                   <div className="course-management-key-value">
-                    <span>Enrolled at</span>
+                    <span>报名时间</span>
                     <strong>{formatDateTime(enrollment.enrolledAt)}</strong>
                   </div>
                   <div className="course-management-key-value">
-                    <span>Last accessed</span>
+                    <span>最后访问</span>
                     <strong>{formatDateTime(enrollment.lastAccessedAt)}</strong>
                   </div>
                   <div className="course-management-key-value">
-                    <span>Completed at</span>
+                    <span>完成时间</span>
                     <strong>{formatDateTime(enrollment.completedAt)}</strong>
                   </div>
                 </div>

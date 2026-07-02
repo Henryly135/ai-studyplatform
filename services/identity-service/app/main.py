@@ -6,13 +6,14 @@ from sqlalchemy import text
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.internal import router as internal_router
+from app.core.config import settings
 from app.db.session import engine
 
 app = FastAPI(title="Identity Service", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=list(settings.cors_allowed_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,4 +37,3 @@ def health():
         return {"status": "ok"}
     except Exception:
         return {"status": "degraded"}
-

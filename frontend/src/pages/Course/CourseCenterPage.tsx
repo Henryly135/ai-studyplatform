@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LuCheck, LuChevronLeft, LuChevronRight, LuPlus } from "react-icons/lu";
 
@@ -60,6 +60,9 @@ function CourseCard({
       tabIndex={0}
       onClick={() => navigate(`/course/${course.courseUuid}?from=course-center`)}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) {
+          return;
+        }
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           navigate(`/course/${course.courseUuid}?from=course-center`);
@@ -92,16 +95,16 @@ function CourseCard({
                 disabled={isEnrolling}
                 aria-label={
                   isEnrolled
-                    ? "Cancel enrollment for this course"
+                    ? "取消报名该课程"
                     : isEnrolling
-                      ? "Enrolling in this course"
-                      : "Enroll in this course"
+                      ? "正在报名该课程"
+                      : "报名该课程"
                 }
                 title={
                   isEnrolled
-                    ? "Cancel enrollment"
+                    ? "取消报名"
                     : isEnrolling
-                      ? "Updating enrollment..."
+                      ? "正在更新报名状态..."
                       : "Enroll"
                 }
               >
@@ -139,6 +142,42 @@ function buildPagination(currentPage: number, totalPages: number) {
   return [1, "ellipsis", currentPage - 1, currentPage, currentPage + 1, "ellipsis", totalPages] as const;
 }
 
+function getCourseCenterHeroCopy(identity?: CurrentUserResponse["identity"]) {
+  if (identity === "Learner") {
+    return {
+      badge: "课程目录",
+      title: "查找可加入课程",
+      description:
+        "浏览已发布课程，按标题或代码搜索，并加入适合你的课程。",
+    };
+  }
+
+  if (identity === "Educator") {
+    return {
+      badge: "目录预览",
+      title: "查看学生侧课程目录",
+      description:
+        "查看已发布课程在学生侧的展示方式、发现信息和共享课程空间。",
+    };
+  }
+
+  if (identity === "Admin") {
+    return {
+      badge: "课程目录治理",
+      title: "监控已发布课程目录",
+      description:
+        "从平台视角查看公开课程记录、搜索目录，并进入课程空间进行监管。",
+    };
+  }
+
+  return {
+    badge: "课程大厅",
+    title: "在一个位置浏览所有课程",
+    description:
+      "浏览完整课程目录，按标题或代码搜索，并进入共享课程空间。",
+  };
+}
+
 type CourseCenterPageProps = {
   currentUser?: CurrentUserResponse;
 };
@@ -151,6 +190,7 @@ type PendingEnrollmentAction = {
 
 function CourseCenterPage({ currentUser }: CourseCenterPageProps) {
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const enrollmentActionTriggerRef = useRef<HTMLElement | null>(null);
   const columnCount = useGridColumnCount(gridRef);
   const coursesPerPage = columnCount > 0 ? columnCount * COURSE_ROWS_PER_PAGE : 0;
   const isLearner = currentUser?.identity === "Learner";
@@ -164,8 +204,29 @@ function CourseCenterPage({ currentUser }: CourseCenterPageProps) {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [enrollmentActionError, setEnrollmentActionError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [enrollmentRefreshKey, setEnrollmentRefreshKey] = useState(0);
+
+  const restoreEnrollmentActionFocus = useCallback(() => {
+    const trigger = enrollmentActionTriggerRef.current;
+    enrollmentActionTriggerRef.current = null;
+    if (!trigger?.isConnected) {
+      return;
+    }
+
+    window.setTimeout(() => trigger.focus(), 0);
+  }, []);
+
+  const closePendingEnrollmentAction = useCallback(() => {
+    if (enrollingCourseUuid) {
+      return;
+    }
+
+    setPendingEnrollmentAction(null);
+    setEnrollmentActionError("");
+    restoreEnrollmentActionFocus();
+  }, [enrollingCourseUuid, restoreEnrollmentActionFocus]);
 
   useEffect(() => {
     if (!isLearner) {
@@ -207,6 +268,9 @@ function CourseCenterPage({ currentUser }: CourseCenterPageProps) {
       return;
     }
 
+    enrollmentActionTriggerRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setEnrollmentActionError("");
     setPendingEnrollmentAction({
       courseUuid: course.courseUuid,
       courseTitle: course.title,
@@ -237,9 +301,11 @@ function CourseCenterPage({ currentUser }: CourseCenterPageProps) {
       setEnrollmentRefreshKey((current) => current + 1);
       emitAppRefresh({ scope: "course:enrollment", courseUuid });
       setPendingEnrollmentAction(null);
+      restoreEnrollmentActionFocus();
+      setEnrollmentActionError("");
       setError(null);
     } catch (enrollError) {
-      setError(
+      setEnrollmentActionError(
         enrollError instanceof Error
           ? enrollError.message
           : action === "cancel"
@@ -309,6 +375,7 @@ function CourseCenterPage({ currentUser }: CourseCenterPageProps) {
   const startIndex = totalCourses === 0 || coursesPerPage === 0 ? 0 : (safeCurrentPage - 1) * coursesPerPage;
   const endIndex = startIndex + courses.length;
   const paginationItems = buildPagination(safeCurrentPage, totalPages);
+  const heroCopy = getCourseCenterHeroCopy(currentUser?.identity);
 
   useEffect(() => {
     if (currentPage !== safeCurrentPage) {
@@ -316,31 +383,45 @@ function CourseCenterPage({ currentUser }: CourseCenterPageProps) {
     }
   }, [currentPage, safeCurrentPage]);
 
+  useEffect(() => {
+    if (!pendingEnrollmentAction || enrollingCourseUuid) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closePendingEnrollmentAction();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closePendingEnrollmentAction, enrollingCourseUuid, pendingEnrollmentAction]);
+
   return (
     <section className="course-center-page">
       <div className="course-center-hero">
         <div>
-          <span className="course-surface-badge">Course Lobby</span>
-          <h1>Explore all courses in one place</h1>
-          <p>
-            Browse the full catalog, search by title or code, and jump directly into a shared
-            course workspace layout.
-          </p>
+          <span className="course-surface-badge">{heroCopy.badge}</span>
+          <h1>{heroCopy.title}</h1>
+          <p>{heroCopy.description}</p>
         </div>
 
         <label className="course-search-card">
-          <span>Search courses</span>
+          <span>搜索课程</span>
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search by title, code, category, school..."
+            placeholder="按标题、代码、分类或学院搜索..."
           />
         </label>
       </div>
 
       <div className="course-center-toolbar">
-        <strong>{loading ? "Loading courses..." : `${totalCourses} courses found`}</strong>
+        <strong>{loading ? "正在加载课程..." : `${totalCourses} courses found`}</strong>
       </div>
 
       <div ref={gridRef} className="course-grid course-center-grid">
@@ -361,7 +442,7 @@ function CourseCenterPage({ currentUser }: CourseCenterPageProps) {
         <div
           className="course-confirm-modal-overlay"
           role="presentation"
-          onClick={() => setPendingEnrollmentAction(null)}
+          onClick={closePendingEnrollmentAction}
         >
           <div
             className="course-confirm-modal"
@@ -372,25 +453,30 @@ function CourseCenterPage({ currentUser }: CourseCenterPageProps) {
           >
             <div className="course-confirm-modal-header">
               <h3 id="course-center-enrollment-confirm-title">
-                {pendingEnrollmentAction.action === "cancel" ? "Cancel enrollment?" : "Enroll in this course?"}
+                {pendingEnrollmentAction.action === "cancel" ? "确认取消报名？" : "确认报名该课程？"}
               </h3>
               <p>{pendingEnrollmentAction.courseTitle}</p>
             </div>
 
             <p className="course-confirm-modal-copy">
               {pendingEnrollmentAction.action === "cancel"
-                ? "This course will be removed from your learner workspace until you enroll again. Your existing learning progress will be kept."
-                : "This course will be added to your learner workspace and course list."}
+                ? "该课程会从你的学习空间移除，重新报名前不可见；已有学习进度会保留。"
+                : "该课程会加入你的学习空间和课程列表。"}
             </p>
+            {enrollmentActionError ? (
+              <p className="course-confirm-modal-error" role="alert">
+                {enrollmentActionError}
+              </p>
+            ) : null}
 
             <div className="course-confirm-modal-actions">
               <button
                 type="button"
                 className="course-secondary-link"
-                onClick={() => setPendingEnrollmentAction(null)}
+                onClick={closePendingEnrollmentAction}
                 disabled={Boolean(enrollingCourseUuid)}
-              >
-                Back
+                autoFocus
+              >返回
               </button>
               <button
                 type="button"
@@ -402,10 +488,10 @@ function CourseCenterPage({ currentUser }: CourseCenterPageProps) {
               >
                 {enrollingCourseUuid
                   ? pendingEnrollmentAction.action === "cancel"
-                    ? "Cancelling..."
-                    : "Enrolling..."
+                    ? "正在取消..."
+                    : "报名中..."
                   : pendingEnrollmentAction.action === "cancel"
-                    ? "Cancel enrollment"
+                    ? "取消报名"
                     : "Enroll"}
               </button>
             </div>
@@ -415,17 +501,16 @@ function CourseCenterPage({ currentUser }: CourseCenterPageProps) {
 
       {!loading && totalCourses > 0 ? (
         <div className="course-pagination">
-          <span className="course-pagination-summary">
-            Showing {startIndex + 1}-{Math.min(endIndex, totalCourses)} of {totalCourses} courses.
+          <span className="course-pagination-summary">显示 {startIndex + 1}-{Math.min(endIndex, totalCourses)}共 {totalCourses}门课程。
           </span>
           {coursesPerPage > 0 && totalCourses > coursesPerPage ? (
-            <nav className="course-pagination-nav" aria-label="Course center pagination">
+            <nav className="course-pagination-nav" aria-label="课程中心分页">
           <button
             type="button"
             className="course-pagination-button"
             onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
             disabled={safeCurrentPage === 1}
-            aria-label="Go to previous course center page"
+            aria-label="上一页课程中心"
           >
             <LuChevronLeft size={18} aria-hidden="true" />
           </button>
@@ -455,7 +540,7 @@ function CourseCenterPage({ currentUser }: CourseCenterPageProps) {
             className="course-pagination-button"
             onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
             disabled={safeCurrentPage === totalPages}
-            aria-label="Go to next course center page"
+            aria-label="下一页课程中心"
             >
               <LuChevronRight size={18} aria-hidden="true" />
             </button>
@@ -466,13 +551,13 @@ function CourseCenterPage({ currentUser }: CourseCenterPageProps) {
 
       {!loading && totalCourses === 0 ? (
         <div className="course-empty-state">
-          <strong>{error ? "Unable to load courses" : query ? "No matching courses" : "No courses yet"}</strong>
+          <strong>{error ? "无法加载课程" : query ? "没有匹配课程" : "暂无课程"}</strong>
           <p>
             {error
               ? error
               : query
-                ? "Try a different course code, category, or keyword."
-                : "No course records are available in the database right now."}
+                ? "请尝试其他课程代码、分类或关键词。"
+                : "当前数据库中没有课程记录。"}
           </p>
         </div>
       ) : null}

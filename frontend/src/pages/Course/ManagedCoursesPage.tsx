@@ -13,9 +13,9 @@ import "./CoursePages.css";
 const FALLBACK_COVER_THEMES = ["teal", "prism", "ocean", "neon"];
 const COURSE_ROWS_PER_PAGE = 4;
 const COURSE_DIFFICULTY_OPTIONS = [
-  { value: "beginner", label: "Beginner" },
-  { value: "intermediate", label: "Intermediate" },
-  { value: "advanced", label: "Advanced" },
+  { value: "beginner", label: "入门" },
+  { value: "intermediate", label: "中级" },
+  { value: "advanced", label: "高级" },
 ] as const;
 
 type CreateCourseFormState = {
@@ -54,54 +54,72 @@ function formatHourLabel(minutes: number | null) {
   }
 
   if (minutes < 60) {
-    return `${minutes} min`;
+    return `${minutes} 分钟`;
   }
 
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
-  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  return remainingMinutes > 0 ? `${hours} 小时 ${remainingMinutes} 分钟` : `${hours} 小时`;
 }
 
 function formatPublishedLabel(value?: string | null) {
   if (!value) {
-    return "Not published";
+    return "未发布";
   }
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return "Published";
+    return "已发布";
   }
 
-  return `Published ${date.toLocaleDateString()}`;
+  return `已发布 ${date.toLocaleDateString()}`;
 }
 
 function formatDifficultyLabel(value?: string | null) {
   if (!value) {
-    return "Unspecified";
+    return "未设置";
   }
 
-  return value.charAt(0).toUpperCase() + value.slice(1);
+  switch (value.toLowerCase()) {
+    case "beginner":
+      return "入门";
+    case "intermediate":
+      return "中级";
+    case "advanced":
+      return "高级";
+    default:
+      return value;
+  }
 }
 
 function formatCreatorLabel(course: CourseRecord) {
   const parts = [course.educatorEmail?.trim(), course.educatorUserName?.trim()].filter(Boolean);
   if (parts.length > 0) {
-    return `Created by ${parts.join(" | ")}`;
+    return `创建者：${parts.join(" | ")}`;
   }
 
   if (course.educatorName?.trim()) {
-    return `Created by ${course.educatorName.trim()}`;
+    return `创建者：${course.educatorName.trim()}`;
   }
 
-  return "Created by educator";
+  return "创建者：教师";
 }
 
 function formatStatusLabel(status?: string) {
   if (!status) {
-    return "Draft";
+    return "草稿";
   }
 
-  return status.charAt(0).toUpperCase() + status.slice(1);
+  switch (status.toLowerCase()) {
+    case "published":
+      return "已发布";
+    case "archived":
+      return "已归档";
+    case "draft":
+      return "草稿";
+    default:
+      return status;
+  }
 }
 
 function buildPagination(currentPage: number, totalPages: number) {
@@ -193,7 +211,7 @@ function EducatorManagedCourseCard({
 
           <div className="managed-course-card-bottom managed-course-card-bottom-educator">
             <div className="course-card-footer managed-course-card-info-row">
-              <span>{course.moduleCount ?? course.modules.length} modules</span>
+              <span>{course.moduleCount ?? course.modules.length} 个模块</span>
               {formatHourLabel(course.estimatedMinutes) ? <strong>{formatHourLabel(course.estimatedMinutes)}</strong> : null}
             </div>
 
@@ -236,7 +254,7 @@ function AdminManagedCourseCard({
 
           <div className="managed-course-card-bottom managed-course-card-bottom-admin">
             <div className="course-card-footer managed-course-card-info-row">
-              <span>{course.moduleCount ?? course.modules.length} modules</span>
+              <span>{course.moduleCount ?? course.modules.length} 个模块</span>
               {formatHourLabel(course.estimatedMinutes) ? <strong>{formatHourLabel(course.estimatedMinutes)}</strong> : null}
             </div>
 
@@ -286,7 +304,7 @@ function ManagedCoursesHintBox({
     <div className="managed-course-hint-box" aria-live="polite">
       <div className="managed-course-hint-box-body">
         <div className="managed-course-hint-box-header">
-          <span className="managed-course-hint-box-badge">{loading ? "Loading" : hasQuery ? "Search" : "Waiting"}</span>
+          <span className="managed-course-hint-box-badge">{loading ? "加载中" : hasQuery ? "搜索" : "Waiting"}</span>
           <strong>{meta}</strong>
         </div>
 
@@ -507,7 +525,7 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
       <section className="course-center-page">
         <div className="course-center-hero">
           <div>
-            <span className="course-surface-badge">{isAdminView ? "Course Management" : "Managed Courses"}</span>
+            <span className="course-surface-badge">{isAdminView ? "课程管理" : "管理课程"}</span>
             <h1>{isAdminView ? "Review All Educator Courses" : "Manage Your Own Courses"}</h1>
             <p>
               {isAdminView
@@ -522,7 +540,7 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search by title, code, category, school..."
+              placeholder="按标题、代码、分类或学院搜索..."
             />
           </label>
         </div>
@@ -536,8 +554,8 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
             <>
               <button type="button" className="managed-course-create-card" onClick={openCreateModal}>
                 <span className="managed-course-create-plus">+</span>
-                <strong>Create new course</strong>
-                <p>Create a new draft course, define learning paths, and build modules from scratch.</p>
+                <strong>创建新课程</strong>
+                <p>创建新的草稿课程，定义学习路径，并从零开始构建模块。</p>
               </button>
 
               {(loading || (!error && totalCourses === 0)) ? (
@@ -567,17 +585,16 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
 
         {!loading && totalCourses > 0 ? (
           <div className="course-pagination">
-            <span className="course-pagination-summary">
-              Showing {startIndex + 1}-{Math.min(endIndex, totalCourses)} of {totalCourses} courses · {publishedCount} published · {draftCount} draft
+            <span className="course-pagination-summary">显示 {startIndex + 1}-{Math.min(endIndex, totalCourses)}共 {totalCourses}门课程 · {publishedCount}已发布 · {draftCount}草稿
             </span>
             {firstPageCoursesPerPage > 0 && totalCourses > firstPageCoursesPerPage ? (
-              <nav className="course-pagination-nav" aria-label="Managed courses pagination">
+              <nav className="course-pagination-nav" aria-label="管理课程分页">
                 <button
                   type="button"
                   className="course-pagination-button"
                   onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
                   disabled={safeCurrentPage === 1}
-                  aria-label="Go to previous managed courses page"
+                  aria-label="上一页管理课程"
                 >
                   <LuChevronLeft size={18} aria-hidden="true" />
                 </button>
@@ -607,7 +624,7 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
                   className="course-pagination-button"
                   onClick={() => setCurrentPage((page) => Math.min(Math.max(1, totalPages), page + 1))}
                   disabled={safeCurrentPage === Math.max(1, totalPages)}
-                  aria-label="Go to next managed courses page"
+                  aria-label="下一页管理课程"
                 >
                   <LuChevronRight size={18} aria-hidden="true" />
                 </button>
@@ -618,7 +635,7 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
 
         {!loading && error ? (
           <div className="course-empty-state">
-            <strong>Unable to load managed courses</strong>
+            <strong>无法加载管理课程</strong>
             <p>{error}</p>
           </div>
         ) : null}
@@ -635,14 +652,14 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
           >
             <div className="course-management-modal-header">
               <div>
-                <span className="course-surface-badge">Create Course</span>
-                <h3 id="create-course-title">Set up a new draft course</h3>
+                <span className="course-surface-badge">创建课程</span>
+                <h3 id="create-course-title">创建新的草稿课程</h3>
               </div>
               <button
                 type="button"
                 className="course-management-modal-close"
                 onClick={closeCreateModal}
-                aria-label="Close create course dialog"
+                aria-label="关闭创建课程窗口"
               >
                 <LuX size={18} aria-hidden="true" />
               </button>
@@ -650,8 +667,7 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
 
             <form className="course-management-form" onSubmit={handleCreateCourseSubmit}>
               <label className="course-management-field">
-                <span>
-                  Title <em className="course-management-required-indicator">*</em>
+                <span>标题 <em className="course-management-required-indicator">*</em>
                 </span>
                 <input
                   className={isCreateTitleInvalid ? "course-management-input-invalid" : undefined}
@@ -661,12 +677,12 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
                   required
                 />
                 {isCreateTitleInvalid ? (
-                  <small className="course-management-field-error">Title is required.</small>
+                  <small className="course-management-field-error">标题为必填项。</small>
                 ) : null}
               </label>
 
               <label className="course-management-field">
-                <span>Subtitle</span>
+                <span>副标题</span>
                 <input
                   value={createForm.subtitle}
                   onChange={(event) => handleCreateFieldChange("subtitle", event.target.value)}
@@ -674,7 +690,7 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
               </label>
 
               <label className="course-management-field course-management-field-full">
-                <span>Description</span>
+                <span>描述</span>
                 <textarea
                   value={createForm.description}
                   onChange={(event) => handleCreateFieldChange("description", event.target.value)}
@@ -683,8 +699,7 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
               </label>
 
               <label className="course-management-field">
-                <span>
-                  Category <em className="course-management-required-indicator">*</em>
+                <span>分类 <em className="course-management-required-indicator">*</em>
                 </span>
                 <input
                   className={isCreateCategoryInvalid ? "course-management-input-invalid" : undefined}
@@ -694,13 +709,12 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
                   required
                 />
                 {isCreateCategoryInvalid ? (
-                  <small className="course-management-field-error">Category is required.</small>
+                  <small className="course-management-field-error">分类为必填项。</small>
                 ) : null}
               </label>
 
               <label className="course-management-field">
-                <span>
-                  Difficulty <em className="course-management-required-indicator">*</em>
+                <span>难度 <em className="course-management-required-indicator">*</em>
                 </span>
                 <select
                   className={isCreateDifficultyInvalid ? "course-management-input-invalid" : undefined}
@@ -709,7 +723,7 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
                   aria-invalid={isCreateDifficultyInvalid}
                   required
                 >
-                  <option value="">Select difficulty</option>
+                  <option value="">选择难度</option>
                   {COURSE_DIFFICULTY_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
@@ -717,13 +731,12 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
                   ))}
                 </select>
                 {isCreateDifficultyInvalid ? (
-                  <small className="course-management-field-error">Difficulty is required.</small>
+                  <small className="course-management-field-error">难度为必填项。</small>
                 ) : null}
               </label>
 
               <label className="course-management-field">
-                <span>
-                  Language <em className="course-management-required-indicator">*</em>
+                <span>语言 <em className="course-management-required-indicator">*</em>
                 </span>
                 <input
                   className={isCreateLanguageInvalid ? "course-management-input-invalid" : undefined}
@@ -733,13 +746,12 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
                   required
                 />
                 {isCreateLanguageInvalid ? (
-                  <small className="course-management-field-error">Language is required.</small>
+                  <small className="course-management-field-error">语言为必填项。</small>
                 ) : null}
               </label>
 
               <label className="course-management-field">
-                <span>
-                  Estimated minutes <em className="course-management-required-indicator">*</em>
+                <span>预计分钟数 <em className="course-management-required-indicator">*</em>
                 </span>
                 <input
                   type="number"
@@ -751,12 +763,12 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
                   required
                 />
                 {isCreateEstimatedMinutesInvalid ? (
-                  <small className="course-management-field-error">Estimated minutes is required.</small>
+                  <small className="course-management-field-error">预计分钟数为必填项。</small>
                 ) : null}
               </label>
 
               <label className="course-management-field course-management-field-full">
-                <span>Learning path title</span>
+                <span>学习路径标题</span>
                 <input
                   value={createForm.learningPathTitle}
                   onChange={(event) => handleCreateFieldChange("learningPathTitle", event.target.value)}
@@ -764,7 +776,7 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
               </label>
 
               <label className="course-management-field course-management-field-full">
-                <span>Learning path description</span>
+                <span>学习路径描述</span>
                 <textarea
                   value={createForm.learningPathDescription}
                   onChange={(event) => handleCreateFieldChange("learningPathDescription", event.target.value)}
@@ -783,21 +795,20 @@ function ManagedCoursesPage({ variant = "educator" }: { variant?: ManagedCourses
 
               {createError ? (
                 <div className="course-management-inline-alert course-management-field-full">
-                  <strong>Unable to create course.</strong>
+                  <strong>无法创建课程。</strong>
                   <span>{createError}</span>
                 </div>
               ) : null}
 
               <div className="course-management-form-actions course-management-field-full">
-                <button type="button" className="course-management-action-button" onClick={closeCreateModal}>
-                  Cancel
+                <button type="button" className="course-management-action-button" onClick={closeCreateModal}>取消
                 </button>
                 <button
                   type="submit"
                   className="course-management-action-button course-management-action-button-primary"
                   disabled={isCreatingCourse}
                 >
-                  {isCreatingCourse ? "Creating..." : "Create course"}
+                  {isCreatingCourse ? "创建中..." : "创建课程"}
                 </button>
               </div>
             </form>

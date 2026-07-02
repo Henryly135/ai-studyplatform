@@ -12,6 +12,7 @@ from app.core.uuid_codec import (
 from app.models.course_forum_comment import CourseForumComment, ForumCommentKind
 from app.repositories.course_forum_comment_repository import CourseForumCommentRepository, _UNSET
 from app.repositories.course_forum_post_repository import CourseForumPostRepository
+from app.services.course_forum_access_client import CourseForumAccessClient
 from app.schemas.forum import (
     CourseForumCommentCreateRequest,
     CourseForumCommentRead,
@@ -32,11 +33,13 @@ class ForumCommentService:
         self.session = session
         self.posts = CourseForumPostRepository(session)
         self.comments = CourseForumCommentRepository(session)
+        self.course_access = CourseForumAccessClient()
 
     def create_comment(self, *, post_id: int, payload: CourseForumCommentCreateRequest, current_user: dict) -> CourseForumCommentRead:
         post = self.posts.get_by_id(post_id)
         if post is None:
             raise forum_post_not_found_error()
+        self._ensure_forum_access_by_course_id(course_id=post.course_id, current_user=current_user)
 
         reply_to_comment = None
         root_comment_id = None
@@ -69,11 +72,14 @@ class ForumCommentService:
         self,
         *,
         post_id: int,
+        current_user: dict,
         page: int = 1,
         page_size: int = 5,
     ) -> PaginatedCourseForumCommentResponse:
-        if self.posts.get_by_id(post_id) is None:
+        post = self.posts.get_by_id(post_id)
+        if post is None:
             raise forum_post_not_found_error()
+        self._ensure_forum_access_by_course_id(course_id=post.course_id, current_user=current_user)
 
         items, total, safe_page, total_pages = self.comments.list_top_level_by_post(
             post_id=post_id,
@@ -98,10 +104,12 @@ class ForumCommentService:
         self,
         *,
         comment_id: int,
+        current_user: dict,
         page: int = 1,
         page_size: int = 5,
     ) -> PaginatedCourseForumCommentResponse:
         root_comment = self._get_comment_or_404(comment_id)
+        self._ensure_forum_access_by_course_id(course_id=root_comment.course_id, current_user=current_user)
         if root_comment.root_comment_id is not None:
             raise invalid_request_error("Replies can only be expanded from a top-level comment")
 
@@ -136,8 +144,9 @@ class ForumCommentService:
             totalPages=total_pages,
         )
 
-    def get_comment(self, *, comment_id: int) -> CourseForumCommentRead:
+    def get_comment(self, *, comment_id: int, current_user: dict) -> CourseForumCommentRead:
         comment = self._get_comment_or_404(comment_id)
+        self._ensure_forum_access_by_course_id(course_id=comment.course_id, current_user=current_user)
         reply_count = 0
         if comment.root_comment_id is None:
             reply_count = self.comments.count_replies_by_root_comment_ids(root_comment_ids=[comment.comment_id]).get(
@@ -151,6 +160,7 @@ class ForumCommentService:
 
     def update_comment(self, *, comment_id: int, payload: CourseForumCommentUpdateRequest, current_user: dict) -> CourseForumCommentRead:
         comment = self._get_comment_or_404(comment_id)
+        self._ensure_forum_access_by_course_id(course_id=comment.course_id, current_user=current_user)
         self._ensure_comment_write_access(comment, current_user=current_user)
         if comment.is_deleted:
             raise invalid_request_error("Deleted comments cannot be edited")
@@ -166,10 +176,11 @@ class ForumCommentService:
         )
         self.session.commit()
         self.session.refresh(updated_comment)
-        return self.get_comment(comment_id=updated_comment.comment_id)
+        return self.get_comment(comment_id=updated_comment.comment_id, current_user=current_user)
 
     def delete_comment(self, *, comment_id: int, deleted_at: datetime, current_user: dict) -> CourseForumCommentRead:
         comment = self._get_comment_or_404(comment_id)
+        self._ensure_forum_access_by_course_id(course_id=comment.course_id, current_user=current_user)
         self._ensure_comment_write_access(comment, current_user=current_user)
         updated_comment = self.comments.update(
             comment,
@@ -179,7 +190,7 @@ class ForumCommentService:
         )
         self.session.commit()
         self.session.refresh(updated_comment)
-        return self.get_comment(comment_id=updated_comment.comment_id)
+        return self.get_comment(comment_id=updated_comment.comment_id, current_user=current_user)
 
     def _get_comment_or_404(self, comment_id: int) -> CourseForumComment:
         comment = self.comments.get_by_id(comment_id)
@@ -244,6 +255,12 @@ class ForumCommentService:
         if not isinstance(user_id, int):
             raise invalid_identity_response_error()
         return user_id
+
+    def _ensure_forum_access_by_course_id(self, *, course_id: int, current_user: dict) -> None:
+        self.course_access.assert_forum_access(
+            course_uuid=encode_course_uuid(course_id),
+            current_user=current_user,
+        )
 
     def _ensure_comment_write_access(self, comment: CourseForumComment, *, current_user: dict) -> None:
         current_user_id = self._require_current_user_id(current_user)

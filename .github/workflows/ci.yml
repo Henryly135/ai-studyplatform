@@ -3,38 +3,51 @@ name: CI
 on:
   push:
     branches:
-      - main
-      - develop
       - "feature/**"
-      - "fix/**"
       - "refactor/**"
+      - "fix/**"
+      - develop
+      - main
   pull_request:
     branches:
       - develop
       - main
-  workflow_dispatch:
 
 permissions:
   contents: read
-
-env:
-  CI_ENV_FILE: .env.ci
-  COMPOSE_FILE: infra/docker-compose.yml
 
 jobs:
   conventions:
     name: Commit and PR format
     runs-on: ubuntu-latest
     steps:
+      - name: Validate workflow context
+        run: |
+          test -n "${GITHUB_SHA}"
+          test -n "${GITHUB_REF_NAME}"
+
+  platform-common-check:
+    name: Shared package tests
+    runs-on: ubuntu-latest
+    steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          fetch-depth: 0
+          python-version: "3.12"
 
-      - name: Validate commit and PR format
-        run: ./scripts/check-git-conventions.sh
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest fastapi
+          pip install -e ./packages/platform_common
 
-  frontend:
+      - name: Run platform-common tests
+        run: pytest packages/platform_common/tests -q
+
+  frontend-check:
     name: Frontend lint and build
     runs-on: ubuntu-latest
     defaults:
@@ -57,12 +70,20 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Test
+        run: npm test
+
       - name: Build
         run: npm run build
 
-  platform-common:
-    name: Shared package tests
+      - name: Audit dependencies
+        run: npm audit
+
+  identity-service-check:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/identity-service
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,94 +92,1007 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/identity-service/requirements.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest fastapi
-          pip install -e ./packages/platform_common
+          pip install -r requirements.txt
+          pip install pytest
+          pip install -e ../../packages/platform_common
 
-      - name: Run platform-common tests
-        run: pytest packages/platform_common/tests -q
+      - name: Import check
+        run: python -c "from app.main import app; print('identity-service import ok')"
 
-  compose-gate:
-    name: Compose, backend tests, gateway smoke
+      - name: Run identity-service tests
+        run: pytest tests -q
+
+      - name: Celery dispatch wiring check
+        run: python -c "from app.core.celery_app import celery_app; print(celery_app.conf.task_default_queue)"
+
+  docker-build-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Create CI environment file
+      - name: Create CI .env
         run: |
-          COMPOSE_PROJECT_NAME="ai-studyplatform-ci-${{ github.run_id }}" \
-            ./scripts/create-ci-env.sh "$CI_ENV_FILE"
+          cat > .env <<'EOF'
+          APP_ENV=ci
+          APP_TIMEZONE=Australia/Sydney
+          NGINX_PORT=18080
+          REDIS_PORT=6379
+          REDIS_INTERNAL_PORT=6379
+          QUIZ_REDIS_PORT=6380
+          QUIZ_REDIS_INTERNAL_PORT=6379
+          IDENTITY_PORT=8000
+          AI_SERVICE_PORT=8001
+          COMMUNICATION_PORT=8002
+          LEARNING_PORT=8003
+          FRONTEND_PORT=5173
+          MINIO_API_PORT=9000
+          MINIO_CONSOLE_PORT=9001
+          VITE_API_BASE_URL=/api
+          IDENTITY_SERVICE_URL=http://identity-service:8000
+          AI_SERVICE_URL=http://ai-service:8001
+          COMMUNICATION_SERVICE_URL=http://communication-service:8002
+          LEARNING_SERVICE_URL=http://learning-service:8003
+          INTERNAL_API_TOKEN=ci_internal_token
+          REDIS_HOST=redis
+          REDIS_DB=0
+          CELERY_BROKER_URL=redis://redis:6379/0
+          CELERY_RESULT_BACKEND=redis://redis:6379/0
+          CELERY_TASK_ALWAYS_EAGER=false
+          CELERY_TASK_DEFAULT_QUEUE=ai.default
+          LEARNING_CELERY_TASK_DEFAULT_QUEUE=learning.quiz
+          CELERY_WORKER_CONCURRENCY=2
+          CELERY_TASK_TIME_LIMIT=300
+          CELERY_TASK_SOFT_TIME_LIMIT=240
+          CELERY_RESULT_EXPIRES=3600
+          CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP=true
+          QUIZ_REDIS_HOST=redis-quiz
+          QUIZ_REDIS_DB=0
+          QUIZ_REDIS_URL=redis://redis-quiz:6379/0
+          QUIZ_GENERATION_RUN_REDIS_URL=redis://redis:6379/2
+          QUIZ_ATTEMPT_SESSION_GRACE_SECONDS=300
+          QUIZ_ATTEMPT_SESSION_FALLBACK_TTL_SECONDS=7200
+          QUIZ_ATTEMPT_SUBMIT_LOCK_SECONDS=60
+          QUIZ_ATTEMPT_COUNTER_TTL_SECONDS=2592000
+          MYSQL_ROOT_PASSWORD=password
+          MYSQL_SHARED_USER=platform_reader
+          MYSQL_SHARED_PASSWORD=platform_reader_password
+          IDENTITY_DB_HOST=mysql
+          IDENTITY_DB_NAME=identity_db
+          IDENTITY_DB_USER=identity_user
+          IDENTITY_DB_PASSWORD=identity_password
+          DEFAULT_ADMIN_EMAIL=ci.admin@example.com
+          DEFAULT_ADMIN_PASSWORD=CiAdmin123!
+          DEFAULT_ADMIN_FULL_NAME=CI_Admin
+          COMMUNICATION_DB_HOST=mysql
+          COMMUNICATION_DB_NAME=communication_db
+          COMMUNICATION_DB_USER=communication_user
+          COMMUNICATION_DB_PASSWORD=communication_password
+          LEARNING_DB_HOST=mysql
+          LEARNING_DB_NAME=learning_db
+          LEARNING_DB_USER=learning_user
+          LEARNING_DB_PASSWORD=learning_password
+          MYSQL_INTERNAL_PORT=3306
+          MYSQL_PORT=3307
+          AI_DB_HOST=postgres-ai
+          AI_DB_NAME=learning_platform_ai
+          AI_DB_USER=ai_user
+          AI_DB_PASSWORD=ai_password
+          AI_DB_PORT=5432
+          AI_DB_EXTERNAL_PORT=5433
+          AI_EMBEDDING_DIMENSION=1536
+          IDENTITY_SERVICE_URL=http://identity-service:8000
+          GEMINI_API_KEY=
+          AI_DEMO_MODEL_NAME=gemini-2.5-flash
+          LEARNING_MATERIAL_ROOT=/app/storage/materials
+          LEARNING_MATERIAL_PUBLIC_BASE_URL=/api/learning/materials
+          LEARNING_MATERIAL_AI_QUEUE=ai.material.index
+          OBJECT_STORAGE_PROVIDER=minio
+          MINIO_ENDPOINT=http://minio:9000
+          MINIO_ACCESS_KEY=minioadmin
+          MINIO_SECRET_KEY=minioadmin
+          MINIO_BUCKET=learning-materials
+          MINIO_PUBLIC_BASE_URL=
+          MINIO_SIGNED_URL_EXPIRES_SECONDS=300
+          MINIO_MULTIPART_PART_URL_EXPIRES_SECONDS=3600
+          COMPOSE_PROJECT_NAME=f14acake-learning-platform-ci
+          EOF
 
-      - name: Validate Docker Compose config
-        run: docker compose --env-file "$CI_ENV_FILE" -f "$COMPOSE_FILE" config --quiet
+      - name: Docker compose build check
+        run: docker compose --env-file .env -f infra/docker-compose.yml build
 
-      - name: Start full stack
-        run: docker compose --env-file "$CI_ENV_FILE" -f "$COMPOSE_FILE" up -d --build
+  compose-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Show service status
-        run: docker compose --env-file "$CI_ENV_FILE" -f "$COMPOSE_FILE" ps -a
-
-      - name: Verify gateway routes
+      - name: Create CI .env
         run: |
-          set -euo pipefail
-          set -a
-          . "./$CI_ENV_FILE"
-          set +a
+          cat > .env <<'EOF'
+          APP_ENV=ci
+          APP_TIMEZONE=Australia/Sydney
+          NGINX_PORT=18080
+          REDIS_PORT=6379
+          REDIS_INTERNAL_PORT=6379
+          QUIZ_REDIS_PORT=6380
+          QUIZ_REDIS_INTERNAL_PORT=6379
+          IDENTITY_PORT=8000
+          AI_SERVICE_PORT=8001
+          COMMUNICATION_PORT=8002
+          LEARNING_PORT=8003
+          FRONTEND_PORT=5173
+          MINIO_API_PORT=9000
+          MINIO_CONSOLE_PORT=9001
+          VITE_API_BASE_URL=/api
+          IDENTITY_SERVICE_URL=http://identity-service:8000
+          AI_SERVICE_URL=http://ai-service:8001
+          COMMUNICATION_SERVICE_URL=http://communication-service:8002
+          LEARNING_SERVICE_URL=http://learning-service:8003
+          INTERNAL_API_TOKEN=ci_internal_token
+          REDIS_HOST=redis
+          REDIS_DB=0
+          CELERY_BROKER_URL=redis://redis:6379/0
+          CELERY_RESULT_BACKEND=redis://redis:6379/0
+          CELERY_TASK_ALWAYS_EAGER=false
+          CELERY_TASK_DEFAULT_QUEUE=ai.default
+          LEARNING_CELERY_TASK_DEFAULT_QUEUE=learning.quiz
+          CELERY_WORKER_CONCURRENCY=2
+          CELERY_TASK_TIME_LIMIT=300
+          CELERY_TASK_SOFT_TIME_LIMIT=240
+          CELERY_RESULT_EXPIRES=3600
+          CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP=true
+          QUIZ_REDIS_HOST=redis-quiz
+          QUIZ_REDIS_DB=0
+          QUIZ_REDIS_URL=redis://redis-quiz:6379/0
+          QUIZ_GENERATION_RUN_REDIS_URL=redis://redis:6379/2
+          QUIZ_ATTEMPT_SESSION_GRACE_SECONDS=300
+          QUIZ_ATTEMPT_SESSION_FALLBACK_TTL_SECONDS=7200
+          QUIZ_ATTEMPT_SUBMIT_LOCK_SECONDS=60
+          QUIZ_ATTEMPT_COUNTER_TTL_SECONDS=2592000
+          MYSQL_ROOT_PASSWORD=password
+          MYSQL_SHARED_USER=platform_reader
+          MYSQL_SHARED_PASSWORD=platform_reader_password
+          IDENTITY_DB_HOST=mysql
+          IDENTITY_DB_NAME=identity_db
+          IDENTITY_DB_USER=identity_user
+          IDENTITY_DB_PASSWORD=identity_password
+          DEFAULT_ADMIN_EMAIL=ci.admin@example.com
+          DEFAULT_ADMIN_PASSWORD=CiAdmin123!
+          DEFAULT_ADMIN_FULL_NAME=CI_Admin
+          COMMUNICATION_DB_HOST=mysql
+          COMMUNICATION_DB_NAME=communication_db
+          COMMUNICATION_DB_USER=communication_user
+          COMMUNICATION_DB_PASSWORD=communication_password
+          LEARNING_DB_HOST=mysql
+          LEARNING_DB_NAME=learning_db
+          LEARNING_DB_USER=learning_user
+          LEARNING_DB_PASSWORD=learning_password
+          MYSQL_INTERNAL_PORT=3306
+          MYSQL_PORT=3307
+          AI_DB_HOST=postgres-ai
+          AI_DB_NAME=learning_platform_ai
+          AI_DB_USER=ai_user
+          AI_DB_PASSWORD=ai_password
+          AI_DB_PORT=5432
+          AI_DB_EXTERNAL_PORT=5433
+          AI_EMBEDDING_DIMENSION=1536
+          IDENTITY_SERVICE_URL=http://identity-service:8000
+          GEMINI_API_KEY=
+          AI_DEMO_MODEL_NAME=gemini-2.5-flash
+          LEARNING_MATERIAL_ROOT=/app/storage/materials
+          LEARNING_MATERIAL_PUBLIC_BASE_URL=/api/learning/materials
+          LEARNING_MATERIAL_AI_QUEUE=ai.material.index
+          OBJECT_STORAGE_PROVIDER=minio
+          MINIO_ENDPOINT=http://minio:9000
+          MINIO_ACCESS_KEY=minioadmin
+          MINIO_SECRET_KEY=minioadmin
+          MINIO_BUCKET=learning-materials
+          MINIO_PUBLIC_BASE_URL=
+          MINIO_SIGNED_URL_EXPIRES_SECONDS=300
+          MINIO_MULTIPART_PART_URL_EXPIRES_SECONDS=3600
+          COMPOSE_PROJECT_NAME=f14acake-learning-platform-ci
+          EOF
 
-          wait_for_url() {
-            url="$1"
-            expected="$2"
-            for _ in $(seq 1 60); do
-              body="$(curl -fsS "$url" 2>/dev/null || true)"
-              if [ -n "$body" ] && { [ -z "$expected" ] || printf "%s" "$body" | grep -q "$expected"; }; then
-                return 0
-              fi
-              sleep 2
-            done
-            echo "Timed out waiting for $url"
-            return 1
-          }
+      - name: Validate compose file
+        run: docker compose --env-file .env -f infra/docker-compose.yml config
 
-          wait_for_url "http://127.0.0.1:${NGINX_PORT}/" "<div id=\"root\""
-          wait_for_url "http://127.0.0.1:${NGINX_PORT}/api/health" '"status":"ok"'
-          wait_for_url "http://127.0.0.1:${NGINX_PORT}/api/ai/health" '"status":"ok"'
-          wait_for_url "http://127.0.0.1:${NGINX_PORT}/api/learning/health" '"status":"ok"'
-          wait_for_url "http://127.0.0.1:${NGINX_PORT}/api/communication/health" '"status":"ok"'
+  redis-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Verify internal routes stay blocked
+      - name: Create CI .env
         run: |
-          set -euo pipefail
-          set -a
-          . "./$CI_ENV_FILE"
-          set +a
+          cat > .env <<'EOF'
+          APP_ENV=ci
+          APP_TIMEZONE=Australia/Sydney
+          NGINX_PORT=18080
+          REDIS_PORT=6379
+          REDIS_INTERNAL_PORT=6379
+          QUIZ_REDIS_PORT=6380
+          QUIZ_REDIS_INTERNAL_PORT=6379
+          IDENTITY_PORT=8000
+          AI_SERVICE_PORT=8001
+          COMMUNICATION_PORT=8002
+          LEARNING_PORT=8003
+          FRONTEND_PORT=5173
+          MINIO_API_PORT=9000
+          MINIO_CONSOLE_PORT=9001
+          VITE_API_BASE_URL=/api
+          IDENTITY_SERVICE_URL=http://identity-service:8000
+          AI_SERVICE_URL=http://ai-service:8001
+          COMMUNICATION_SERVICE_URL=http://communication-service:8002
+          LEARNING_SERVICE_URL=http://learning-service:8003
+          INTERNAL_API_TOKEN=ci_internal_token
+          REDIS_HOST=redis
+          REDIS_DB=0
+          CELERY_BROKER_URL=redis://redis:6379/0
+          CELERY_RESULT_BACKEND=redis://redis:6379/0
+          CELERY_TASK_ALWAYS_EAGER=false
+          CELERY_TASK_DEFAULT_QUEUE=ai.default
+          LEARNING_CELERY_TASK_DEFAULT_QUEUE=learning.quiz
+          CELERY_WORKER_CONCURRENCY=2
+          CELERY_TASK_TIME_LIMIT=300
+          CELERY_TASK_SOFT_TIME_LIMIT=240
+          CELERY_RESULT_EXPIRES=3600
+          CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP=true
+          QUIZ_REDIS_HOST=redis-quiz
+          QUIZ_REDIS_DB=0
+          QUIZ_REDIS_URL=redis://redis-quiz:6379/0
+          QUIZ_GENERATION_RUN_REDIS_URL=redis://redis:6379/2
+          QUIZ_ATTEMPT_SESSION_GRACE_SECONDS=300
+          QUIZ_ATTEMPT_SESSION_FALLBACK_TTL_SECONDS=7200
+          QUIZ_ATTEMPT_SUBMIT_LOCK_SECONDS=60
+          QUIZ_ATTEMPT_COUNTER_TTL_SECONDS=2592000
+          MYSQL_ROOT_PASSWORD=password
+          MYSQL_SHARED_USER=platform_reader
+          MYSQL_SHARED_PASSWORD=platform_reader_password
+          IDENTITY_DB_HOST=mysql
+          IDENTITY_DB_NAME=identity_db
+          IDENTITY_DB_USER=identity_user
+          IDENTITY_DB_PASSWORD=identity_password
+          DEFAULT_ADMIN_EMAIL=ci.admin@example.com
+          DEFAULT_ADMIN_PASSWORD=CiAdmin123!
+          DEFAULT_ADMIN_FULL_NAME=CI_Admin
+          COMMUNICATION_DB_HOST=mysql
+          COMMUNICATION_DB_NAME=communication_db
+          COMMUNICATION_DB_USER=communication_user
+          COMMUNICATION_DB_PASSWORD=communication_password
+          LEARNING_DB_HOST=mysql
+          LEARNING_DB_NAME=learning_db
+          LEARNING_DB_USER=learning_user
+          LEARNING_DB_PASSWORD=learning_password
+          MYSQL_INTERNAL_PORT=3306
+          MYSQL_PORT=3307
+          AI_DB_HOST=postgres-ai
+          AI_DB_NAME=learning_platform_ai
+          AI_DB_USER=ai_user
+          AI_DB_PASSWORD=ai_password
+          AI_DB_PORT=5432
+          AI_DB_EXTERNAL_PORT=5433
+          AI_EMBEDDING_DIMENSION=1536
+          GEMINI_API_KEY=
+          AI_DEMO_MODEL_NAME=gemini-2.5-flash
+          LEARNING_MATERIAL_ROOT=/app/storage/materials
+          LEARNING_MATERIAL_PUBLIC_BASE_URL=/api/learning/materials
+          LEARNING_MATERIAL_AI_QUEUE=ai.material.index
+          OBJECT_STORAGE_PROVIDER=minio
+          MINIO_ENDPOINT=http://minio:9000
+          MINIO_ACCESS_KEY=minioadmin
+          MINIO_SECRET_KEY=minioadmin
+          MINIO_BUCKET=learning-materials
+          MINIO_PUBLIC_BASE_URL=
+          MINIO_SIGNED_URL_EXPIRES_SECONDS=300
+          MINIO_MULTIPART_PART_URL_EXPIRES_SECONDS=3600
+          COMPOSE_PROJECT_NAME=f14acake-learning-platform-ci
+          EOF
 
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/ai/internal/profile-update/context" -H "Content-Type: application/json" -d '{"learnerId":1,"courseUuid":"x","moduleUuid":"y"}')" = "404"
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/ai/internal/content-generation/educator-draft" -H "Content-Type: application/json" -d '{"courseUuid":"x","moduleUuid":"y","educatorId":1,"courseTitle":"x","moduleTitle":"y","contentType":"summary","teacherPrompt":"x"}')" = "404"
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/learning/internal/quiz-generation/context" -H "Content-Type: application/json" -d '{"courseUuid":"x","moduleUuid":"y"}')" = "404"
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/internal/users/lookup" -H "Content-Type: application/json" -d '{"userIds":[1]}')" = "404"
+      - name: Start redis
+        run: docker compose --env-file .env -f infra/docker-compose.yml up -d redis
 
-      - name: Run full backend test suites
+      - name: Verify redis is healthy
         run: |
-          set -euo pipefail
-          for service in identity-service communication-service learning-service ai-service; do
-            echo "==> Running pytest for ${service}"
-            docker compose --env-file "$CI_ENV_FILE" -f "$COMPOSE_FILE" exec -T "$service" pytest tests -q
+          for i in {1..30}; do
+            if docker compose --env-file .env -f infra/docker-compose.yml exec -T redis redis-cli ping | grep -q PONG; then
+              exit 0
+            fi
+            sleep 2
           done
+          echo "redis health check failed"
+          docker compose --env-file .env -f infra/docker-compose.yml ps -a
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=120 redis
+          exit 1
+
+      - name: Stop redis
+        if: always()
+        run: docker compose --env-file .env -f infra/docker-compose.yml down -v --remove-orphans
+
+  redis-quiz-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create CI .env
+        run: |
+          cat > .env <<'EOF'
+          APP_ENV=ci
+          APP_TIMEZONE=Australia/Sydney
+          NGINX_PORT=18080
+          REDIS_PORT=6379
+          REDIS_INTERNAL_PORT=6379
+          QUIZ_REDIS_PORT=6380
+          QUIZ_REDIS_INTERNAL_PORT=6379
+          IDENTITY_PORT=8000
+          AI_SERVICE_PORT=8001
+          COMMUNICATION_PORT=8002
+          LEARNING_PORT=8003
+          FRONTEND_PORT=5173
+          MINIO_API_PORT=9000
+          MINIO_CONSOLE_PORT=9001
+          VITE_API_BASE_URL=/api
+          IDENTITY_SERVICE_URL=http://identity-service:8000
+          AI_SERVICE_URL=http://ai-service:8001
+          COMMUNICATION_SERVICE_URL=http://communication-service:8002
+          LEARNING_SERVICE_URL=http://learning-service:8003
+          INTERNAL_API_TOKEN=ci_internal_token
+          REDIS_HOST=redis
+          REDIS_DB=0
+          CELERY_BROKER_URL=redis://redis:6379/0
+          CELERY_RESULT_BACKEND=redis://redis:6379/0
+          CELERY_TASK_ALWAYS_EAGER=false
+          CELERY_TASK_DEFAULT_QUEUE=ai.default
+          LEARNING_CELERY_TASK_DEFAULT_QUEUE=learning.quiz
+          CELERY_WORKER_CONCURRENCY=2
+          CELERY_TASK_TIME_LIMIT=300
+          CELERY_TASK_SOFT_TIME_LIMIT=240
+          CELERY_RESULT_EXPIRES=3600
+          CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP=true
+          QUIZ_REDIS_HOST=redis-quiz
+          QUIZ_REDIS_DB=0
+          QUIZ_REDIS_URL=redis://redis-quiz:6379/0
+          QUIZ_GENERATION_RUN_REDIS_URL=redis://redis:6379/2
+          QUIZ_ATTEMPT_SESSION_GRACE_SECONDS=300
+          QUIZ_ATTEMPT_SESSION_FALLBACK_TTL_SECONDS=7200
+          QUIZ_ATTEMPT_SUBMIT_LOCK_SECONDS=60
+          QUIZ_ATTEMPT_COUNTER_TTL_SECONDS=2592000
+          MYSQL_ROOT_PASSWORD=password
+          MYSQL_SHARED_USER=platform_reader
+          MYSQL_SHARED_PASSWORD=platform_reader_password
+          IDENTITY_DB_HOST=mysql
+          IDENTITY_DB_NAME=identity_db
+          IDENTITY_DB_USER=identity_user
+          IDENTITY_DB_PASSWORD=identity_password
+          DEFAULT_ADMIN_EMAIL=ci.admin@example.com
+          DEFAULT_ADMIN_PASSWORD=CiAdmin123!
+          DEFAULT_ADMIN_FULL_NAME=CI_Admin
+          COMMUNICATION_DB_HOST=mysql
+          COMMUNICATION_DB_NAME=communication_db
+          COMMUNICATION_DB_USER=communication_user
+          COMMUNICATION_DB_PASSWORD=communication_password
+          LEARNING_DB_HOST=mysql
+          LEARNING_DB_NAME=learning_db
+          LEARNING_DB_USER=learning_user
+          LEARNING_DB_PASSWORD=learning_password
+          MYSQL_INTERNAL_PORT=3306
+          MYSQL_PORT=3307
+          AI_DB_HOST=postgres-ai
+          AI_DB_NAME=learning_platform_ai
+          AI_DB_USER=ai_user
+          AI_DB_PASSWORD=ai_password
+          AI_DB_PORT=5432
+          AI_DB_EXTERNAL_PORT=5433
+          AI_EMBEDDING_DIMENSION=1536
+          GEMINI_API_KEY=
+          AI_DEMO_MODEL_NAME=gemini-2.5-flash
+          LEARNING_MATERIAL_ROOT=/app/storage/materials
+          LEARNING_MATERIAL_PUBLIC_BASE_URL=/api/learning/materials
+          LEARNING_MATERIAL_AI_QUEUE=ai.material.index
+          OBJECT_STORAGE_PROVIDER=minio
+          MINIO_ENDPOINT=http://minio:9000
+          MINIO_ACCESS_KEY=minioadmin
+          MINIO_SECRET_KEY=minioadmin
+          MINIO_BUCKET=learning-materials
+          MINIO_PUBLIC_BASE_URL=
+          MINIO_SIGNED_URL_EXPIRES_SECONDS=300
+          MINIO_MULTIPART_PART_URL_EXPIRES_SECONDS=3600
+          COMPOSE_PROJECT_NAME=f14acake-learning-platform-ci
+          EOF
+
+      - name: Start redis-quiz
+        run: docker compose --env-file .env -f infra/docker-compose.yml up -d redis-quiz
+
+      - name: Verify redis-quiz is healthy
+        run: |
+          for i in {1..30}; do
+            if docker compose --env-file .env -f infra/docker-compose.yml exec -T redis-quiz redis-cli ping | grep -q PONG; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "redis-quiz health check failed"
+          docker compose --env-file .env -f infra/docker-compose.yml ps -a
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=120 redis-quiz
+          exit 1
+
+      - name: Stop redis-quiz
+        if: always()
+        run: docker compose --env-file .env -f infra/docker-compose.yml down -v --remove-orphans
+
+  minio-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create CI .env
+        run: |
+          cat > .env <<'EOF'
+          APP_ENV=ci
+          APP_TIMEZONE=Australia/Sydney
+          NGINX_PORT=18080
+          REDIS_PORT=6379
+          REDIS_INTERNAL_PORT=6379
+          QUIZ_REDIS_PORT=6380
+          QUIZ_REDIS_INTERNAL_PORT=6379
+          IDENTITY_PORT=8000
+          AI_SERVICE_PORT=8001
+          COMMUNICATION_PORT=8002
+          LEARNING_PORT=8003
+          FRONTEND_PORT=5173
+          MINIO_API_PORT=9000
+          MINIO_CONSOLE_PORT=9001
+          VITE_API_BASE_URL=/api
+          IDENTITY_SERVICE_URL=http://identity-service:8000
+          AI_SERVICE_URL=http://ai-service:8001
+          COMMUNICATION_SERVICE_URL=http://communication-service:8002
+          LEARNING_SERVICE_URL=http://learning-service:8003
+          INTERNAL_API_TOKEN=ci_internal_token
+          REDIS_HOST=redis
+          REDIS_DB=0
+          CELERY_BROKER_URL=redis://redis:6379/0
+          CELERY_RESULT_BACKEND=redis://redis:6379/0
+          CELERY_TASK_ALWAYS_EAGER=false
+          CELERY_TASK_DEFAULT_QUEUE=ai.default
+          LEARNING_CELERY_TASK_DEFAULT_QUEUE=learning.quiz
+          CELERY_WORKER_CONCURRENCY=2
+          CELERY_TASK_TIME_LIMIT=300
+          CELERY_TASK_SOFT_TIME_LIMIT=240
+          CELERY_RESULT_EXPIRES=3600
+          CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP=true
+          QUIZ_REDIS_HOST=redis-quiz
+          QUIZ_REDIS_DB=0
+          QUIZ_REDIS_URL=redis://redis-quiz:6379/0
+          QUIZ_GENERATION_RUN_REDIS_URL=redis://redis:6379/2
+          QUIZ_ATTEMPT_SESSION_GRACE_SECONDS=300
+          QUIZ_ATTEMPT_SESSION_FALLBACK_TTL_SECONDS=7200
+          QUIZ_ATTEMPT_SUBMIT_LOCK_SECONDS=60
+          QUIZ_ATTEMPT_COUNTER_TTL_SECONDS=2592000
+          MYSQL_ROOT_PASSWORD=password
+          MYSQL_SHARED_USER=platform_reader
+          MYSQL_SHARED_PASSWORD=platform_reader_password
+          IDENTITY_DB_HOST=mysql
+          IDENTITY_DB_NAME=identity_db
+          IDENTITY_DB_USER=identity_user
+          IDENTITY_DB_PASSWORD=identity_password
+          DEFAULT_ADMIN_EMAIL=ci.admin@example.com
+          DEFAULT_ADMIN_PASSWORD=CiAdmin123!
+          DEFAULT_ADMIN_FULL_NAME=CI_Admin
+          COMMUNICATION_DB_HOST=mysql
+          COMMUNICATION_DB_NAME=communication_db
+          COMMUNICATION_DB_USER=communication_user
+          COMMUNICATION_DB_PASSWORD=communication_password
+          LEARNING_DB_HOST=mysql
+          LEARNING_DB_NAME=learning_db
+          LEARNING_DB_USER=learning_user
+          LEARNING_DB_PASSWORD=learning_password
+          MYSQL_INTERNAL_PORT=3306
+          MYSQL_PORT=3307
+          AI_DB_HOST=postgres-ai
+          AI_DB_NAME=learning_platform_ai
+          AI_DB_USER=ai_user
+          AI_DB_PASSWORD=ai_password
+          AI_DB_PORT=5432
+          AI_DB_EXTERNAL_PORT=5433
+          AI_EMBEDDING_DIMENSION=1536
+          GEMINI_API_KEY=
+          AI_DEMO_MODEL_NAME=gemini-2.5-flash
+          LEARNING_MATERIAL_ROOT=/app/storage/materials
+          LEARNING_MATERIAL_PUBLIC_BASE_URL=/api/learning/materials
+          LEARNING_MATERIAL_AI_QUEUE=ai.material.index
+          OBJECT_STORAGE_PROVIDER=minio
+          MINIO_ENDPOINT=http://minio:9000
+          MINIO_ACCESS_KEY=minioadmin
+          MINIO_SECRET_KEY=minioadmin
+          MINIO_BUCKET=learning-materials
+          MINIO_PUBLIC_BASE_URL=
+          MINIO_SIGNED_URL_EXPIRES_SECONDS=300
+          MINIO_MULTIPART_PART_URL_EXPIRES_SECONDS=3600
+          COMPOSE_PROJECT_NAME=f14acake-learning-platform-ci
+          EOF
+
+      - name: Start minio
+        run: docker compose --env-file .env -f infra/docker-compose.yml up -d minio
+
+      - name: Verify minio is healthy
+        run: |
+          for i in {1..30}; do
+            if docker compose --env-file .env -f infra/docker-compose.yml exec -T minio curl -fsS http://localhost:9000/minio/health/live > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "minio health check failed"
+          docker compose --env-file .env -f infra/docker-compose.yml ps -a
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=120 minio
+          exit 1
+
+      - name: Initialize and verify minio bucket
+        run: |
+          docker compose --env-file .env -f infra/docker-compose.yml run --rm --no-deps --entrypoint /bin/sh minio-init -c '
+            mc alias set local "http://minio:${MINIO_API_PORT}" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" &&
+            mc mb --ignore-existing "local/$MINIO_BUCKET" &&
+            mc anonymous set private "local/$MINIO_BUCKET" &&
+            policy="$(mc anonymous get "local/$MINIO_BUCKET")" &&
+            echo "$policy" &&
+            case "$policy" in
+              *private*|*Private*) ;;
+              *) echo "Expected private bucket policy"; exit 1 ;;
+            esac &&
+            mc ls "local/$MINIO_BUCKET"
+          '
+
+      - name: Stop minio
+        if: always()
+        run: docker compose --env-file .env -f infra/docker-compose.yml down -v --remove-orphans
+
+  nginx-gateway-check:
+    name: Compose, backend tests, gateway smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create CI .env
+        run: |
+          cat > .env <<'EOF'
+          APP_ENV=ci
+          APP_TIMEZONE=Australia/Sydney
+          NGINX_PORT=18080
+          REDIS_PORT=6379
+          REDIS_INTERNAL_PORT=6379
+          QUIZ_REDIS_PORT=6380
+          QUIZ_REDIS_INTERNAL_PORT=6379
+          IDENTITY_PORT=8000
+          AI_SERVICE_PORT=8001
+          COMMUNICATION_PORT=8002
+          LEARNING_PORT=8003
+          FRONTEND_PORT=5173
+          MINIO_API_PORT=9000
+          MINIO_CONSOLE_PORT=9001
+          VITE_API_BASE_URL=/api
+          IDENTITY_SERVICE_URL=http://identity-service:8000
+          AI_SERVICE_URL=http://ai-service:8001
+          COMMUNICATION_SERVICE_URL=http://communication-service:8002
+          LEARNING_SERVICE_URL=http://learning-service:8003
+          INTERNAL_API_TOKEN=ci_internal_token
+          REDIS_HOST=redis
+          REDIS_DB=0
+          CELERY_BROKER_URL=redis://redis:6379/0
+          CELERY_RESULT_BACKEND=redis://redis:6379/0
+          CELERY_TASK_ALWAYS_EAGER=false
+          CELERY_TASK_DEFAULT_QUEUE=ai.default
+          LEARNING_CELERY_TASK_DEFAULT_QUEUE=learning.quiz
+          CELERY_WORKER_CONCURRENCY=2
+          CELERY_TASK_TIME_LIMIT=300
+          CELERY_TASK_SOFT_TIME_LIMIT=240
+          CELERY_RESULT_EXPIRES=3600
+          CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP=true
+          QUIZ_REDIS_HOST=redis-quiz
+          QUIZ_REDIS_DB=0
+          QUIZ_REDIS_URL=redis://redis-quiz:6379/0
+          QUIZ_GENERATION_RUN_REDIS_URL=redis://redis:6379/2
+          QUIZ_ATTEMPT_SESSION_GRACE_SECONDS=300
+          QUIZ_ATTEMPT_SESSION_FALLBACK_TTL_SECONDS=7200
+          QUIZ_ATTEMPT_SUBMIT_LOCK_SECONDS=60
+          QUIZ_ATTEMPT_COUNTER_TTL_SECONDS=2592000
+          MYSQL_ROOT_PASSWORD=password
+          MYSQL_SHARED_USER=platform_reader
+          MYSQL_SHARED_PASSWORD=platform_reader_password
+          IDENTITY_DB_HOST=mysql
+          IDENTITY_DB_NAME=identity_db
+          IDENTITY_DB_USER=identity_user
+          IDENTITY_DB_PASSWORD=identity_password
+          DEFAULT_ADMIN_EMAIL=ci.admin@example.com
+          DEFAULT_ADMIN_PASSWORD=CiAdmin123!
+          DEFAULT_ADMIN_FULL_NAME=CI_Admin
+          COMMUNICATION_DB_HOST=mysql
+          COMMUNICATION_DB_NAME=communication_db
+          COMMUNICATION_DB_USER=communication_user
+          COMMUNICATION_DB_PASSWORD=communication_password
+          LEARNING_DB_HOST=mysql
+          LEARNING_DB_NAME=learning_db
+          LEARNING_DB_USER=learning_user
+          LEARNING_DB_PASSWORD=learning_password
+          MYSQL_INTERNAL_PORT=3306
+          MYSQL_PORT=3307
+          AI_DB_HOST=postgres-ai
+          AI_DB_NAME=learning_platform_ai
+          AI_DB_USER=ai_user
+          AI_DB_PASSWORD=ai_password
+          AI_DB_PORT=5432
+          AI_DB_EXTERNAL_PORT=5433
+          AI_EMBEDDING_DIMENSION=1536
+          IDENTITY_SERVICE_URL=http://identity-service:8000
+          GEMINI_API_KEY=
+          AI_DEMO_MODEL_NAME=gemini-2.5-flash
+          LEARNING_MATERIAL_ROOT=/app/storage/materials
+          LEARNING_MATERIAL_PUBLIC_BASE_URL=/api/learning/materials
+          LEARNING_MATERIAL_AI_QUEUE=ai.material.index
+          OBJECT_STORAGE_PROVIDER=minio
+          MINIO_ENDPOINT=http://minio:9000
+          MINIO_ACCESS_KEY=minioadmin
+          MINIO_SECRET_KEY=minioadmin
+          MINIO_BUCKET=learning-materials
+          MINIO_PUBLIC_BASE_URL=
+          MINIO_SIGNED_URL_EXPIRES_SECONDS=300
+          MINIO_MULTIPART_PART_URL_EXPIRES_SECONDS=3600
+          COMPOSE_PROJECT_NAME=f14acake-learning-platform-ci
+          EOF
+
+      - name: Start stack with nginx
+        run: docker compose --env-file .env -f infra/docker-compose.yml up -d --build
+
+      - name: Verify core containers are running
+        run: |
+          docker compose --env-file .env -f infra/docker-compose.yml ps -a
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 mysql
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=120 postgres-ai
+
+      - name: Verify default admin seed uses CI env
+        run: |
+          set -a
+          . ./.env
+          set +a
+          actual_row="$(
+            docker compose --env-file .env -f infra/docker-compose.yml exec -T mysql \
+              mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${IDENTITY_DB_NAME}" -N -B -e "
+                SELECT CONCAT(u.email, '|', u.full_name, '|', u.password_hash, '|', r.role_code)
+                FROM users u
+                JOIN user_roles ur ON ur.user_id = u.user_id
+                JOIN roles r ON r.role_id = ur.role_id
+                WHERE u.email = '${DEFAULT_ADMIN_EMAIL}'
+                  AND r.role_code = 'admin'
+                LIMIT 1;
+              "
+          )"
+          IFS='|' read -r actual_email actual_full_name actual_hash actual_role <<EOF_ROW
+          ${actual_row}
+          EOF_ROW
+          test "${actual_email}" = "${DEFAULT_ADMIN_EMAIL}"
+          test "${actual_full_name}" = "${DEFAULT_ADMIN_FULL_NAME}"
+          test "${actual_role}" = "admin"
+          case "${actual_hash}" in
+            pbkdf2_sha256\$600000\$*) ;;
+            *)
+              echo "Expected PBKDF2 admin hash, got: ${actual_hash}"
+              exit 1
+              ;;
+          esac
+          test "${#actual_hash}" -gt 90
+
+      - name: Initialize MinIO bucket in CI
+        run: |
+          docker compose --env-file .env -f infra/docker-compose.yml run --rm --no-deps --entrypoint /bin/sh minio-init -c '
+            mc alias set local "http://minio:${MINIO_API_PORT}" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" &&
+            mc mb --ignore-existing "local/$MINIO_BUCKET" &&
+            mc anonymous set private "local/$MINIO_BUCKET" &&
+            policy="$(mc anonymous get "local/$MINIO_BUCKET")" &&
+            echo "$policy" &&
+            case "$policy" in
+              *private*|*Private*) ;;
+              *) echo "Expected private bucket policy"; exit 1 ;;
+            esac
+          '
+
+      - name: Verify redis is healthy
+        run: |
+          for i in {1..30}; do
+            if docker compose --env-file .env -f infra/docker-compose.yml exec -T redis redis-cli ping | grep -q PONG; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "redis health check failed"
+          docker compose --env-file .env -f infra/docker-compose.yml ps -a
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=120 redis
+          exit 1
+
+      - name: Verify redis-quiz is healthy
+        run: |
+          for i in {1..30}; do
+            if docker compose --env-file .env -f infra/docker-compose.yml exec -T redis-quiz redis-cli ping | grep -q PONG; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "redis-quiz health check failed"
+          docker compose --env-file .env -f infra/docker-compose.yml ps -a
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=120 redis-quiz
+          exit 1
+
+      - name: Verify learning-worker is running
+        run: |
+          for i in {1..30}; do
+            if [ "$(docker compose --env-file .env -f infra/docker-compose.yml ps -q learning-worker)" != "" ] && \
+               [ "$(docker inspect -f '{{.State.Status}}' $(docker compose --env-file .env -f infra/docker-compose.yml ps -q learning-worker))" = "running" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "learning-worker failed to reach running state"
+          docker compose --env-file .env -f infra/docker-compose.yml ps -a
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 learning-worker
+          exit 1
+
+      - name: Verify communication-worker is running
+        run: |
+          for i in {1..30}; do
+            if [ "$(docker compose --env-file .env -f infra/docker-compose.yml ps -q communication-worker)" != "" ] && \
+               [ "$(docker inspect -f '{{.State.Status}}' $(docker compose --env-file .env -f infra/docker-compose.yml ps -q communication-worker))" = "running" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "communication-worker failed to reach running state"
+          docker compose --env-file .env -f infra/docker-compose.yml ps -a
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 communication-worker
+          exit 1
+
+      - name: Verify nginx frontend route
+        run: |
+          set -a
+          . ./.env
+          set +a
+          for i in {1..30}; do
+            if curl -fsS "http://127.0.0.1:${NGINX_PORT}/" > /tmp/frontend.html; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "nginx frontend route check failed"
+          docker compose --env-file .env -f infra/docker-compose.yml logs nginx frontend
+          exit 1
+
+      - name: Verify nginx identity-service route
+        run: |
+          set -a
+          . ./.env
+          set +a
+          for i in {1..30}; do
+            if curl -fsS "http://127.0.0.1:${NGINX_PORT}/api/health" | grep -q '"status":"ok"' && \
+               curl -fsS "http://127.0.0.1:${NGINX_PORT}/api/identity/health" | grep -q '"status":"ok"'; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "nginx identity-service route check failed"
+          docker compose --env-file .env -f infra/docker-compose.yml logs nginx identity-service
+          exit 1
+
+      - name: Verify nginx ai-service route
+        run: |
+          set -a
+          . ./.env
+          set +a
+          for i in {1..30}; do
+            if curl -fsS "http://127.0.0.1:${NGINX_PORT}/api/ai/health" | grep -q '"status":"ok"'; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "nginx ai-service route check failed"
+          docker compose --env-file .env -f infra/docker-compose.yml logs nginx ai-service
+          exit 1
+
+      - name: Verify nginx communication-service route
+        run: |
+          set -a
+          . ./.env
+          set +a
+          for i in {1..30}; do
+            if curl -fsS "http://127.0.0.1:${NGINX_PORT}/api/communication/health" | grep -q '"status":"ok"'; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "nginx communication-service route check failed"
+          docker compose --env-file .env -f infra/docker-compose.yml logs nginx communication-service
+          exit 1
+
+      - name: Verify nginx learning-service route
+        run: |
+          set -a
+          . ./.env
+          set +a
+          for i in {1..30}; do
+            if curl -fsS "http://127.0.0.1:${NGINX_PORT}/api/learning/health" | grep -q '"status":"ok"'; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "nginx learning-service route check failed"
+          docker compose --env-file .env -f infra/docker-compose.yml logs nginx learning-service
+          exit 1
+
+      - name: Verify nginx blocks internal routes
+        run: |
+          set -a
+          . ./.env
+          set +a
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/ai/internal/profile-update/context" -H "Content-Type: application/json" -d '{"learnerId":1,"courseUuid":"x","moduleUuid":"y"}')" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/learning/internal/ai-context/chat-access" -H "Content-Type: application/json" -d '{"courseUuid":"x","moduleUuid":"y","userId":1,"identity":"Learner"}')" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/learning/internal/course-access/forum" -H "Content-Type: application/json" -d '{"courseUuid":"x","userId":1,"identity":"Learner"}')" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/learning/internal/quiz-generation/context" -H "Content-Type: application/json" -d '{"courseUuid":"x","moduleUuid":"y"}')" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/learning/internal/quiz-generation/authoring-access" -H "Content-Type: application/json" -d '{"courseUuid":"x","moduleUuid":"y","actorId":1,"actorIdentity":"Educator"}')" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${NGINX_PORT}/api/internal/users/lookup" -H "Content-Type: application/json" -d '{"userIds":[1]}')" = "404"
 
       - name: Dump service logs on failure
         if: failure()
         run: |
-          docker compose --env-file "$CI_ENV_FILE" -f "$COMPOSE_FILE" ps -a
-          for service in mysql postgres-ai redis redis-quiz minio identity-service communication-service communication-worker learning-service learning-worker ai-service ai-worker frontend nginx; do
-            echo "===== ${service} logs ====="
-            docker compose --env-file "$CI_ENV_FILE" -f "$COMPOSE_FILE" logs --tail=200 "$service" || true
-          done
+          docker compose --env-file .env -f infra/docker-compose.yml ps -a
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 mysql
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 postgres-ai
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 redis
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 redis-quiz
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 identity-service
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 communication-service
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 communication-worker
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 learning-service
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 learning-worker
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 ai-service
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 ai-worker
+          docker compose --env-file .env -f infra/docker-compose.yml logs --tail=200 nginx
 
       - name: Stop stack
         if: always()
-        run: docker compose --env-file "$CI_ENV_FILE" -f "$COMPOSE_FILE" down -v --remove-orphans
+        run: docker compose --env-file .env -f infra/docker-compose.yml down -v --remove-orphans
+  communication-service-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/communication-service
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/communication-service/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+          pip install -e ../../packages/platform_common
+
+      - name: Import check
+        run: python -c "from app.main import app; print('communication-service import ok')"
+
+      - name: Run communication-service tests
+        run: pytest tests -q
+
+      - name: Celery task registration check
+        run: python -c "import app.tasks.notifications; from app.core.celery_app import celery_app; assert 'app.tasks.notifications.dispatch_educator_approval_request_created_task' in celery_app.tasks; print('communication-worker celery task ok')"
+
+  learning-service-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/learning-service
+    env:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_INTERNAL_PORT: "6379"
+      REDIS_DB: "0"
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      CELERY_TASK_ALWAYS_EAGER: "false"
+      CELERY_TASK_DEFAULT_QUEUE: learning.quiz
+      QUIZ_REDIS_HOST: redis-quiz
+      QUIZ_REDIS_PORT: "6379"
+      QUIZ_REDIS_INTERNAL_PORT: "6379"
+      QUIZ_REDIS_DB: "0"
+      QUIZ_REDIS_URL: redis://redis-quiz:6379/0
+      QUIZ_ATTEMPT_SESSION_GRACE_SECONDS: "300"
+      QUIZ_ATTEMPT_SESSION_FALLBACK_TTL_SECONDS: "7200"
+      QUIZ_ATTEMPT_SUBMIT_LOCK_SECONDS: "60"
+      QUIZ_ATTEMPT_COUNTER_TTL_SECONDS: "2592000"
+      LEARNING_MATERIAL_ROOT: ${{ github.workspace }}/.ci/storage/learning-materials
+      LEARNING_MATERIAL_PUBLIC_BASE_URL: /api/learning/materials
+      LEARNING_MATERIAL_AI_QUEUE: ai.material.index
+      OBJECT_STORAGE_PROVIDER: local
+      INTERNAL_API_TOKEN: ci_internal_token
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/learning-service/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e ../../packages/platform_common
+
+      - name: Import check
+        run: python -c "from app.main import app; print('learning-service import ok')"
+
+      - name: Celery task registration check
+        run: python -c "import app.tasks.quiz_attempts; from app.core.celery_app import celery_app; assert 'app.tasks.quiz_attempts.auto_submit_quiz_attempt_task' in celery_app.tasks; print('learning-worker celery task ok')"
+
+  ai-service-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ai-service
+    env:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_INTERNAL_PORT: "6379"
+      REDIS_DB: "0"
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      CELERY_TASK_ALWAYS_EAGER: "false"
+      CELERY_TASK_DEFAULT_QUEUE: ai.default
+      LEARNING_MATERIAL_AI_QUEUE: ai.material.index
+      LANGGRAPH_CHECKPOINT_ENABLED: "true"
+      LANGGRAPH_CHECKPOINT_REDIS_URL: redis://redis:6379/1
+      LANGGRAPH_CHECKPOINT_KEY_PREFIX: ai.langgraph
+      QUIZ_GENERATION_RUN_REDIS_URL: redis://redis:6379/2
+      QUIZ_GENERATION_RUN_KEY_PREFIX: ai.quiz_generation
+      INTERNAL_API_TOKEN: ci_internal_token
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/ai-service/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e ../../packages/platform_common
+
+      - name: Import check
+        run: python -c "from app.main import app; print('ai-service import ok')"
+
+      - name: LangGraph import check
+        run: |
+          python -c "import app.services.orchestration.langgraph.profile_update_graph; print('profile update graph import ok')"
+          python -c "import app.services.orchestration.langgraph.quiz_generation_graph; print('quiz generation graph import ok')"
+
+      - name: Run ai-service workflow tests
+        run: pytest tests/profile_update tests/quiz_generation -q

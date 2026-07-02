@@ -20,7 +20,7 @@ function VerifyEmail() {
     () => (token ? "loading" : "error")
   );
   const [message, setMessage] = useState(
-    () => (token ? "" : "Invalid or missing verification token.")
+    () => (token ? "" : "验证令牌无效或缺失。")
   );
   const called = useRef(false);
 
@@ -34,7 +34,7 @@ function VerifyEmail() {
         setStatus("success");
       })
       .catch((err) => {
-        setMessage(err instanceof Error ? err.message : "Email verification failed.");
+        setMessage(err instanceof Error ? err.message : "邮箱验证失败。");
         setStatus("error");
       });
   }, [token]);
@@ -43,18 +43,18 @@ function VerifyEmail() {
     <AuthLayout>
       <AuthHeader
         
-        title="Email Verification"
-        description="Verifying your email address."
+        title="邮箱验证"
+        description="正在验证你的邮箱地址。"
       />
 
       <div>
-        {status === "loading" && <p>Verifying...</p>}
+        {status === "loading" && <p>验证中...</p>}
         {status === "success" && (
           <>
-            <AuthMessage tone="success" message="Email verified successfully! You can now log in." />
+            <AuthMessage tone="success" message="邮箱验证成功，现在可以登录了。" />
             <div className="auth-footer-links">
               <Link to={loginLink} className="text-link">
-                Continue to Login
+                前往登录
               </Link>
             </div>
           </>
@@ -63,7 +63,7 @@ function VerifyEmail() {
           <>
             <AuthMessage tone="error" message={message} />
             <div className="auth-footer-links">
-              <Link to="/login" className="text-link">Back to Login</Link>
+              <Link to="/login" className="text-link">返回登录</Link>
             </div>
           </>
         )}

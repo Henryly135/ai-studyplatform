@@ -5,21 +5,21 @@ import {
   LuBot,
   LuChartBar,
   LuBell,
-  LuBellRing,
   LuGraduationCap,
   LuLayoutDashboard,
   LuLibrary,
   LuShieldCheck,
   LuSparkles,
-  LuUserCheck,
   LuUsers,
 } from "react-icons/lu";
 import type { ReactNode } from "react";
 
 import HomeNotificationsMenu from "../../components/home/HomeNotificationsMenu";
 import HomeSidebarItem from "../../components/home/HomeSidebarItem";
+import { clearStoredSession } from "../../services/api";
 import { getCurrentUser } from "../../services/auth";
 import type { CurrentUserResponse } from "../../types/auth";
+import { isUsableAccessToken } from "../../utils/accessToken";
 import type { HomeSection } from "./homeConfig";
 import { getAllowedHomeSections } from "./homeConfig";
 import "./HomePage.css";
@@ -57,34 +57,30 @@ const SECTION_ICONS: Record<string, ReactNode> = {
   "managed-courses": <LuGraduationCap size={18} />,
   communication: <LuBell size={18} />,
   progress: <LuChartBar size={18} />,
-  "study-planner": <LuSparkles size={18} />,
   ai: <LuBot size={18} />,
   analytics: <LuChartBar size={18} />,
   "course-management": <LuLayoutDashboard size={18} />,
   "user-management": <LuUsers size={18} />,
-  "educator-requests": <LuUserCheck size={18} />,
-  "communication-management": <LuBellRing size={18} />,
 };
 
 const SIDEBAR_GROUPS_BY_IDENTITY: Record<CurrentUserResponse["identity"], SidebarGroup[]> = {
   Learner: [
     {
-      label: "Learn",
+      label: "学习",
       items: [
         { sectionId: "course-center" },
         { sectionId: "my-courses" },
       ],
     },
     {
-      label: "Growth",
+      label: "成长",
       items: [
-        { sectionId: "study-planner" },
         { sectionId: "progress" },
         { sectionId: "ai" },
       ],
     },
     {
-      label: "Updates",
+      label: "更新",
       items: [
         { sectionId: "communication" },
       ],
@@ -92,21 +88,21 @@ const SIDEBAR_GROUPS_BY_IDENTITY: Record<CurrentUserResponse["identity"], Sideba
   ],
   Educator: [
     {
-      label: "Courses",
+      label: "课程",
       items: [
         { sectionId: "course-center" },
         { sectionId: "managed-courses" },
       ],
     },
     {
-      label: "Insights",
+      label: "洞察",
       items: [
         { sectionId: "analytics" },
         { sectionId: "ai" },
       ],
     },
     {
-      label: "Updates",
+      label: "更新",
       items: [
         { sectionId: "communication" },
       ],
@@ -114,31 +110,20 @@ const SIDEBAR_GROUPS_BY_IDENTITY: Record<CurrentUserResponse["identity"], Sideba
   ],
   Admin: [
     {
-      label: "Courses",
+      label: "课程",
       items: [
         { sectionId: "course-center" },
         { sectionId: "course-management" },
       ],
     },
     {
-      label: "Admin",
+      label: "治理",
       items: [
         { sectionId: "user-management" },
-        { sectionId: "educator-requests" },
       ],
     },
     {
-      label: "Communication Management",
-      items: [
-        { sectionId: "communication", label: "Notifications" },
-        {
-          sectionId: "communication-management",
-          label: "Notification Management",
-        },
-      ],
-    },
-    {
-      label: "Tools",
+      label: "智能助手",
       items: [
         { sectionId: "ai" },
       ],
@@ -174,26 +159,26 @@ function buildSidebarGroups(
 function getWorkspaceSummary(user: CurrentUserResponse, toolCount: number) {
   if (user.identity === "Admin") {
     return {
-      title: "Admin workspace",
-      description: `${toolCount} platform tools available`,
-      actionLabel: "Review requests",
-      actionPath: "/home/educator-requests",
+      title: "管理员工作区",
+      description: `${toolCount} 个平台工具可用`,
+      actionLabel: "查看智能治理",
+      actionPath: "/home/ai",
     };
   }
 
   if (user.identity === "Educator") {
     return {
-      title: "Educator workspace",
-      description: "Build and manage course experiences",
-      actionLabel: "Manage courses",
+      title: "教师工作区",
+      description: "构建和管理课程体验",
+      actionLabel: "管理课程",
       actionPath: "/home/managed-courses",
     };
   }
 
   return {
-    title: "Learner workspace",
-    description: "Keep learning with guided support",
-    actionLabel: "Explore courses",
+    title: "学生工作区",
+    description: "在引导支持下继续学习",
+    actionLabel: "浏览课程",
     actionPath: "/home/course-center",
   };
 }
@@ -204,14 +189,8 @@ function HomePage() {
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const clearSession = () => {
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("tokenType");
-    localStorage.removeItem("currentUser");
-  };
-
   const handleLogout = () => {
-    clearSession();
+    clearStoredSession();
     navigate("/", { replace: true });
   };
 
@@ -220,7 +199,8 @@ function HomePage() {
 
     const loadWorkspace = async () => {
       const accessToken = localStorage.getItem("accessToken");
-      if (!accessToken) {
+      if (!accessToken || !isUsableAccessToken(accessToken)) {
+        clearStoredSession();
         navigate("/", { replace: true });
         return;
       }
@@ -239,7 +219,7 @@ function HomePage() {
           return;
         }
 
-        clearSession();
+        clearStoredSession();
         navigate("/", { replace: true });
       } finally {
         if (!cancelled) {
@@ -269,7 +249,7 @@ function HomePage() {
     }
 
     if (location.pathname === "/home/communication") {
-      return "Notifications";
+      return "通知";
     }
 
     const matchedSection = allowedSections.find((section) =>
@@ -290,7 +270,7 @@ function HomePage() {
   if (loading) {
     return (
       <div className="home-shell home-shell-loading">
-        <div className="home-loading">Loading workspace...</div>
+        <div className="home-loading">正在加载工作区...</div>
       </div>
     );
   }
@@ -311,11 +291,11 @@ function HomePage() {
         <div className="home-sidebar-top">
           <Link to="/home" className="home-sidebar-brand">
             <span className="home-sidebar-brand-mark">C</span>
-            <strong>Learning Hub</strong>
+            <strong>学习平台</strong>
           </Link>
         </div>
 
-        <nav className="home-sidebar-nav" aria-label="Home navigation">
+        <nav className="home-sidebar-nav" aria-label="工作台导航">
           {sidebarGroups.map((group) => (
             <div className="home-sidebar-group" key={group.label}>
               <span className="home-sidebar-group-label">{group.label}</span>
@@ -350,7 +330,7 @@ function HomePage() {
       <div className="home-main">
         <header className="home-topbar">
           <div>
-            <span className="home-topbar-label">Workspace</span>
+            <span className="home-topbar-label">工作区</span>
             <h2>{activeTitle}</h2>
           </div>
 
@@ -361,8 +341,7 @@ function HomePage() {
               type="button"
               className="home-topbar-logout"
               onClick={handleLogout}
-            >
-              Log out
+            >退出登录
             </button>
 
             <div className="home-profile-card">

@@ -1,4 +1,5 @@
 from datetime import timedelta
+import hashlib
 from types import SimpleNamespace
 
 import pytest
@@ -164,6 +165,26 @@ def test_login_success_records_audit_and_returns_token(db_session, monkeypatch):
     assert result["user"]["identity"] == "Learner"
     assert result["shouldShowGlobalProfileInitPrompt"] is True
     assert user.last_login_at is not None
+
+
+def test_login_upgrades_legacy_sha256_password_hash(db_session, monkeypatch):
+    # Tests that existing seeded SHA-256 credentials still work and migrate after login.
+    learner_role = _add_role(db_session, "learner", "Learner")
+    legacy_hash = hashlib.sha256("Password1!".encode("utf-8")).hexdigest()
+    user = UserRepository(db_session).create(
+        email="legacy@example.com",
+        password_hash=legacy_hash,
+        full_name="Legacy User",
+        account_status=AccountStatus.ACTIVE,
+        email_verified=True,
+    )
+    RoleRepository(db_session).assign_role(user.user_id, learner_role.role_id)
+    monkeypatch.setattr(AuthService, "_fetch_global_profile_exists", lambda self, user_id: True)
+
+    AuthService(db_session).login(email="legacy@example.com", password="Password1!")
+
+    assert user.password_hash != legacy_hash
+    assert user.password_hash.startswith("pbkdf2_sha256$")
 
 
 def test_login_records_failures_for_missing_unverified_bad_password_and_inactive(db_session):

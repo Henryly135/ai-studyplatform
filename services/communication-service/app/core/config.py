@@ -1,5 +1,10 @@
 from dataclasses import dataclass
-from platform_common.config import get_env, load_project_env
+from platform_common.config import (
+    get_cors_allowed_origins,
+    get_env,
+    load_project_env,
+    validate_production_security_config,
+)
 
 load_project_env(__file__)
 
@@ -46,6 +51,28 @@ class Settings:
         default="change-me-in-production-use-a-long-random-string",
     )
     internal_api_token: str = get_env("INTERNAL_API_TOKEN", default="")
+    cors_allowed_origins: tuple[str, ...] = get_cors_allowed_origins()
+
+    def __post_init__(self) -> None:
+        validate_production_security_config(
+            service_name="communication-service",
+            cors_allowed_origins=self.cors_allowed_origins,
+            required_values={
+                "PUBLIC_ID_SECRET": self.public_id_secret,
+                "INTERNAL_API_TOKEN": self.internal_api_token,
+                "COMMUNICATION_DB_PASSWORD": self.db_password,
+            },
+            forbidden_values={
+                "PUBLIC_ID_SECRET": {"change-me-in-production-public-id-secret"},
+                "INTERNAL_API_TOKEN": {"change_me_internal_api_token"},
+                "COMMUNICATION_DB_PASSWORD": {"app_password", "change_me_communication_password"},
+            },
+            min_lengths={
+                "PUBLIC_ID_SECRET": 32,
+                "INTERNAL_API_TOKEN": 32,
+                "COMMUNICATION_DB_PASSWORD": 12,
+            },
+        )
 
     @property
     def database_url(self) -> str:

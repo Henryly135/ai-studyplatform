@@ -46,9 +46,6 @@ htmlcov/
 .coverage
 .coverage.*
 coverage.json
-**/coverage.json
-*.egg-info/
-**/*.egg-info/
 
 # Uploaded learning materials
 storage/learning-materials/

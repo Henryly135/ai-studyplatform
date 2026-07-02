@@ -63,12 +63,41 @@ class LearningQuizGenerationClient:
             )
             raise invalid_request_error("Unable to verify quiz access") from exc
 
+    def ensure_authoring_quiz_access(
+        self,
+        *,
+        course_uuid: str,
+        module_uuid: str,
+        actor_id: int,
+        actor_identity: str,
+    ) -> None:
+        try:
+            post_json(
+                url=f"{settings.learning_service_url}/internal/quiz-generation/authoring-access",
+                payload={
+                    "courseUuid": course_uuid,
+                    "moduleUuid": module_uuid,
+                    "actorId": actor_id,
+                    "actorIdentity": actor_identity,
+                },
+                headers=self._internal_headers(),
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "Failed to verify quiz authoring access in learning service",
+                extra={"courseUuid": course_uuid, "moduleUuid": module_uuid, "actorId": actor_id},
+            )
+            raise invalid_request_error("Unable to verify quiz authoring access") from exc
+
     def batch_create_questions(
         self,
         *,
         course_uuid: str,
         module_uuid: str,
         candidate_set: QuizGenerationCandidateSetRead,
+        purpose: str = "authoring",
     ) -> list[CreatedQuizQuestionRead]:
         try:
             payload = post_json(
@@ -76,6 +105,7 @@ class LearningQuizGenerationClient:
                 payload={
                     "courseUuid": course_uuid,
                     "moduleUuid": module_uuid,
+                    "purpose": purpose,
                     "questions": candidate_set.model_dump(mode="json")["questions"],
                 },
                 headers=self._internal_headers(),

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -6,6 +6,7 @@ from app.core.uuid_codec import encode_comment_uuid, encode_course_uuid, encode_
 from app.models.course_forum_post import CourseForumPost, ForumPostKind
 from app.repositories.course_forum_comment_repository import CourseForumCommentRepository
 from app.repositories.course_forum_post_repository import CourseForumPostRepository, _UNSET
+from app.services.course_forum_access_client import CourseForumAccessClient
 from app.services.course_management_client import CourseManagementClient
 from app.schemas.forum import (
     CourseForumCommentRead,
@@ -28,9 +29,11 @@ class ForumService:
         self.session = session
         self.posts = CourseForumPostRepository(session)
         self.comments = CourseForumCommentRepository(session)
+        self.course_access = CourseForumAccessClient()
         self.course_management = CourseManagementClient()
 
     def create_post(self, *, course_id: int, payload: CourseForumPostCreateRequest, current_user: dict) -> CourseForumPostRead:
+        self._ensure_forum_access_by_course_id(course_id=course_id, current_user=current_user)
         author_user_id = self._require_current_user_id(current_user)
         post = self.posts.create(
             course_id=course_id,
@@ -50,10 +53,12 @@ class ForumService:
         self,
         *,
         course_id: int,
+        current_user: dict,
         query: str | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> PaginatedCourseForumPostResponse:
+        self._ensure_forum_access_by_course_id(course_id=course_id, current_user=current_user)
         items, total, safe_page, total_pages = self.posts.list_by_course(
             course_id=course_id,
             query=query,
@@ -84,8 +89,9 @@ class ForumService:
             totalPages=total_pages,
         )
 
-    def get_post(self, *, post_id: int) -> CourseForumPostRead:
+    def get_post(self, *, post_id: int, current_user: dict) -> CourseForumPostRead:
         post = self._get_post_or_404(post_id)
+        self._ensure_forum_access_by_course_id(course_id=post.course_id, current_user=current_user)
         comment_count = self.comments.count_by_post_ids(post_ids=[post_id]).get(post_id, 0)
         preview_comments = self.comments.list_preview_top_level_by_post_ids(post_ids=[post_id], limit_per_post=2).get(post_id, [])
         reply_count_map = self.comments.count_replies_by_root_comment_ids(
@@ -102,6 +108,7 @@ class ForumService:
 
     def update_post(self, *, post_id: int, payload: CourseForumPostUpdateRequest, current_user: dict) -> CourseForumPostRead:
         post = self._get_post_or_404(post_id)
+        self._ensure_forum_access_by_course_id(course_id=post.course_id, current_user=current_user)
         self._ensure_post_write_access(post, current_user=current_user)
 
         if payload.title is None and payload.content is None and payload.metadataJson is None:
@@ -117,16 +124,18 @@ class ForumService:
         )
         self.session.commit()
         self.session.refresh(updated_post)
-        return self.get_post(post_id=updated_post.post_id)
+        return self.get_post(post_id=updated_post.post_id, current_user=current_user)
 
     def delete_post(self, *, post_id: int, current_user: dict) -> None:
         post = self._get_post_or_404(post_id)
+        self._ensure_forum_access_by_course_id(course_id=post.course_id, current_user=current_user)
         self._ensure_post_write_access(post, current_user=current_user)
         self.posts.delete(post)
         self.session.commit()
 
     def pin_post(self, *, post_id: int, current_user: dict, token: str) -> CourseForumPostRead:
         post = self._get_post_or_404(post_id)
+        self._ensure_forum_access_by_course_id(course_id=post.course_id, current_user=current_user)
         self._ensure_post_pin_access(post, current_user=current_user, token=token)
         actor_id = self._require_current_user_id(current_user)
 
@@ -138,10 +147,11 @@ class ForumService:
         )
         self.session.commit()
         self.session.refresh(updated_post)
-        return self.get_post(post_id=updated_post.post_id)
+        return self.get_post(post_id=updated_post.post_id, current_user=current_user)
 
     def unpin_post(self, *, post_id: int, current_user: dict, token: str) -> CourseForumPostRead:
         post = self._get_post_or_404(post_id)
+        self._ensure_forum_access_by_course_id(course_id=post.course_id, current_user=current_user)
         self._ensure_post_pin_access(post, current_user=current_user, token=token)
 
         updated_post = self.posts.update(
@@ -152,7 +162,7 @@ class ForumService:
         )
         self.session.commit()
         self.session.refresh(updated_post)
-        return self.get_post(post_id=updated_post.post_id)
+        return self.get_post(post_id=updated_post.post_id, current_user=current_user)
 
     def _get_post_or_404(self, post_id: int) -> CourseForumPost:
         post = self.posts.get_by_id(post_id)
@@ -240,6 +250,12 @@ class ForumService:
             raise invalid_identity_response_error()
         return user_id
 
+    def _ensure_forum_access_by_course_id(self, *, course_id: int, current_user: dict) -> None:
+        self.course_access.assert_forum_access(
+            course_uuid=encode_course_uuid(course_id),
+            current_user=current_user,
+        )
+
     def _ensure_post_write_access(self, post: CourseForumPost, *, current_user: dict) -> None:
         current_user_id = self._require_current_user_id(current_user)
         if post.author_user_id == current_user_id:
@@ -261,4 +277,4 @@ class ForumService:
         )
 
     def _now_utc(self) -> datetime:
-        return datetime.utcnow()
+        return datetime.now(timezone.utc).replace(tzinfo=None)

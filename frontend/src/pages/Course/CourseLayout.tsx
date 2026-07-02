@@ -4,7 +4,7 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { LuBot, LuChevronDown, LuChevronUp, LuLock, LuMenu, LuX } from "react-icons/lu";
 
 import HomeNotificationsMenu from "../../components/home/HomeNotificationsMenu";
-import type { CurrentUserResponse } from "../../types/auth";
+import { getStoredCurrentUser } from "../../services/api";
 import {
   dropMyEnrollment,
   enrollInCourse,
@@ -32,35 +32,66 @@ export type CourseOutletContext = {
 
 type PendingEnrollmentAction = "enroll" | "cancel";
 
+function getEnrollmentActionErrorMessage(error: unknown, action: PendingEnrollmentAction) {
+  const fallback =
+    action === "cancel"
+      ? "无法取消报名，请稍后重试。"
+      : "无法加入该课程，请稍后重试。";
+
+  if (!(error instanceof Error)) {
+    return fallback;
+  }
+
+  const message = error.message.trim();
+  if (!message) {
+    return fallback;
+  }
+
+  if (message.toLowerCase().includes("private")) {
+    return "这门课程为私有课程，请向教师索要邀请链接。";
+  }
+
+  if (message.toLowerCase().includes("published")) {
+    return "这门课程尚未开放报名。";
+  }
+
+  if (message.toLowerCase().includes("already")) {
+    return "你的报名状态已经变化，刷新课程后可查看最新状态。";
+  }
+
+  return message;
+}
+
+function getCourseLoadErrorMessage(error: unknown) {
+  if (!(error instanceof Error) || !error.message.trim()) {
+    return "无法加载这门课程，请从课程列表重试。";
+  }
+
+  return error.message;
+}
+
 function CourseLayout() {
   const { courseUuid, moduleUuid, materialUuid } = useParams();
   const location = useLocation();
   const [course, setCourse] = useState<CourseRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatWidth, setChatWidth] = useState(380);
   const [isResizingChat, setIsResizingChat] = useState(false);
-  const currentUser = useMemo(() => {
-    const raw = localStorage.getItem("currentUser");
-    if (!raw) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(raw) as CurrentUserResponse;
-    } catch {
-      return null;
-    }
-  }, []);
+  const currentUser = useMemo(() => getStoredCurrentUser(), []);
   const isLearner = currentUser?.identity === "Learner";
   const canUseNotifications =
-    currentUser?.identity === "Learner" || currentUser?.identity === "Educator";
+    currentUser?.identity === "Learner" ||
+    currentUser?.identity === "Educator" ||
+    currentUser?.identity === "Admin";
   const [forumCourses, setForumCourses] = useState<CourseRecord[]>([]);
   const [forumCoursesLoading, setForumCoursesLoading] = useState(false);
   const [forumCoursesError, setForumCoursesError] = useState<string | null>(null);
   const [isEnrolled, setIsEnrolled] = useState(false);
   const [isEnrolling, setIsEnrolling] = useState(false);
   const [pendingEnrollmentAction, setPendingEnrollmentAction] = useState<PendingEnrollmentAction | null>(null);
+  const [enrollmentActionError, setEnrollmentActionError] = useState("");
   const [quizGuardActive, setQuizGuardActive] = useState(false);
   const [pendingNavTarget, setPendingNavTarget] = useState<string | null>(null);
   const [isQuizLeaving, setIsQuizLeaving] = useState(false);
@@ -70,7 +101,40 @@ function CourseLayout() {
   const quizSubmitRef = useRef<(() => Promise<void>) | null>(null);
   const allowNextPopstateRef = useRef(false);
   const quizPageUrlRef = useRef('');
+  const openChatConsumedRef = useRef<string | null>(null);
+  const quizLeaveTriggerRef = useRef<HTMLElement | null>(null);
+  const enrollmentActionTriggerRef = useRef<HTMLElement | null>(null);
   const navigate = useNavigate();
+  const restoreFocus = useCallback((target: HTMLElement | null) => {
+    if (!target?.isConnected) {
+      return;
+    }
+
+    window.setTimeout(() => target.focus(), 0);
+  }, []);
+
+  const closeQuizLeaveModal = useCallback(() => {
+    if (isQuizLeaving) {
+      return;
+    }
+
+    setPendingNavTarget(null);
+    const trigger = quizLeaveTriggerRef.current;
+    quizLeaveTriggerRef.current = null;
+    restoreFocus(trigger);
+  }, [isQuizLeaving, restoreFocus]);
+
+  const closeEnrollmentActionModal = useCallback(() => {
+    if (isEnrolling) {
+      return;
+    }
+
+    setPendingEnrollmentAction(null);
+    setEnrollmentActionError("");
+    const trigger = enrollmentActionTriggerRef.current;
+    enrollmentActionTriggerRef.current = null;
+    restoreFocus(trigger);
+  }, [isEnrolling, restoreFocus]);
 
   const handleSidebarNavigation = (
     event: ReactMouseEvent<HTMLElement>,
@@ -78,6 +142,7 @@ function CourseLayout() {
   ) => {
     if (quizGuardActive) {
       event.preventDefault();
+      quizLeaveTriggerRef.current = event.currentTarget;
       setPendingNavTarget(target);
       return;
     }
@@ -135,6 +200,10 @@ function CourseLayout() {
     const params = new URLSearchParams(location.search);
     return params.get("from");
   }, [location.search]);
+  const shouldOpenChatFromQuery = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("openChat") === "1";
+  }, [location.search]);
   const isForumRoute = useMemo(() => {
     if (!courseUuid) {
       return false;
@@ -164,22 +233,29 @@ function CourseLayout() {
         : "/home/course-center";
   const backLabel =
     source === "my-courses"
-      ? "Back to my courses"
+      ? "返回我的课程"
       : source === "managed-courses"
-        ? "Back to managed courses"
-        : "Back to course lobby";
+        ? "返回管理课程"
+        : "返回课程大厅";
 
   const refreshCourse = useCallback(async () => {
     if (!courseUuid) {
       return;
     }
 
-    const shouldLoadManagedCourse =
-      currentUser?.identity !== "Learner" && isManagedCourseSource;
-    const data = shouldLoadManagedCourse
-      ? await getManagedCourseByUuid(courseUuid)
-      : await getCourseByUuid(courseUuid);
-    setCourse(data);
+    try {
+      const shouldLoadManagedCourse =
+        currentUser?.identity !== "Learner" && isManagedCourseSource;
+      const data = shouldLoadManagedCourse
+        ? await getManagedCourseByUuid(courseUuid)
+        : await getCourseByUuid(courseUuid);
+      setCourse(data);
+      setLoadError(null);
+    } catch (error) {
+      setCourse(null);
+      setLoadError(getCourseLoadErrorMessage(error));
+      throw error;
+    }
   }, [courseUuid, currentUser?.identity, isManagedCourseSource]);
 
   useEffect(() => {
@@ -199,6 +275,12 @@ function CourseLayout() {
           : await getCourseByUuid(courseUuid);
         if (!cancelled) {
           setCourse(data);
+          setLoadError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCourse(null);
+          setLoadError(getCourseLoadErrorMessage(error));
         }
       } finally {
         if (!cancelled) {
@@ -221,7 +303,7 @@ function CourseLayout() {
         if (!courseUuid || (detail.courseUuid && detail.courseUuid !== courseUuid)) {
           return;
         }
-        void refreshCourse();
+        void refreshCourse().catch(() => undefined);
       }
     );
   }, [courseUuid, refreshCourse]);
@@ -296,7 +378,7 @@ function CourseLayout() {
         if (!cancelled) {
           setForumCourses([]);
           setForumCoursesError(
-            error instanceof Error ? error.message : "Failed to load your course forums."
+            error instanceof Error ? error.message : "课程论坛加载失败。"
           );
         }
       } finally {
@@ -315,7 +397,7 @@ function CourseLayout() {
 
   const activeTitle = useMemo(() => {
     if (!course) {
-      return "Course";
+      return "课程";
     }
 
     const currentModule = moduleUuid
@@ -326,7 +408,7 @@ function CourseLayout() {
         ? currentModule.materials.find((material) => material.materialUuid === materialUuid)
         : null;
 
-    return currentMaterial?.title ?? currentModule?.title ?? "Overview";
+    return currentMaterial?.title ?? currentModule?.title ?? "概览";
   }, [course, moduleUuid, materialUuid]);
 
   const activeModule = useMemo(() => {
@@ -336,6 +418,20 @@ function CourseLayout() {
 
     return course.modules.find((module) => module.moduleUuid === moduleUuid) ?? null;
   }, [course, moduleUuid]);
+
+  useEffect(() => {
+    if (!activeModule || !isMyCoursesSource || !shouldOpenChatFromQuery) {
+      return;
+    }
+
+    const openChatKey = `${course?.courseUuid ?? ""}:${activeModule.moduleUuid}:${location.search}`;
+    if (openChatConsumedRef.current === openChatKey) {
+      return;
+    }
+
+    openChatConsumedRef.current = openChatKey;
+    setIsChatOpen(true);
+  }, [activeModule, course?.courseUuid, isMyCoursesSource, location.search, shouldOpenChatFromQuery]);
 
   useEffect(() => {
     if (!course || !isLearner) {
@@ -370,6 +466,9 @@ function CourseLayout() {
       return;
     }
 
+    enrollmentActionTriggerRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setEnrollmentActionError("");
     setPendingEnrollmentAction(isEnrolled ? "cancel" : "enroll");
   };
 
@@ -406,6 +505,7 @@ function CourseLayout() {
     }
 
     setIsEnrolling(true);
+    setEnrollmentActionError("");
     try {
       if (pendingEnrollmentAction === "cancel") {
         await dropMyEnrollment(course.courseUuid);
@@ -418,8 +518,11 @@ function CourseLayout() {
       emitAppRefresh({ scope: "course:enrollment", courseUuid: course.courseUuid });
       emitAppRefresh({ scope: "course:catalog", courseUuid: course.courseUuid });
       setPendingEnrollmentAction(null);
+      const trigger = enrollmentActionTriggerRef.current;
+      enrollmentActionTriggerRef.current = null;
+      restoreFocus(trigger);
     } catch (error) {
-      console.error(error);
+      setEnrollmentActionError(getEnrollmentActionErrorMessage(error, pendingEnrollmentAction));
     } finally {
       setIsEnrolling(false);
     }
@@ -456,10 +559,57 @@ function CourseLayout() {
     };
   }, [isResizingChat]);
 
+  useEffect(() => {
+    if (!pendingNavTarget || !quizGuardActive || isQuizLeaving) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeQuizLeaveModal();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeQuizLeaveModal, isQuizLeaving, pendingNavTarget, quizGuardActive]);
+
+  useEffect(() => {
+    if (!pendingEnrollmentAction || isEnrolling) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeEnrollmentActionModal();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeEnrollmentActionModal, isEnrolling, pendingEnrollmentAction]);
+
   if (loading) {
     return (
       <div className="course-layout-shell course-layout-loading">
-        <div className="home-loading">Loading course...</div>
+        <div className="home-loading">正在加载课程...</div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="course-layout-shell course-layout-loading">
+        <div className="course-empty-state">
+          <strong>无法加载课程。</strong>
+          <p>{loadError}</p>
+          <Link to="/home/course-center" className="course-layout-back-link">返回课程中心
+          </Link>
+        </div>
       </div>
     );
   }
@@ -484,7 +634,7 @@ function CourseLayout() {
           type="button"
           className="course-layout-sidebar-close"
           onClick={() => setIsMobileSidebarOpen(false)}
-          aria-label="Hide course navigation"
+          aria-label="隐藏课程导航"
         >
           <LuX size={20} aria-hidden="true" />
         </button>
@@ -500,7 +650,7 @@ function CourseLayout() {
         {!isForumRoute ? (
           <div className="course-layout-summary">
             {course.courseCode ? <span className="course-surface-badge">{course.courseCode}</span> : null}
-            <h1>Course</h1>
+            <h1>课程</h1>
             <p>{course.title}</p>
           </div>
         ) : null}
@@ -508,23 +658,23 @@ function CourseLayout() {
         {isForumRoute && canAccessForum ? (
           <div className="course-layout-forum-sidebar">
             <div className="course-layout-forum-sidebar-header">
-              <h3>Switch course forums</h3>
+              <h3>切换课程论坛</h3>
             </div>
             <div className="course-layout-forum-sidebar-list">
               {forumCoursesLoading ? (
                 <div className="course-layout-forum-sidebar-empty">
-                  <strong>Loading courses...</strong>
+                  <strong>正在加载课程...</strong>
                 </div>
               ) : null}
               {!forumCoursesLoading && forumCoursesError ? (
                 <div className="course-layout-forum-sidebar-empty">
-                  <strong>Unable to load your courses.</strong>
+                  <strong>无法加载你的课程。</strong>
                   <p>{forumCoursesError}</p>
                 </div>
               ) : null}
               {!forumCoursesLoading && !forumCoursesError && forumCourses.length === 0 ? (
                 <div className="course-layout-forum-sidebar-empty">
-                  <strong>No course forums yet</strong>
+                  <strong>暂无课程论坛</strong>
                 </div>
               ) : null}
               {forumCourses.map((item) => (
@@ -544,7 +694,7 @@ function CourseLayout() {
             </div>
           </div>
         ) : (
-          <nav className="course-layout-nav" aria-label="Course navigation">
+          <nav className="course-layout-nav" aria-label="课程导航">
             <NavLink
               to={`/course/${course.courseUuid}${courseSearchSuffix}`}
               end
@@ -552,8 +702,7 @@ function CourseLayout() {
                 isActive ? "course-layout-nav-item course-layout-nav-item-active" : "course-layout-nav-item"
               }
               onClick={(e) => handleSidebarNavigation(e, `/course/${course.courseUuid}${courseSearchSuffix}`)}
-            >
-              Overview
+            >概览
             </NavLink>
 
             {canAccessForum ? (
@@ -563,8 +712,7 @@ function CourseLayout() {
                   isActive ? "course-layout-nav-item course-layout-nav-item-active" : "course-layout-nav-item"
                 }
                 onClick={(e) => handleSidebarNavigation(e, `/course/${course.courseUuid}/forum${courseSearchSuffix}`)}
-              >
-                Forum
+              >论坛
               </NavLink>
             ) : null}
 
@@ -579,7 +727,7 @@ function CourseLayout() {
                     aria-disabled="true"
                   >
                     <span>{module.title}</span>
-                    <small>{module.lockMessage ?? "Locked"}</small>
+                    <small>{module.lockMessage ?? "已锁定"}</small>
                     <strong className="course-layout-module-chevron" aria-hidden="true">
                       <LuLock size={16} />
                     </strong>
@@ -591,7 +739,7 @@ function CourseLayout() {
                       (moduleUuid === module.moduleUuid) ? " course-layout-nav-item-active" : ""
                     }${shouldShowLearnerProgress && completedModuleUuidSet.has(module.moduleUuid) ? " course-layout-nav-item-completed" : ""}`}
                     onClick={() => toggleModuleExpanded(module.moduleUuid)}
-                    aria-label={expandedModuleUuids.includes(module.moduleUuid) ? "Collapse module materials" : "Expand module materials"}
+                    aria-label={expandedModuleUuids.includes(module.moduleUuid) ? "收起模块资料" : "展开模块资料"}
                     aria-expanded={expandedModuleUuids.includes(module.moduleUuid)}
                   >
                     <span>{module.title}</span>
@@ -638,22 +786,8 @@ function CourseLayout() {
                         }
                         onClick={(e) => handleSidebarNavigation(e, `/course/${course.courseUuid}/modules/${module.moduleUuid}/quiz${courseSearchSuffix}`)}
                       >
-                        <span>{module.quizTitle ?? "Quiz"}</span>
-                        <small>quiz</small>
-                      </NavLink>
-                    )}
-                    {module.hasPublishedShortAnswer && (
-                      <NavLink
-                        to={`/course/${course.courseUuid}/modules/${module.moduleUuid}/short-answer${courseSearchSuffix}`}
-                        className={({ isActive }) =>
-                          isActive
-                            ? "course-layout-material-item course-layout-material-item-active"
-                            : "course-layout-material-item"
-                        }
-                        onClick={(e) => handleSidebarNavigation(e, `/course/${course.courseUuid}/modules/${module.moduleUuid}/short-answer${courseSearchSuffix}`)}
-                      >
-                        <span>{module.shortAnswerTitle ?? "Short-answer assessment"}</span>
-                        <small>assessment</small>
+                        <span>{module.quizTitle ?? "测验"}</span>
+                        <small>测验</small>
                       </NavLink>
                     )}
                   </div>
@@ -669,14 +803,14 @@ function CourseLayout() {
         {!isForumRoute ? (
           <header className={`course-layout-header${isChatOpen && activeModule && isMyCoursesSource ? " course-layout-header-chat-open" : ""}`}>
             <div className="course-layout-header-title-group">
-              <span className="home-topbar-label">Course Workspace</span>
+              <span className="home-topbar-label">课程工作区</span>
               <div className="course-layout-header-title-row">
                 <h2>{activeTitle}</h2>
                 <button
                   type="button"
                   className="course-layout-sidebar-toggle"
                   onClick={() => setIsMobileSidebarOpen(true)}
-                  aria-label="Show course navigation"
+                  aria-label="显示课程导航"
                   aria-expanded={isMobileSidebarOpen}
                 >
                   <LuMenu size={20} aria-hidden="true" />
@@ -690,10 +824,10 @@ function CourseLayout() {
                   >
                     {isEnrolling
                       ? isEnrolled
-                        ? "Cancelling..."
-                        : "Enrolling..."
+                        ? "正在取消..."
+                        : "报名中..."
                       : isEnrolled
-                        ? "Cancel enrollment"
+                        ? "取消报名"
                         : "Enroll"}
                   </button>
                 ) : null}
@@ -709,7 +843,7 @@ function CourseLayout() {
                   type="button"
                   className="course-chat-launcher"
                   onClick={() => setIsChatOpen((current) => !current)}
-                  aria-label={isChatOpen ? "Close chatbot" : "Open chatbot"}
+                  aria-label={isChatOpen ? "关闭聊天助手" : "打开聊天助手"}
                   aria-pressed={isChatOpen}
                 >
                   <LuBot size={20} aria-hidden="true" />
@@ -741,7 +875,7 @@ function CourseLayout() {
         <div
           className="course-confirm-modal-overlay"
           role="presentation"
-          onClick={() => setPendingNavTarget(null)}
+          onClick={closeQuizLeaveModal}
         >
           <div
             className="course-confirm-modal"
@@ -751,20 +885,19 @@ function CourseLayout() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="course-confirm-modal-header">
-              <h3 id="quiz-leave-title">Leave quiz in progress?</h3>
-              <p>Your current attempt will be submitted with answers selected so far.</p>
+              <h3 id="quiz-leave-title">要离开正在进行的测验吗？</h3>
+              <p>当前尝试会使用目前已选择的答案提交。</p>
             </div>
-            <p className="course-confirm-modal-copy">
-              Unanswered questions will be marked as incorrect. You can start a new attempt later.
+            <p className="course-confirm-modal-copy">未作答题目会被判为错误。你之后可以重新开始一次尝试。
             </p>
             <div className="course-confirm-modal-actions">
               <button
                 type="button"
                 className="course-secondary-link"
-                onClick={() => setPendingNavTarget(null)}
+                onClick={closeQuizLeaveModal}
                 disabled={isQuizLeaving}
-              >
-                Stay in quiz
+                autoFocus
+              >留在测验中
               </button>
               <button
                 type="button"
@@ -772,7 +905,7 @@ function CourseLayout() {
                 onClick={() => void handleQuizLeaveConfirm()}
                 disabled={isQuizLeaving}
               >
-                {isQuizLeaving ? "Submitting…" : "Leave and submit"}
+                {isQuizLeaving ? "提交中…" : "离开并提交"}
               </button>
             </div>
           </div>
@@ -783,7 +916,7 @@ function CourseLayout() {
         <div
           className="course-confirm-modal-overlay"
           role="presentation"
-          onClick={() => setPendingEnrollmentAction(null)}
+          onClick={closeEnrollmentActionModal}
         >
           <div
             className="course-confirm-modal"
@@ -794,25 +927,30 @@ function CourseLayout() {
           >
             <div className="course-confirm-modal-header">
               <h3 id="course-layout-enrollment-confirm-title">
-                {pendingEnrollmentAction === "cancel" ? "Cancel enrollment?" : "Enroll in this course?"}
+                {pendingEnrollmentAction === "cancel" ? "确认取消报名？" : "确认报名该课程？"}
               </h3>
               <p>{course.title}</p>
             </div>
 
             <p className="course-confirm-modal-copy">
               {pendingEnrollmentAction === "cancel"
-                ? "This course will be removed from your learner workspace until you enroll again. Your existing learning progress will be kept."
-                : "This course will be added to your learner workspace and course list."}
+                ? "该课程会从你的学习空间移除，重新报名前不可见；已有学习进度会保留。"
+                : "该课程会加入你的学习空间和课程列表。"}
             </p>
+            {enrollmentActionError ? (
+              <p className="course-confirm-modal-error" role="alert">
+                {enrollmentActionError}
+              </p>
+            ) : null}
 
             <div className="course-confirm-modal-actions">
               <button
                 type="button"
                 className="course-secondary-link"
-                onClick={() => setPendingEnrollmentAction(null)}
+                onClick={closeEnrollmentActionModal}
                 disabled={isEnrolling}
-              >
-                Back
+                autoFocus
+              >返回
               </button>
               <button
                 type="button"
@@ -822,10 +960,10 @@ function CourseLayout() {
               >
                 {isEnrolling
                   ? pendingEnrollmentAction === "cancel"
-                    ? "Cancelling..."
-                    : "Enrolling..."
+                    ? "正在取消..."
+                    : "报名中..."
                   : pendingEnrollmentAction === "cancel"
-                    ? "Cancel enrollment"
+                    ? "取消报名"
                     : "Enroll"}
               </button>
             </div>

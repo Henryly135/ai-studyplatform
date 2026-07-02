@@ -35,25 +35,25 @@ function RegisterForm({
     <>
       <form className="auth-form" onSubmit={onSubmit}>
         <AuthField
-          label="Username"
+          label="用户名"
           type="text"
           name="usrName"
-          placeholder="Enter your username"
+          placeholder="请输入用户名"
           value={form.usrName}
           onChange={onChange}
         />
 
         <AuthField
-          label="Email"
+          label="邮箱"
           type="email"
           name="email"
-          placeholder="Enter your email"
+          placeholder="请输入邮箱"
           value={form.email}
           onChange={onChange}
         />
 
         <AuthField
-          label="Password"
+          label="密码"
           type="password"
           name="password"
           placeholder={PASSWORD_HINT}
@@ -62,10 +62,10 @@ function RegisterForm({
         />
 
         <AuthField
-          label="Confirm Password"
+          label="确认密码"
           type="password"
           name="confirmPassword"
-          placeholder="Re-enter your password"
+          placeholder="请再次输入密码"
           value={form.confirmPassword}
           onChange={onChange}
         />
@@ -76,10 +76,8 @@ function RegisterForm({
             checked={agreedToTerms}
             onChange={(e) => onAgreeChange(e.target.checked)}
           />
-          <span>
-            I agree to the{" "}
-            <Link to="/terms" target="_blank" className="text-link">
-              Terms of Service
+          <span>我同意{" "}
+            <Link to="/terms" target="_blank" className="text-link">服务条款
             </Link>
           </span>
         </label>
@@ -88,14 +86,12 @@ function RegisterForm({
         {success && <AuthMessage tone="success" message={success} />}
 
         <button className="primary-btn auth-submit-btn" type="submit" disabled={loading}>
-          {loading ? "Creating account..." : "Create account"}
+          {loading ? "正在创建账号..." : "创建账号"}
         </button>
       </form>
 
-      <div className="auth-footer-links">
-        Already have an account?{" "}
-        <Link to="/login" className="text-link">
-          Log in
+      <div className="auth-footer-links">已有账号？{" "}
+        <Link to="/login" className="text-link">登录
         </Link>
       </div>
     </>

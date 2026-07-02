@@ -159,6 +159,7 @@ VALUES
     ('ai.chat.use', 'Use AI chat', 'Use learner-facing AI chatbot features'),
     ('learner_profile.manage', 'Manage learner profile', 'Create and view learner global profile settings'),
     ('quiz.attempt', 'Attempt quiz', 'Start and submit learner quiz attempts'),
+    ('ai.governance.manage', 'Manage AI governance', 'Retry AI indexing jobs and perform AI governance recovery actions'),
     ('audit_log.read', 'Read audit logs', 'View audit and login logs')
 ON DUPLICATE KEY UPDATE
     permission_name = VALUES(permission_name),
@@ -231,6 +232,7 @@ JOIN permissions p ON
         'forum.pin',
         'notification.read',
         'notification.manage',
+        'ai.governance.manage',
         'audit_log.read'
     ))
 ON DUPLICATE KEY UPDATE
@@ -246,7 +248,7 @@ INSERT INTO users (
 )
 VALUES (
     'Educator@gmail.com',
-    '8aff21bf359603d3250c021d6300519db3aea68e106ee54de66ba4a872169dcc',
+    'pbkdf2_sha256$600000$Ym9vdHN0cmFwLWVkdWNhdG9yLXYx$SVlKtRSDTm/5/2d3Kwwjq6N3042exx7vG2eZPLkrwGA=',
     'System Educator',
     'active',
     TRUE

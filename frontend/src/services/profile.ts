@@ -28,6 +28,79 @@ function getErrorMessage(data: unknown, fallback: string) {
   return fallback;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function getField(data: Record<string, unknown>, camelKey: string, snakeKey?: string) {
+  return data[camelKey] ?? (snakeKey ? data[snakeKey] : undefined);
+}
+
+function toNonNegativeNumber(value: unknown) {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : 0;
+
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
+function toNullableNonNegativeNumber(value: unknown) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : Number.NaN;
+
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function toNullableString(value: unknown) {
+  return value === null || value === undefined ? null : String(value);
+}
+
+function toBoolean(value: unknown) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function normalizeGlobalProfile(payload: unknown): GlobalProfileRead {
+  const data = asRecord(payload);
+
+  return {
+    learnerId: toNonNegativeNumber(getField(data, "learnerId", "learner_id")),
+    profileType: String(getField(data, "profileType", "profile_type") ?? "global"),
+    version: toNullableNonNegativeNumber(data.version),
+    objectKey: toNullableString(getField(data, "objectKey", "object_key")),
+    content: String(data.content ?? ""),
+    isDefaultProfile: toBoolean(getField(data, "isDefaultProfile", "is_default_profile")),
+    createdAt: toNullableString(getField(data, "createdAt", "created_at")),
+    updatedAt: toNullableString(getField(data, "updatedAt", "updated_at")),
+  };
+}
+
 export async function initializeGlobalProfile(
   payload: GlobalProfileInitRequest
 ): Promise<GlobalProfileRead> {
@@ -44,8 +117,8 @@ export async function initializeGlobalProfile(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to initialize learning profile."));
+    throw new Error(getErrorMessage(data, "初始化学习画像失败。"));
   }
 
-  return data as GlobalProfileRead;
+  return normalizeGlobalProfile(data);
 }

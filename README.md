@@ -1,42 +1,30 @@
-# AI Study Platform
+# AI 个性化学习平台
 
-AI Study Platform 是一个面向学习场景的全栈 AI 学习平台。项目采用 React + FastAPI 微服务架构，围绕课程、模块、材料、测验、论坛通知、AI 聊天、RAG 检索、学习画像和个性化学习支持构建。
+这是一个个人全栈学习平台项目，核心目标是把课程学习、教学管理、学习进度、论坛通知和 AI 辅助学习整合到一个统一系统中。
 
-该仓库已整理为个人项目版本，中文文档作为面试和讲解主入口，英文文档作为对应版本保留。
+## 功能范围
 
-English version: [README.en.md](README.en.md)
-
-## 项目亮点
-
-- 微服务后端：`identity-service`、`learning-service`、`communication-service`、`ai-service` 分离职责。
-- AI 能力：基于 Gemini、DeepSeek/OpenAI-compatible adapter、LangChain 和 pgvector 的 RAG 聊天、材料索引、测验生成、短答评估、学习画像、学习计划和教师内容草稿。
-- 学习平台核心能力：注册登录、邮箱验证、角色权限、课程管理、模块材料、学习进度、测验、论坛和站内通知。
-- 异步任务：Redis + Celery 支撑材料索引、通知、测验会话和 AI 后台流程。
-- 可本地复现：Docker Compose 一键启动 MySQL、PostgreSQL、Redis、MinIO、nginx、前端和后端服务。
-- 双语文档：中文用于面试表达，英文用于技术复盘和开源阅读。
+- 学生：注册登录、加入课程、查看课程模块和资料、完成测验、查看学习进度、使用课程上下文 AI 助手、参与课程论坛。
+- 教师：创建和管理课程、模块、资料、测验、课程发布、学生报名管理、查看教学数据和 AI 辅助信息。
+- 管理员：管理用户、角色权限、课程治理和 AI 运行状态。
+- 系统能力：JWT 鉴权、角色权限、文件上传、私有资料访问、RAG 检索、异步任务、服务健康检查、容器化部署。
 
 ## 技术栈
 
-| 层级 | 技术 |
-| --- | --- |
-| 前端 | React, Vite, TypeScript, Bootstrap |
-| 后端 | FastAPI, SQLAlchemy, Pydantic |
-| AI | Gemini API、DeepSeek/OpenAI-compatible API、LangChain、LangGraph、pgvector |
-| 数据库 | MySQL, PostgreSQL |
-| 异步任务 | Redis, Celery |
-| 文件存储 | MinIO |
-| 网关与部署 | nginx, Docker Compose, GitHub Actions |
+- 前端：React、Vite、TypeScript、React Router。
+- 后端：FastAPI 微服务。
+- 数据库：MySQL、PostgreSQL、pgvector。
+- 异步与缓存：Redis、Celery。
+- 文件存储：MinIO。
+- 网关与部署：Nginx、Docker Compose。
+- AI：Gemini、LangChain、RAG、测验生成、学习画像工作流。
 
-## 快速启动
-
-### 1. 准备环境
-
-需要安装：
+## 环境要求
 
 - Docker Desktop
 - Docker Compose v2
-- Node.js 20+（仅在本地直接运行前端时需要）
-- Python 3.11+（仅在本地直接运行后端服务时需要）
+- Node.js 20+
+- Python 3.11+
 
 检查命令：
 
@@ -47,59 +35,50 @@ node --version
 python --version
 ```
 
-### 2. 创建环境变量文件
+## 环境变量
+
+复制模板文件：
 
 ```bash
 cp .env.example .env
 ```
 
-Windows 可以使用：
+Windows 可使用：
 
-```bash
+```powershell
 copy .env.example .env
 ```
 
-`.env` 只用于本地或部署环境，不能提交到 Git。真实密钥、SMTP 密码、Gemini API Key、DeepSeek/OpenAI-compatible API Key 和数据库密码都应只写入 `.env` 或部署平台的 secret。
+注意事项：
 
-本地 demo 默认管理员账号已经写在 `.env.example` 中，方便面试官试用后台：
+- 不要提交 `.env`。
+- 真实密钥只放在本地 `.env` 或部署环境中。
+- `.env.example` 只保留占位值。
+- 生产环境需要使用 HTTPS 的 `PUBLIC_FRONTEND_URL`。
 
-```text
-Email: admin@example.com
-Password: DemoAdmin123!
-```
-
-该账号只用于本地管理后台登录；注册、邮箱验证、忘记密码和教师邀请等邮件流程，应使用真实收件邮箱配合 SMTP 测试。
-
-### 3. 修改必要配置
-
-`.env.example` 中标记 `# Have to Change` 的字段需要替换，例如：
+常用配置项：
 
 ```env
-SMTP_USER=your_ses_smtp_username
-SMTP_PASS=your_ses_smtp_password
-SMTP_FROM=your_email@example.com
+DEFAULT_ADMIN_EMAIL=your.project.email@gmail.com
+DEFAULT_ADMIN_PASSWORD=your-system-admin-password
+DEFAULT_ADMIN_FULL_NAME='System Admin'
+
 GEMINI_API_KEY=your_gemini_api_key
+
+SMTP_HOST=email-smtp.ap-southeast-2.amazonaws.com
+SMTP_PORT=587
+SMTP_USER=your_smtp_username
+SMTP_PASS=your_smtp_password
+SMTP_FROM=your_verified_sender_email
+SMTP_TLS=true
+PUBLIC_FRONTEND_URL=https://your-learning-platform.example.com
 ```
 
-AI chat provider 可通过统一 adapter 在 Gemini 和 DeepSeek/OpenAI-compatible 服务之间切换：
+数据库和端口配置请以 `.env.example` 为准。如果本机已经占用 `3306` 或 `5432`，可以在 `.env` 中调整外部映射端口。
 
-```env
-AI_CHAT_PROVIDER=deepseek
-AI_CHAT_BASE_URL=https://api.deepseek.com
-AI_CHAT_MODEL=deepseek-chat
-AI_CHAT_API_KEY=your_local_deepseek_key
-DEEPSEEK_API_KEY=your_local_deepseek_key
-```
+## 本地启动
 
-Gemini 仍是默认 provider，并兼容 `GEMINI_API_KEY`。DeepSeek/OpenRouter 等 OpenAI-compatible chat provider 使用 `AI_CHAT_PROVIDER`、`AI_CHAT_BASE_URL`、`AI_CHAT_MODEL` 和 `AI_CHAT_API_KEY`；embedding 目前仍使用独立的 Gemini embedding 配置，切换 embedding provider 前需要新增对应 adapter 并重新索引材料。CI 使用空 key 或 mock，不需要真实 AI provider key。
-
-如果部署到公网环境，请同时修改默认管理员邮箱、密码和姓名。
-
-如果本机端口冲突，可以修改 `.env` 中的外部端口，例如 `MYSQL_PORT`、`AI_DB_EXTERNAL_PORT`、`FRONTEND_PORT` 和 `NGINX_PORT`。
-
-### 4. 启动完整系统
-
-从仓库根目录运行：
+在项目根目录执行：
 
 ```bash
 docker compose --env-file .env -f infra/docker-compose.yml down -v --remove-orphans
@@ -113,74 +92,80 @@ docker compose --env-file .env -f infra/docker-compose.yml ps
 http://localhost:8080
 ```
 
-健康检查：
+如果端口配置被修改，请以 `infra/docker-compose.yml` 和 `.env` 中的映射为准。
 
-```bash
-curl http://127.0.0.1:${NGINX_PORT}/api/health
-curl http://127.0.0.1:${NGINX_PORT}/api/learning/health
-curl http://127.0.0.1:${NGINX_PORT}/api/communication/health
-curl http://127.0.0.1:${NGINX_PORT}/api/ai/health
-```
+## 服务组成
+
+Docker Compose 本地环境包含：
+
+- `frontend`：React 前端。
+- `nginx`：统一网关。
+- `identity-service`：用户、认证、角色和权限服务。
+- `learning-service`：课程、模块、资料、测验和学习进度服务。
+- `communication-service`：论坛和通知服务。
+- `ai-service`：AI 对话、RAG、资料索引和 AI 工作流服务。
+- `communication-worker`：通知异步任务。
+- `learning-worker`：测验和学习相关异步任务。
+- `ai-worker`：资料索引和 AI 异步任务。
+- `mysql`：身份、学习和通信数据。
+- `postgres-ai`：AI 数据和向量检索。
+- `redis`：Celery broker 和结果存储。
+- `redis-quiz`：测验会话状态。
+- `minio`：学习资料对象存储。
 
 ## 项目结构
 
 ```text
-.
-├─ frontend/                       # React + Vite 前端
+repo/
+├─ frontend/                       # React + Vite + TypeScript 前端
 ├─ services/
-│  ├─ identity-service/            # 认证、用户、角色权限
-│  ├─ learning-service/            # 课程、模块、材料、测验、学习进度
-│  ├─ communication-service/       # 论坛、评论、站内通知
-│  └─ ai-service/                  # AI 聊天、RAG、材料索引、学习画像
-├─ packages/platform_common/       # 后端服务共享工具包
-├─ database/                       # schema、迁移、初始化和示例数据
-├─ infra/                          # Docker Compose 与 nginx
-├─ scripts/                        # 测试、部署和运维脚本
-├─ docs/                           # 双语项目文档
-└─ .github/workflows/              # CI/CD workflow
+│  ├─ identity-service/            # 身份认证服务
+│  ├─ communication-service/       # 论坛和通知服务
+│  ├─ learning-service/            # 课程、模块、资料和测验服务
+│  └─ ai-service/                  # AI 对话、RAG 和索引服务
+├─ packages/
+│  └─ platform_common/             # Python 服务共享包
+├─ database/
+│  ├─ schema.*.sql                 # MySQL 初始化 schema
+│  ├─ ai-init/                     # PostgreSQL / pgvector 初始化脚本
+│  ├─ migrations/                  # 增量迁移
+│  ├─ mysql-apply/                 # MySQL 初始化辅助脚本
+│  └─ seed/                        # 本地示例数据
+├─ infra/
+│  ├─ docker-compose.yml           # 本地容器编排
+│  └─ nginx/                       # 网关配置
+├─ storage/
+│  └─ learning-materials/          # 本地资料挂载目录
+├─ scripts/                        # 运维和测试脚本
+├─ docs/                           # API、架构、运维和图表文档
+│  ├─ api/
+│  ├─ architecture/
+│  ├─ operations/
+│  └─ diagrams/
+├─ .env.example
+└─ README.md
 ```
 
-## 文档入口
+## 数据库初始化
 
-- [文档索引](docs/README.md)
-- [项目需求](docs/project-requirements.md)
-- [后续开发路线图](docs/roadmap.md)
-- [系统架构](docs/architecture/README.md)
-- [API 概览](docs/api/README.md)
-- [部署与配置](docs/deployment/README.md)
-- [测试指南](docs/testing/README.md)
+首次启动时，MySQL schema 由 `mysql-schema-apply` 应用：
 
-## 面试讲解路线
+- `database/schema.identity.sql`
+- `database/schema.communication.sql`
+- `database/schema.learning.sql`
 
-建议按下面顺序介绍本项目，能同时覆盖业务价值、系统设计和个人后续开发计划：
+PostgreSQL 和 pgvector 初始化由 `postgres-schema-apply` 应用：
 
-1. **项目定位**：这是一个 AI 个性化学习平台，核心用户是学生、教师和管理员。
-2. **业务闭环**：教师创建课程和模块，上传材料并发布；学生报名课程、学习材料、完成测验和论坛互动；系统通过通知和进度记录连接学习过程。
-3. **AI 能力**：材料被索引到 PostgreSQL + pgvector，聊天和测验生成通过 RAG 检索课程上下文，再由 Gemini/LangChain 生成 grounded response。
-4. **微服务架构**：identity、learning、communication、ai 四个 FastAPI 服务通过 nginx 统一暴露 API，内部使用 MySQL、PostgreSQL、Redis、MinIO 和 Celery。
-5. **质量与部署**：Docker Compose 可以复现完整运行环境，GitHub Actions 覆盖前端构建、后端测试和基础设施检查。
-6. **已完成扩展**：AI Provider Adapter、学生端 Study Planner、教师端 AI 测验草稿、短答题评估、教师学习分析和教师端 AI 内容草稿已经形成可演示闭环。
+- `database/ai-init/`
 
-可重点展开的技术点：
-
-- RAG 索引链路：文件解析、chunk、embedding、向量检索、prompt grounding。
-- 学习画像更新：从测验和聊天信号中提取学习状态，用于反馈和推荐。
-- 权限与网关：JWT + RBAC + nginx 路由隔离公共 API 和内部 API。
-- 异步任务：Celery 处理材料索引、通知、AI workflow 和测验会话。
-
-## 常用开发命令
-
-后端测试：
+如果需要重建本地数据卷：
 
 ```bash
-./scripts/run-backend-tests.sh
+docker compose --env-file .env -f infra/docker-compose.yml down -v
+docker compose --env-file .env -f infra/docker-compose.yml up -d --build
 ```
 
-后端覆盖率：
-
-```bash
-./scripts/backend-coverage.sh
-```
+## 测试与检查
 
 前端：
 
@@ -188,26 +173,32 @@ curl http://127.0.0.1:${NGINX_PORT}/api/ai/health
 cd frontend
 npm ci
 npm run lint
+npm test -- --run
 npm run build
 ```
 
-Docker 配置校验：
+后端：
 
 ```bash
-docker compose --env-file .env.example -f infra/docker-compose.yml config
+./scripts/run-backend-tests.sh
 ```
 
-## 当前状态与后续方向
+Docker Compose 配置检查：
 
-当前个人项目版本已完成：
+```bash
+docker compose --env-file .env -f infra/docker-compose.yml config
+```
 
-- AI Provider Adapter，支持 Gemini 与 DeepSeek/OpenAI-compatible chat provider。
-- 学生端个性化 Study Planner。
-- 教师端 AI 测验草稿生成与人工审核。
-- 短答题评估、AI 建议反馈和教师复核。
-- 教师端学习分析 Dashboard。
-- 教师端 AI 内容草稿生成、编辑和保存。
+## 文档
 
-后续会继续增强 AI 输出安全层、来源引用、结构化校验、embedding provider 扩展和生产级观测能力。
+- `docs/api/`：各服务 API 说明。
+- `docs/architecture/`：架构和服务边界说明。
+- `docs/operations/`：CI/CD、后端运行和测试说明。
+- `docs/diagrams/`：系统图、ER 图和工作流图。
 
-详细计划见 [docs/roadmap.md](docs/roadmap.md)。
+## 安全说明
+
+- `.env`、真实密钥、访问令牌、验证码和私有凭证不得提交到 Git。
+- 生产环境必须配置强 JWT 密钥、内部服务密钥、数据库密码和 HTTPS 前端地址。
+- 学习资料通过私有 MinIO bucket 和后端授权接口访问。
+- 后端权限校验是安全边界，前端隐藏入口只作为用户体验优化。
