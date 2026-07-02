@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
+import { LuX } from "react-icons/lu";
 
 import DraggableModuleCard from "../../components/course-management/DraggableModuleCard";
 import { deleteManagedModule, reorderCourseModules } from "../../services/course";
@@ -24,6 +25,7 @@ function CourseManagementModulesPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [deletingModuleUuid, setDeletingModuleUuid] = useState<string | null>(null);
+  const [pendingModuleDelete, setPendingModuleDelete] = useState<CourseModule | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const sortedModules = useMemo(
@@ -53,6 +55,24 @@ function CourseManagementModulesPage() {
       window.clearTimeout(timer);
     };
   }, [saveSuccess]);
+
+  useEffect(() => {
+    if (!pendingModuleDelete) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !deletingModuleUuid) {
+        setPendingModuleDelete(null);
+        setDeleteError(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [deletingModuleUuid, pendingModuleDelete]);
 
   const persistModuleOrder = async (nextModules = sortedModules) => {
     setIsSavingOrder(true);
@@ -117,21 +137,37 @@ function CourseManagementModulesPage() {
     resetDragState();
   };
 
-  const handleModuleDelete = async (module: CourseModule) => {
-    const confirmed = window.confirm(
-      `Delete "${module.title}"? This will permanently remove the module and its materials.`
-    );
-    if (!confirmed || deletingModuleUuid || isSavingOrder) {
+  const openModuleDelete = (module: CourseModule) => {
+    if (deletingModuleUuid || isSavingOrder) {
       return;
     }
 
-    setDeletingModuleUuid(module.moduleUuid);
+    setDeleteError(null);
+    setPendingModuleDelete(module);
+  };
+
+  const closeModuleDelete = () => {
+    if (deletingModuleUuid) {
+      return;
+    }
+
+    setPendingModuleDelete(null);
+    setDeleteError(null);
+  };
+
+  const handleModuleDelete = async () => {
+    if (!pendingModuleDelete || deletingModuleUuid || isSavingOrder) {
+      return;
+    }
+
+    setDeletingModuleUuid(pendingModuleDelete.moduleUuid);
     setDeleteError(null);
     setSaveError(null);
 
     try {
-      await deleteManagedModule(course.courseUuid, module.moduleUuid);
+      await deleteManagedModule(course.courseUuid, pendingModuleDelete.moduleUuid);
       await refreshCourse();
+      setPendingModuleDelete(null);
     } catch (error) {
       setDeleteError(error instanceof Error ? error.message : "Failed to delete module.");
     } finally {
@@ -143,35 +179,28 @@ function CourseManagementModulesPage() {
     <section className="course-management-page">
       {saveSuccess ? (
         <div className="course-management-toast course-management-toast-success" role="status" aria-live="polite">
-          <strong>Success</strong>
+          <strong>成功</strong>
           <span>{saveSuccess}</span>
         </div>
       ) : null}
 
       <div className="course-management-section-heading">
         <div>
-          <span className="course-surface-badge">Modules</span>
-          <h1>Learning Paths & Modules</h1>
-          <p>Drag and drop modules to change the learning sequence, then save the new order back to the course.</p>
+          <span className="course-surface-badge">模块</span>
+          <h1>学习路径与模块</h1>
+          <p>拖放模块以调整学习顺序，然后将新顺序保存到课程。</p>
         </div>
       </div>
 
       <div className="course-management-toolbar">
-        <strong>{sortedModules.length} modules</strong>
-        <span>{isSavingOrder ? "Saving new order..." : "Drag cards by the handle to reorder modules."}</span>
+        <strong>{sortedModules.length} 个模块</strong>
+        <span>{isSavingOrder ? "正在保存新顺序..." : "拖动卡片把手即可调整模块顺序。"}</span>
       </div>
 
       {saveError ? (
         <div className="course-management-inline-alert">
-          <strong>Unable to save module order.</strong>
+          <strong>无法保存模块顺序。</strong>
           <span>{saveError}</span>
-        </div>
-      ) : null}
-
-      {deleteError ? (
-        <div className="course-management-inline-alert">
-          <strong>Unable to delete module.</strong>
-          <span>{deleteError}</span>
         </div>
       ) : null}
 
@@ -194,7 +223,7 @@ function CourseManagementModulesPage() {
                 <button
                   type="button"
                   className="course-management-action-button course-management-action-button-danger"
-                  onClick={() => void handleModuleDelete(module)}
+                  onClick={() => openModuleDelete(module)}
                   disabled={isSavingOrder || deletingModuleUuid !== null}
                 >
                   {deletingModuleUuid === module.moduleUuid ? "Deleting..." : "Delete module"}
@@ -204,17 +233,79 @@ function CourseManagementModulesPage() {
           ))
         ) : (
           <div className="course-empty-state">
-            <strong>No modules yet</strong>
-            <p>This course does not have module records yet.</p>
+            <strong>暂无模块</strong>
+            <p>这门课程还没有模块记录。</p>
           </div>
         )}
 
         <Link to={`/course/${course.courseUuid}/management/modules/new${managementSearchSuffix}`} className="course-management-create-module-card">
           <span className="course-management-create-module-plus" aria-hidden="true" />
-          <strong>Create new module</strong>
-          <p>Add a new module to the learning path and open the authoring form right away.</p>
+          <strong>创建新模块</strong>
+          <p>向学习路径添加新模块，并立即打开编写表单。</p>
         </Link>
       </div>
+
+      {pendingModuleDelete ? (
+        <div className="course-management-modal-overlay" role="presentation">
+          <div
+            className="course-management-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-module-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="course-management-modal-header">
+              <div>
+                <span className="course-surface-badge">删除模块</span>
+                <h3 id="delete-module-title">删除这个模块？</h3>
+                <p className="course-management-modal-status">这将永久删除该模块及其资料。
+                </p>
+              </div>
+              <button
+                type="button"
+                className="course-management-modal-close"
+                onClick={closeModuleDelete}
+                aria-label="关闭删除模块窗口"
+                disabled={deletingModuleUuid !== null}
+              >
+                <LuX size={18} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="course-management-form course-management-form-single">
+              <div className="course-management-inline-alert course-management-field-full">
+                <strong>{pendingModuleDelete.title}</strong>
+                <span>删除该模块后无法撤销。</span>
+              </div>
+
+              {deleteError ? (
+                <div className="course-management-inline-alert course-management-field-full">
+                  <strong>无法删除模块。</strong>
+                  <span>{deleteError}</span>
+                </div>
+              ) : null}
+
+              <div className="course-management-form-actions course-management-field-full">
+                <button
+                  type="button"
+                  className="course-management-action-button"
+                  onClick={closeModuleDelete}
+                  disabled={deletingModuleUuid !== null}
+                >保留模块
+                </button>
+                <button
+                  type="button"
+                  className="course-management-action-button course-management-action-button-danger"
+                  onClick={() => void handleModuleDelete()}
+                  disabled={deletingModuleUuid !== null}
+                >
+                  {deletingModuleUuid ? "Deleting..." : "永久删除"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

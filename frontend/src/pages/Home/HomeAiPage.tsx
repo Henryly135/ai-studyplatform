@@ -1,13 +1,105 @@
-import { useEffect, useMemo, useState } from "react";
-import { LuArrowLeft } from "react-icons/lu";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import { Link, useOutletContext } from "react-router-dom";
+import { LuArrowLeft, LuDownload, LuRefreshCw, LuSearch } from "react-icons/lu";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { getChatSessionDetail, listChatSessions } from "../../services/chat";
-import { getCourses } from "../../services/course";
-import type { ChatSessionDetail, ChatSessionSummary } from "../../types/chat";
-import type { CourseRecord } from "../../types/course";
+import { getAdminUsers } from "../../services/admin";
+import {
+  getAdminAiGovernance,
+  getAdminAiProviderConfig,
+  getAdminAiProviderHealth,
+  getAdminAiTelemetryAnomalies,
+  getAdminAiTelemetrySummary,
+  getAdminAiTelemetryTrends,
+  getAiRuntimeHealth,
+  exportAdminAiTelemetryFailures,
+  getChatSessionDetail,
+  listChatSessions,
+  retryAdminAiIndexJob,
+  searchAdminAiTelemetryFailures,
+} from "../../services/chat";
+import {
+  getEducatorAnalytics,
+  getEducatorMaterialBriefs,
+  getEducatorQuizAnalytics,
+  getEducatorTeachingInsights,
+  getManagedCourses,
+  getMyEnrolledCourses,
+} from "../../services/course";
+import type { AdminUserResponse } from "../../types/admin";
+import type {
+  AdminAiGovernance,
+  AdminAiProviderConfig,
+  AdminAiProviderHealth,
+  AdminAiTelemetryAnomalyInsight,
+  AdminAiTelemetryFailureItem,
+  AdminAiTelemetryFailureFilters,
+  AdminAiTelemetrySummary,
+  AdminAiTelemetryTrendPoint,
+  AiRuntimeHealth,
+  ChatSessionDetail,
+  ChatSessionSummary,
+} from "../../types/chat";
+import type {
+  CourseRecord,
+  EducatorAnalytics,
+  EducatorMaterialBriefItem,
+  EducatorMaterialBriefs,
+  EducatorQuizAnalytics,
+  EducatorTeachingInsights,
+  TeachingInsightItem,
+} from "../../types/course";
+import type { HomeOutletContext } from "./HomeSectionPage";
 import "./HomePage.css";
+
+type RoleAiDashboardState = {
+  managedCourses: CourseRecord[];
+  educatorAnalytics: EducatorAnalytics | null;
+  quizAnalytics: EducatorQuizAnalytics | null;
+  teachingInsights: EducatorTeachingInsights | null;
+  materialBriefs: EducatorMaterialBriefs | null;
+  adminUsers: AdminUserResponse[];
+  aiHealth: AiRuntimeHealth | null;
+  aiHealthError: string | null;
+  aiGovernance: AdminAiGovernance | null;
+  aiProviderConfig: AdminAiProviderConfig | null;
+  aiProviderHealth: AdminAiProviderHealth | null;
+  aiTelemetry: AdminAiTelemetrySummary | null;
+  aiTrends: AdminAiTelemetryTrendPoint[];
+  aiAnomalies: AdminAiTelemetryAnomalyInsight[];
+  aiFailures: AdminAiTelemetryFailureItem[];
+};
+
+const EMPTY_ROLE_AI_DASHBOARD: RoleAiDashboardState = {
+  managedCourses: [],
+  educatorAnalytics: null,
+  quizAnalytics: null,
+  teachingInsights: null,
+  materialBriefs: null,
+  adminUsers: [],
+  aiHealth: null,
+  aiHealthError: null,
+  aiGovernance: null,
+  aiProviderConfig: null,
+  aiProviderHealth: null,
+  aiTelemetry: null,
+  aiTrends: [],
+  aiAnomalies: [],
+  aiFailures: [],
+};
+
+const DEFAULT_ADMIN_FAILURE_FILTERS: AdminAiTelemetryFailureFilters = {
+  limit: 20,
+  kind: "",
+  status: "",
+  userId: "",
+  courseId: "",
+  moduleId: "",
+  since: "",
+  until: "",
+};
 
 function formatSessionTimestamp(value: string | null) {
   if (!value) {
@@ -27,7 +119,86 @@ function formatSessionTimestamp(value: string | null) {
   }).format(timestamp);
 }
 
+function formatTrendDate(value: string) {
+  const timestamp = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(timestamp.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-AU", {
+    month: "short",
+    day: "numeric",
+  }).format(timestamp);
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en-AU").format(value);
+}
+
+function formatCompactNumber(value: number) {
+  return new Intl.NumberFormat("en-AU", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+function formatPercent(value: number | null | undefined) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "0%";
+  }
+  return `${Math.round(value)}%`;
+}
+
+function formatLatency(value: number | null | undefined) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "No latency";
+  }
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}s`;
+  }
+  return `${Math.round(value)}ms`;
+}
+
+function formatTrendDelta(recent: number, previous: number) {
+  if (previous === 0) {
+    return recent > 0 ? "new activity" : "flat vs previous 7d";
+  }
+
+  const delta = ((recent - previous) / previous) * 100;
+  if (Math.abs(delta) < 1) {
+    return "flat vs previous 7d";
+  }
+
+  return `${delta > 0 ? "+" : ""}${Math.round(delta)}% vs previous 7d`;
+}
+
+function normalizeStatus(value: string | undefined | null) {
+  return value?.trim().toLowerCase() || "unknown";
+}
+
+function countCourseModules(course: CourseRecord) {
+  return course.moduleCount ?? course.modules.length;
+}
+
+function countCourseMaterials(course: CourseRecord) {
+  return course.modules.reduce((total, module) => total + module.materials.length, 0);
+}
+
+function countCoursePublishedQuizzes(course: CourseRecord) {
+  return course.modules.reduce((total, module) => total + (module.hasPublishedQuiz ? 1 : 0), 0);
+}
+
+function sumTrend(
+  points: AdminAiTelemetryTrendPoint[],
+  selector: (point: AdminAiTelemetryTrendPoint) => number
+) {
+  return points.reduce((total, point) => total + selector(point), 0);
+}
+
+function getLearnerAiModulePath(courseUuid: string, moduleUuid: string) {
+  return `/course/${courseUuid}/modules/${moduleUuid}?from=my-courses&openChat=1`;
+}
+
 function HomeAiPage() {
+  const { currentUser } = useOutletContext<HomeOutletContext>();
+  const isLearner = currentUser.identity === "Learner";
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
   const [courses, setCourses] = useState<CourseRecord[]>([]);
   const [activeSession, setActiveSession] = useState<ChatSessionDetail | null>(null);
@@ -35,8 +206,22 @@ function HomeAiPage() {
   const [detailErrorMessage, setDetailErrorMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [coursesErrorMessage, setCoursesErrorMessage] = useState<string | null>(null);
+  const [roleDashboard, setRoleDashboard] = useState<RoleAiDashboardState>(EMPTY_ROLE_AI_DASHBOARD);
+  const [roleDashboardLoading, setRoleDashboardLoading] = useState(!isLearner);
+  const [roleDashboardError, setRoleDashboardError] = useState<string | null>(null);
+  const [failureFilters, setFailureFilters] = useState<AdminAiTelemetryFailureFilters>(DEFAULT_ADMIN_FAILURE_FILTERS);
+  const [failureAuditLoading, setFailureAuditLoading] = useState(false);
+  const [failureAuditError, setFailureAuditError] = useState<string | null>(null);
+  const [failureAuditNotice, setFailureAuditNotice] = useState<string | null>(null);
+  const [failureAuditExporting, setFailureAuditExporting] = useState(false);
+  const [retryingIndexJobId, setRetryingIndexJobId] = useState<number | null>(null);
 
   useEffect(() => {
+    if (!isLearner) {
+      return;
+    }
+
     let cancelled = false;
 
     void listChatSessions()
@@ -47,7 +232,7 @@ function HomeAiPage() {
       })
       .catch((error) => {
         if (!cancelled) {
-          setErrorMessage(error instanceof Error ? error.message : "Failed to load AI sessions.");
+          setErrorMessage(error instanceof Error ? error.message : "智能会话加载失败。");
         }
       })
       .finally(() => {
@@ -59,27 +244,289 @@ function HomeAiPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isLearner]);
 
   useEffect(() => {
+    if (isLearner) {
+      return;
+    }
+
     let cancelled = false;
 
-    void getCourses()
+    async function loadRoleDashboard() {
+      setRoleDashboardLoading(true);
+      setRoleDashboardError(null);
+
+      const nextDashboard: RoleAiDashboardState = { ...EMPTY_ROLE_AI_DASHBOARD };
+      const errors: string[] = [];
+
+      const [managedCoursesResult, aiHealthResult] = await Promise.allSettled([
+        getManagedCourses({ page: 1, pageSize: 100 }),
+        getAiRuntimeHealth(),
+      ]);
+
+      if (managedCoursesResult.status === "fulfilled") {
+        nextDashboard.managedCourses = managedCoursesResult.value.items;
+      } else {
+        errors.push(
+          managedCoursesResult.reason instanceof Error
+            ? managedCoursesResult.reason.message
+            : "Failed to load managed courses."
+        );
+      }
+
+      if (aiHealthResult.status === "fulfilled") {
+        nextDashboard.aiHealth = aiHealthResult.value;
+      } else {
+        nextDashboard.aiHealthError =
+          aiHealthResult.reason instanceof Error
+            ? aiHealthResult.reason.message
+            : "智能服务健康状态不可用。";
+      }
+
+      if (currentUser.identity === "Educator") {
+        const [analyticsResult, quizAnalyticsResult, teachingInsightsResult, materialBriefsResult] = await Promise.allSettled([
+          getEducatorAnalytics(),
+          getEducatorQuizAnalytics(),
+          getEducatorTeachingInsights(),
+          getEducatorMaterialBriefs(),
+        ]);
+
+        if (analyticsResult.status === "fulfilled") {
+          nextDashboard.educatorAnalytics = analyticsResult.value;
+        } else {
+          errors.push(
+            analyticsResult.reason instanceof Error
+              ? analyticsResult.reason.message
+              : "Failed to load educator analytics."
+          );
+        }
+
+        if (quizAnalyticsResult.status === "fulfilled") {
+          nextDashboard.quizAnalytics = quizAnalyticsResult.value;
+        } else {
+          errors.push(
+            quizAnalyticsResult.reason instanceof Error
+              ? quizAnalyticsResult.reason.message
+              : "Failed to load quiz analytics."
+          );
+        }
+
+        if (teachingInsightsResult.status === "fulfilled") {
+          nextDashboard.teachingInsights = teachingInsightsResult.value;
+        } else {
+          errors.push(
+            teachingInsightsResult.reason instanceof Error
+              ? teachingInsightsResult.reason.message
+              : "Failed to load teaching insights."
+          );
+        }
+
+        if (materialBriefsResult.status === "fulfilled") {
+          nextDashboard.materialBriefs = materialBriefsResult.value;
+        } else {
+          errors.push(
+            materialBriefsResult.reason instanceof Error
+              ? materialBriefsResult.reason.message
+              : "Failed to load material briefs."
+          );
+        }
+      }
+
+      if (currentUser.identity === "Admin") {
+        const [
+          usersResult,
+          governanceResult,
+          providerConfigResult,
+          providerHealthResult,
+          telemetryResult,
+          trendsResult,
+          anomaliesResult,
+          failuresResult,
+        ] = await Promise.allSettled([
+          getAdminUsers(""),
+          getAdminAiGovernance(),
+          getAdminAiProviderConfig(),
+          getAdminAiProviderHealth(14),
+          getAdminAiTelemetrySummary(),
+          getAdminAiTelemetryTrends(14),
+          getAdminAiTelemetryAnomalies(14),
+          searchAdminAiTelemetryFailures(DEFAULT_ADMIN_FAILURE_FILTERS),
+        ]);
+
+        if (usersResult.status === "fulfilled") {
+          nextDashboard.adminUsers = usersResult.value.users;
+        } else {
+          errors.push(
+            usersResult.reason instanceof Error
+              ? usersResult.reason.message
+            : "Failed to load platform users."
+          );
+        }
+
+        if (governanceResult.status === "fulfilled") {
+          nextDashboard.aiGovernance = governanceResult.value;
+        } else {
+          errors.push(
+            governanceResult.reason instanceof Error
+              ? governanceResult.reason.message
+              : "智能治理摘要加载失败。"
+          );
+        }
+
+        if (providerConfigResult.status === "fulfilled") {
+          nextDashboard.aiProviderConfig = providerConfigResult.value;
+        } else {
+          errors.push(
+            providerConfigResult.reason instanceof Error
+              ? providerConfigResult.reason.message
+              : "智能服务配置加载失败。"
+          );
+        }
+
+        if (providerHealthResult.status === "fulfilled") {
+          nextDashboard.aiProviderHealth = providerHealthResult.value;
+        } else {
+          errors.push(
+            providerHealthResult.reason instanceof Error
+              ? providerHealthResult.reason.message
+              : "智能服务健康状态加载失败。"
+          );
+        }
+
+        if (telemetryResult.status === "fulfilled") {
+          nextDashboard.aiTelemetry = telemetryResult.value;
+        } else {
+          errors.push(
+            telemetryResult.reason instanceof Error
+              ? telemetryResult.reason.message
+              : "智能服务遥测加载失败。"
+          );
+        }
+
+        if (trendsResult.status === "fulfilled") {
+          nextDashboard.aiTrends = trendsResult.value.items;
+        } else {
+          errors.push(
+            trendsResult.reason instanceof Error
+              ? trendsResult.reason.message
+              : "智能服务趋势加载失败。"
+          );
+        }
+
+        if (anomaliesResult.status === "fulfilled") {
+          nextDashboard.aiAnomalies = anomaliesResult.value.items;
+        } else {
+          errors.push(
+            anomaliesResult.reason instanceof Error
+              ? anomaliesResult.reason.message
+              : "智能服务异常洞察加载失败。"
+          );
+        }
+
+        if (failuresResult.status === "fulfilled") {
+          nextDashboard.aiFailures = failuresResult.value.items;
+        } else {
+          errors.push(
+            failuresResult.reason instanceof Error
+              ? failuresResult.reason.message
+              : "智能服务失败审计加载失败。"
+          );
+        }
+      }
+
+      if (!cancelled) {
+        setRoleDashboard(nextDashboard);
+        setRoleDashboardError(errors.length > 0 ? errors.join(" ") : null);
+        setRoleDashboardLoading(false);
+      }
+    }
+
+    void loadRoleDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser.identity, isLearner]);
+
+  const loadFailureAudit = useCallback(
+    async (filters: AdminAiTelemetryFailureFilters = failureFilters) => {
+      if (currentUser.identity !== "Admin") return;
+      setFailureAuditLoading(true);
+      setFailureAuditError(null);
+      setFailureAuditNotice(null);
+      try {
+        const response = await searchAdminAiTelemetryFailures(filters);
+        setRoleDashboard((current) => ({
+          ...current,
+          aiFailures: response.items,
+        }));
+      } catch (error) {
+        setFailureAuditError(error instanceof Error ? error.message : "智能服务失败审计加载失败。");
+      } finally {
+        setFailureAuditLoading(false);
+      }
+    },
+    [currentUser.identity, failureFilters]
+  );
+
+  useEffect(() => {
+    if (!isLearner) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void getMyEnrolledCourses()
       .then((data) => {
         if (!cancelled) {
-          setCourses(data.items);
+          setCourses(data);
+          setCoursesErrorMessage(null);
         }
       })
-      .catch(() => {
+      .catch((error) => {
         if (!cancelled) {
           setCourses([]);
+          setCoursesErrorMessage(
+            error instanceof Error ? error.message : "课程上下文加载失败。"
+          );
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isLearner]);
+
+  const workspaceCopy = useMemo(() => {
+    if (currentUser.identity === "Educator") {
+      return {
+        badge: "教师智能助手",
+        title: "教学智能工作区",
+        body: "查看课程、资料、测验和学生信号是否已准备好支持教学流程。",
+        primaryTitle: "教学准备度",
+        secondaryTitle: "智能服务运行状态",
+      };
+    }
+
+    if (currentUser.identity === "Admin") {
+      return {
+        badge: "管理员智能治理",
+        title: "智能治理",
+        body: "面向管理员查看平台智能能力准备度、用户覆盖率和存储/安全信号。",
+        primaryTitle: "治理快照",
+        secondaryTitle: "智能服务运行状态",
+      };
+    }
+
+    return {
+      badge: "智能助手",
+      title: "智能工作区",
+      body: "查看课程聊天会话，并基于课程上下文继续学习。",
+      primaryTitle: "全部会话",
+      secondaryTitle: "模块推荐",
+    };
+  }, [currentUser.identity]);
 
   const courseTitleMap = useMemo(() => {
     const courseTitles = new Map<string, string>();
@@ -90,6 +537,134 @@ function HomeAiPage() {
 
     return courseTitles;
   }, [courses]);
+
+  const learnerAiModuleEntries = useMemo(
+    () =>
+      courses
+        .flatMap((course) =>
+          course.modules
+            .filter((module) => module.status === "available" && !module.isLocked)
+            .map((module) => ({ course, module }))
+        )
+        .slice(0, 6),
+    [courses]
+  );
+
+  const educatorDashboard = useMemo(() => {
+    const managedCourses = roleDashboard.managedCourses;
+    const totalMaterials = managedCourses.reduce((total, course) => total + countCourseMaterials(course), 0);
+    const publishedQuizzesFromCourses = managedCourses.reduce(
+      (total, course) => total + countCoursePublishedQuizzes(course),
+      0
+    );
+    const quizModules = roleDashboard.quizAnalytics?.items.length ?? publishedQuizzesFromCourses;
+
+    return {
+      totalCourses: roleDashboard.educatorAnalytics?.totalCourses ?? managedCourses.length,
+      publishedCourses: managedCourses.filter((course) => normalizeStatus(course.status) === "published").length,
+      draftCourses: managedCourses.filter((course) => normalizeStatus(course.status) === "draft").length,
+      totalModules: managedCourses.reduce((total, course) => total + countCourseModules(course), 0),
+      totalMaterials,
+      quizModules,
+      totalEnrollments: roleDashboard.educatorAnalytics?.totalEnrollments ?? 0,
+      activeEnrollments: roleDashboard.educatorAnalytics?.totalActiveEnrollments ?? 0,
+      completedEnrollments: roleDashboard.educatorAnalytics?.totalCompletedEnrollments ?? 0,
+      averageProgress:
+        roleDashboard.educatorAnalytics && roleDashboard.educatorAnalytics.courses.length > 0
+          ? roleDashboard.educatorAnalytics.courses.reduce(
+              (total, course) => total + (course.avgProgressPercent ?? 0),
+              0
+            ) / roleDashboard.educatorAnalytics.courses.length
+          : null,
+    };
+  }, [roleDashboard]);
+
+  const adminDashboard = useMemo(() => {
+    const managedCourses = roleDashboard.managedCourses;
+    const users = roleDashboard.adminUsers;
+
+    return {
+      totalCourses: managedCourses.length,
+      publishedCourses: managedCourses.filter((course) => normalizeStatus(course.status) === "published").length,
+      draftCourses: managedCourses.filter((course) => normalizeStatus(course.status) === "draft").length,
+      totalModules: managedCourses.reduce((total, course) => total + countCourseModules(course), 0),
+      totalMaterials: managedCourses.reduce((total, course) => total + countCourseMaterials(course), 0),
+      totalUsers: users.length,
+      learners: users.filter((user) => user.identity === "Learner").length,
+      educators: users.filter((user) => user.identity === "Educator").length,
+      admins: users.filter((user) => user.identity === "Admin").length,
+      inactiveUsers: users.filter((user) => user.accountStatus !== "active").length,
+      aiPromptCalls: roleDashboard.aiTelemetry?.promptCalls.total ?? 0,
+      aiPromptFailures:
+        (roleDashboard.aiTelemetry?.promptCalls.failed ?? 0) +
+        (roleDashboard.aiTelemetry?.promptCalls.timeout ?? 0),
+      aiRetrievals: roleDashboard.aiTelemetry?.retrievals.total ?? 0,
+      aiIndexFailures: roleDashboard.aiTelemetry?.indexJobs.failed ?? 0,
+      aiIndexRunning:
+        (roleDashboard.aiTelemetry?.indexJobs.running ?? 0) +
+        (roleDashboard.aiTelemetry?.indexJobs.queued ?? 0) +
+        (roleDashboard.aiTelemetry?.indexJobs.blocked ?? 0),
+    };
+  }, [roleDashboard]);
+
+  const adminTrendSummary = useMemo(() => {
+    const trends = roleDashboard.aiTrends;
+    const recent = trends.slice(-7);
+    const previous = trends.slice(Math.max(0, trends.length - 14), Math.max(0, trends.length - 7));
+    const recentPromptCalls = sumTrend(recent, (point) => point.promptCalls);
+    const previousPromptCalls = sumTrend(previous, (point) => point.promptCalls);
+    const recentRetrievals = sumTrend(recent, (point) => point.retrievals);
+    const recentIndexFailures = sumTrend(recent, (point) => point.indexFailures);
+    const recentFailures = sumTrend(
+      recent,
+      (point) => point.promptFailures + point.promptTimeouts + point.embeddingFailures + point.indexFailures
+    );
+    const recentEvents = sumTrend(
+      recent,
+      (point) => point.promptCalls + point.embeddingCalls + point.indexJobs
+    );
+    const failureRate = recentEvents > 0 ? (recentFailures / recentEvents) * 100 : null;
+    const recentDays = trends.slice(-5);
+    const maxDailyActivity = Math.max(
+      1,
+      ...recentDays.map((point) => point.promptCalls + point.retrievals + point.embeddingCalls + point.indexJobs)
+    );
+
+    return {
+      recentPromptCalls,
+      recentPromptDelta: formatTrendDelta(recentPromptCalls, previousPromptCalls),
+      recentRetrievals,
+      recentFailures,
+      recentIndexFailures,
+      failureRate,
+      recentDays,
+      maxDailyActivity,
+    };
+  }, [roleDashboard.aiTrends]);
+
+  const aiRuntimeStatus = roleDashboard.aiHealth?.configured ? "Configured" : "Needs configuration";
+  const aiRuntimeDetail = roleDashboard.aiHealth
+    ? `${roleDashboard.aiHealth.provider} / ${roleDashboard.aiHealth.model}`
+    : roleDashboard.aiHealthError ?? "智能服务健康状态不可用。";
+  const roleCourseQueue = roleDashboard.managedCourses.slice(0, 4);
+  const teachingInsights = roleDashboard.teachingInsights?.items ?? [];
+  const teachingInsightCount = roleDashboard.teachingInsights?.totalInsights ?? teachingInsights.length;
+  const materialBriefs = roleDashboard.materialBriefs?.items ?? [];
+  const materialBriefCount = roleDashboard.materialBriefs?.totalBriefs ?? materialBriefs.length;
+  const providerConfigItems = roleDashboard.aiProviderConfig?.items ?? [];
+  const providerConfigIssues = providerConfigItems.filter((item) => item.status !== "ready");
+  const providerConfigStatus = roleDashboard.aiProviderConfig?.overallStatus ?? "unknown";
+  const providerConfigDetail = roleDashboard.aiProviderConfig
+    ? `${roleDashboard.aiProviderConfig.provider} / ${roleDashboard.aiProviderConfig.model}`
+    : "Not loaded";
+  const providerHealth = roleDashboard.aiProviderHealth;
+  const providerHealthItems = providerHealth?.items ?? [];
+  const providerHealthAnomalies = providerHealth?.anomalies ?? [];
+  const providerHealthStatus = providerHealth?.overallStatus ?? "unknown";
+  const aiAnomalies = roleDashboard.aiAnomalies;
+  const governanceMetrics = roleDashboard.aiGovernance?.metrics ?? [];
+  const governanceAlerts = roleDashboard.aiGovernance?.alerts ?? [];
+  const governanceStatus = roleDashboard.aiGovernance?.overallStatus ?? "unknown";
 
   function getSessionContextLabel(session: ChatSessionSummary) {
     return session.course_uuid
@@ -113,7 +688,7 @@ function HomeAiPage() {
       })
       .catch((error) => {
         setDetailErrorMessage(
-          error instanceof Error ? error.message : "Failed to load the selected session."
+          error instanceof Error ? error.message : "所选会话加载失败。"
         );
       })
       .finally(() => {
@@ -121,15 +696,652 @@ function HomeAiPage() {
       });
   }
 
+  function formatTelemetryKind(value: string) {
+    return value
+      .split("_")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  }
+
+  function getTeachingInsightPath(insight: TeachingInsightItem) {
+    if (!insight.courseUuid) {
+      return "/home/ai";
+    }
+    if (insight.moduleUuid) {
+      return `/course/${insight.courseUuid}/management/modules/${insight.moduleUuid}`;
+    }
+    return `/course/${insight.courseUuid}/management`;
+  }
+
+  function getMaterialBriefPath(brief: EducatorMaterialBriefItem) {
+    return `/course/${brief.courseUuid}/management/modules/${brief.moduleUuid}`;
+  }
+
+  function updateFailureFilter<K extends keyof AdminAiTelemetryFailureFilters>(
+    field: K,
+    value: AdminAiTelemetryFailureFilters[K]
+  ) {
+    setFailureFilters((current) => ({ ...current, [field]: value }));
+  }
+
+  function handleFailureFilterSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void loadFailureAudit();
+  }
+
+  function handleFailureFilterReset() {
+    setFailureFilters(DEFAULT_ADMIN_FAILURE_FILTERS);
+    void loadFailureAudit(DEFAULT_ADMIN_FAILURE_FILTERS);
+  }
+
+  async function handleRetryIndexJob(jobId: number) {
+    if (currentUser.identity !== "Admin" || retryingIndexJobId !== null) return;
+    setRetryingIndexJobId(jobId);
+    setFailureAuditError(null);
+    setFailureAuditNotice(null);
+    try {
+      const response = await retryAdminAiIndexJob(jobId);
+      await loadFailureAudit();
+      setFailureAuditNotice(
+        response.dispatched
+          ? `Index job #${response.jobId} was requeued.`
+          : `Index job #${response.jobId} moved to ${response.status}.`
+      );
+    } catch (error) {
+      setFailureAuditError(error instanceof Error ? error.message : "Failed to retry index job.");
+    } finally {
+      setRetryingIndexJobId(null);
+    }
+  }
+
+  async function handleFailureAuditExport() {
+    if (currentUser.identity !== "Admin") return;
+    setFailureAuditExporting(true);
+    setFailureAuditError(null);
+    setFailureAuditNotice(null);
+    try {
+      const blob = await exportAdminAiTelemetryFailures(failureFilters);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `ai-failure-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setFailureAuditError(error instanceof Error ? error.message : "智能服务失败审计导出失败。");
+    } finally {
+      setFailureAuditExporting(false);
+    }
+  }
+
+  if (!isLearner) {
+    const isEducator = currentUser.identity === "Educator";
+    const metrics = isEducator
+      ? [
+          { label: "课程", value: formatNumber(educatorDashboard.totalCourses), detail: `${educatorDashboard.publishedCourses} 门已发布` },
+          { label: "模块", value: formatNumber(educatorDashboard.totalModules), detail: `${educatorDashboard.totalMaterials} 份资料` },
+          { label: "测验信号", value: formatNumber(educatorDashboard.quizModules), detail: "已发布或已追踪模块" },
+          { label: "活跃学生", value: formatNumber(educatorDashboard.activeEnrollments), detail: `平均进度 ${formatPercent(educatorDashboard.averageProgress)}` },
+        ]
+      : [
+          { label: "课程", value: formatNumber(adminDashboard.totalCourses), detail: `${adminDashboard.publishedCourses} 门已发布` },
+          { label: "模块", value: formatNumber(adminDashboard.totalModules), detail: `${adminDashboard.totalMaterials} 份待索引资料` },
+          { label: "智能服务调用", value: formatNumber(adminDashboard.aiPromptCalls), detail: `${adminDashboard.aiPromptFailures} 次失败或超时` },
+          { label: "检索", value: formatNumber(adminDashboard.aiRetrievals), detail: `${adminDashboard.aiIndexRunning} 个索引任务活跃` },
+        ];
+
+    return (
+      <section className="home-ai-page">
+        <div className="home-ai-hero">
+          <span className="home-content-badge">{workspaceCopy.badge}</span>
+          <h1>{workspaceCopy.title}</h1>
+          <p>{workspaceCopy.body}</p>
+        </div>
+
+        {roleDashboardError ? <p className="home-progress-alert">{roleDashboardError}</p> : null}
+
+        <div className="home-ai-grid">
+          <article className="home-ai-panel">
+            <div className="home-ai-panel-heading">
+              <h2>{workspaceCopy.primaryTitle}</h2>
+              <span>{roleDashboardLoading ? "加载中..." : "Live"}</span>
+            </div>
+
+            <div className="home-ai-metric-list">
+              {metrics.map((metric) => (
+                <div key={metric.label} className="home-ai-metric-row">
+                  <span>{metric.label}</span>
+                  <strong>{metric.value}</strong>
+                  <small>{metric.detail}</small>
+                </div>
+              ))}
+            </div>
+
+            <div className="home-ai-worklist">
+              <div className="home-ai-worklist-heading">
+                <h3>{isEducator ? "Teaching Queue" : "Governance Queue"}</h3>
+                <span>{roleCourseQueue.length}已显示</span>
+              </div>
+
+              {roleDashboardLoading ? <p className="home-ai-muted">正在加载工作区信号...</p> : null}
+              {!roleDashboardLoading && roleCourseQueue.length === 0 ? (
+                <p className="home-ai-muted">
+                  {isEducator ? "No managed courses found." : "No courses found for governance review."}
+                </p>
+              ) : null}
+
+              {roleCourseQueue.map((course) => (
+                <Link
+                  key={course.courseUuid}
+                  to={isEducator ? `/course/${course.courseUuid}/management` : "/home/course-management"}
+                  className="home-ai-worklist-row"
+                >
+                  <span>
+                    <strong>{course.title}</strong>
+                    <small>{course.status ?? "状态未知"} · {countCourseModules(course)} 个模块</small>
+                  </span>
+                  <em>
+                    {isEducator
+                      ? `${countCoursePublishedQuizzes(course)} 个测验模块`
+                      : course.educatorName || "Unassigned educator"}
+                  </em>
+                </Link>
+              ))}
+            </div>
+          </article>
+
+          <article className="home-ai-panel">
+            <div className="home-ai-panel-heading">
+              <h2>{workspaceCopy.secondaryTitle}</h2>
+              <span className={roleDashboard.aiHealth?.configured ? "home-ai-status-ok" : "home-ai-status-warn"}>
+                {aiRuntimeStatus}
+              </span>
+            </div>
+
+            <div className="home-ai-runtime">
+              <span>服务提供方</span>
+              <strong>{roleDashboard.aiHealth?.provider ?? "Gemini"}</strong>
+              <p>{aiRuntimeDetail}</p>
+            </div>
+
+            <div className="home-ai-checklist">
+              {(isEducator
+                ? [
+                    {
+                      label: "课程上下文",
+                      value: `${formatNumber(educatorDashboard.totalCourses)} managed courses`,
+                    },
+                    {
+                      label: "学生信号",
+                      value: `${formatNumber(educatorDashboard.totalEnrollments)} enrolments`,
+                    },
+                    {
+                      label: "测验证据",
+                      value: `${formatNumber(educatorDashboard.quizModules)} 个已追踪测验模块`,
+                    },
+                  ]
+                : [
+                    {
+                      label: "角色覆盖",
+                      value: `${adminDashboard.learners} learners · ${adminDashboard.educators} educators`,
+                    },
+                    {
+                      label: "服务配置",
+                      value: `${formatTelemetryKind(providerConfigStatus)} · ${providerConfigDetail}`,
+                    },
+                    {
+                      label: "服务健康",
+                      value: `${formatTelemetryKind(providerHealthStatus)} · ${formatPercent(providerHealth?.successRatePercent)} success`,
+                    },
+                    {
+                      label: "异常洞察",
+                      value: `${aiAnomalies.length} signals`,
+                    },
+                    {
+                      label: "成本护栏",
+                      value: `${formatTelemetryKind(governanceStatus)} · ${governanceAlerts.length} alerts`,
+                    },
+                    {
+                      label: "索引失败",
+                      value: `${adminDashboard.aiIndexFailures} failed jobs`,
+                    },
+                    {
+                      label: "遥测安全",
+                      value: "仅聚合指标",
+                    },
+                  ]).map((item) => (
+                <div key={item.label} className="home-ai-checklist-row">
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                  </div>
+              ))}
+            </div>
+
+            {isEducator ? (
+              <div className="home-ai-audit-list">
+                <div className="home-ai-worklist-heading">
+                  <h3>教学洞察</h3>
+                  <span>{teachingInsightCount}总计</span>
+                </div>
+
+                {roleDashboardLoading ? <p className="home-ai-muted">正在加载教学洞察...</p> : null}
+                {!roleDashboardLoading && teachingInsights.length === 0 ? (
+                  <p className="home-ai-muted">暂无需要关注的教学洞察。</p>
+                ) : null}
+
+                {teachingInsights.map((insight) => (
+                  <Link
+                    key={insight.insightId}
+                    to={getTeachingInsightPath(insight)}
+                    className="home-ai-worklist-row home-ai-insight-row"
+                  >
+                    <span>
+                      <strong>{insight.title}</strong>
+                      <small>
+                        {formatTelemetryKind(insight.priority)} · {formatTelemetryKind(insight.category)}
+                      </small>
+                      <small>{insight.detail}</small>
+                    </span>
+                    <em>{insight.metricLabel && insight.metricValue ? `${insight.metricLabel}: ${insight.metricValue}` : insight.actionLabel}</em>
+                  </Link>
+                ))}
+              </div>
+            ) : null}
+
+            {isEducator ? (
+              <div className="home-ai-audit-list">
+                <div className="home-ai-worklist-heading">
+                  <h3>资料简报</h3>
+                  <span>{materialBriefCount} 个模块</span>
+                </div>
+
+                {roleDashboardLoading ? <p className="home-ai-muted">正在加载资料简报...</p> : null}
+                {!roleDashboardLoading && materialBriefs.length === 0 ? (
+                  <p className="home-ai-muted">暂无可用资料简报。</p>
+                ) : null}
+
+                {materialBriefs.map((brief) => (
+                  <Link
+                    key={brief.briefId}
+                    to={getMaterialBriefPath(brief)}
+                    className="home-ai-worklist-row home-ai-insight-row"
+                  >
+                    <span>
+                      <strong>{brief.moduleTitle}</strong>
+                      <small>
+                        {formatTelemetryKind(brief.priority)} · {brief.materialCount}份资料 · {brief.materialTypes.join(", ") || "no types"}
+                      </small>
+                      <small>{brief.summary}</small>
+                      <small>{brief.difficultySignal}</small>
+                    </span>
+                    <em>{brief.recommendedAction}</em>
+                  </Link>
+                ))}
+              </div>
+            ) : null}
+
+            {!isEducator ? (
+              <div className="home-ai-config-summary">
+                <div className="home-ai-worklist-heading">
+                  <h3>服务配置</h3>
+                  <span>{formatTelemetryKind(providerConfigStatus)}</span>
+                </div>
+
+                {roleDashboardLoading ? <p className="home-ai-muted">正在加载服务配置...</p> : null}
+                {!roleDashboardLoading && providerConfigItems.length === 0 ? (
+                  <p className="home-ai-muted">服务配置状态不可用。</p>
+                ) : null}
+                {!roleDashboardLoading && providerConfigItems.length > 0 && providerConfigIssues.length === 0 ? (
+                  <div className="home-ai-config-row">
+                    <span>
+                      <strong>所有检查已就绪</strong>
+                      <small>未发现配置警告或阻塞项。</small>
+                    </span>
+                    <em>{roleDashboard.aiProviderConfig?.storageProvider ?? "storage"}</em>
+                  </div>
+                ) : null}
+
+                {providerConfigIssues.slice(0, 4).map((item) => (
+                  <div key={item.key} className="home-ai-config-row">
+                    <span>
+                      <strong>{item.label}</strong>
+                      <small>
+                        {formatTelemetryKind(item.status)} · {item.detail}
+                      </small>
+                      {item.recommendation ? <small>{item.recommendation}</small> : null}
+                    </span>
+                    <em>{formatTelemetryKind(item.status)}</em>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {!isEducator ? (
+              <div className="home-ai-config-summary">
+                <div className="home-ai-worklist-heading">
+                  <h3>服务健康</h3>
+                  <span>{formatTelemetryKind(providerHealthStatus)}</span>
+                </div>
+
+                {roleDashboardLoading ? <p className="home-ai-muted">正在加载服务健康状态...</p> : null}
+                {!roleDashboardLoading && !providerHealth ? (
+                  <p className="home-ai-muted">服务健康状态不可用。</p>
+                ) : null}
+
+                {providerHealth ? (
+                  <div className="home-ai-config-row">
+                    <span>
+                      <strong>{formatPercent(providerHealth.successRatePercent)}成功</strong>
+                      <small>
+                        {formatCompactNumber(providerHealth.totalCalls)}次调用，周期 {providerHealth.days}天 ·{" "}
+                        {formatLatency(providerHealth.averageLatencyMs)}平均延迟
+                      </small>
+                    </span>
+                    <em>{formatTelemetryKind(providerHealth.overallStatus)}</em>
+                  </div>
+                ) : null}
+
+                {providerHealthAnomalies.slice(0, 3).map((anomaly) => (
+                  <div key={anomaly.key} className="home-ai-config-row">
+                    <span>
+                      <strong>{anomaly.title}</strong>
+                      <small>{anomaly.detail}</small>
+                      <small>{anomaly.recommendation}</small>
+                    </span>
+                    <em>{formatTelemetryKind(anomaly.severity)}</em>
+                  </div>
+                ))}
+
+                {providerHealthItems.slice(0, 3).map((item) => (
+                  <div key={item.key} className="home-ai-config-row">
+                    <span>
+                      <strong>
+                        {item.modelName} · {formatTelemetryKind(item.callType)}
+                      </strong>
+                      <small>
+                        {formatPercent(item.successRatePercent)}成功 · {formatCompactNumber(item.totalCalls)}次调用 ·{" "}
+                        {formatLatency(item.averageLatencyMs)}
+                      </small>
+                      {item.recommendation ? <small>{item.recommendation}</small> : null}
+                    </span>
+                    <em>{formatTelemetryKind(item.status)}</em>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {!isEducator ? (
+              <div className="home-ai-config-summary">
+                <div className="home-ai-worklist-heading">
+                  <h3>异常洞察</h3>
+                  <span>{aiAnomalies.length}信号</span>
+                </div>
+
+                {roleDashboardLoading ? <p className="home-ai-muted">正在加载异常洞察...</p> : null}
+                {!roleDashboardLoading && aiAnomalies.length === 0 ? (
+                  <div className="home-ai-config-row">
+                    <span>
+                      <strong>未检测到趋势异常</strong>
+                      <small>失败率、延迟、检索、索引和令牌使用量均在近期基线范围内。</small>
+                    </span>
+                    <em>正常</em>
+                  </div>
+                ) : null}
+
+                {aiAnomalies.slice(0, 4).map((insight) => (
+                  <div key={insight.key} className="home-ai-config-row">
+                    <span>
+                      <strong>{insight.title}</strong>
+                      <small>
+                        {insight.metricLabel}: {insight.currentValue}
+                        {insight.baselineValue ? ` · baseline ${insight.baselineValue}` : ""}
+                      </small>
+                      <small>{insight.detail}</small>
+                      <small>{insight.recommendation}</small>
+                    </span>
+                    <em>{formatTelemetryKind(insight.severity)}</em>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {!isEducator ? (
+              <div className="home-ai-config-summary">
+                <div className="home-ai-worklist-heading">
+                  <h3>成本与告警</h3>
+                  <span>{formatTelemetryKind(governanceStatus)}</span>
+                </div>
+
+                {roleDashboardLoading ? <p className="home-ai-muted">正在加载治理护栏...</p> : null}
+                {!roleDashboardLoading && governanceMetrics.length === 0 ? (
+                  <p className="home-ai-muted">智能治理摘要不可用。</p>
+                ) : null}
+
+                {governanceMetrics.slice(0, 4).map((metric) => (
+                  <div key={metric.key} className="home-ai-config-row">
+                    <span>
+                      <strong>{metric.label}</strong>
+                      <small>{metric.detail}</small>
+                    </span>
+                    <em>{metric.value}</em>
+                  </div>
+                ))}
+
+                {!roleDashboardLoading && governanceAlerts.length === 0 && governanceMetrics.length > 0 ? (
+                  <div className="home-ai-config-row">
+                    <span>
+                      <strong>暂无活跃治理告警</strong>
+                      <small>成本、令牌、失败和索引护栏均在配置限制内。</small>
+                    </span>
+                    <em>正常</em>
+                  </div>
+                ) : null}
+
+                {governanceAlerts.slice(0, 3).map((alert) => (
+                  <div key={`${alert.severity}-${alert.title}`} className="home-ai-config-row">
+                    <span>
+                      <strong>{alert.title}</strong>
+                      <small>{alert.detail}</small>
+                      <small>{alert.recommendation}</small>
+                    </span>
+                    <em>{formatTelemetryKind(alert.severity)}</em>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {!isEducator ? (
+              <div className="home-ai-trend-block">
+                <div className="home-ai-worklist-heading">
+                  <h3>14 天智能服务趋势</h3>
+                  <span>{roleDashboard.aiTrends.length}天</span>
+                </div>
+
+                <div className="home-ai-trend-metrics">
+                  <div>
+                    <span>调用</span>
+                    <strong>{formatCompactNumber(adminTrendSummary.recentPromptCalls)}</strong>
+                    <small>{adminTrendSummary.recentPromptDelta}</small>
+                  </div>
+                  <div>
+                    <span>失败率</span>
+                    <strong>{formatPercent(adminTrendSummary.failureRate)}</strong>
+                    <small>{formatCompactNumber(adminTrendSummary.recentFailures)}次失败</small>
+                  </div>
+                  <div>
+                    <span>检索</span>
+                    <strong>{formatCompactNumber(adminTrendSummary.recentRetrievals)}</strong>
+                    <small>最近 7 天</small>
+                  </div>
+                  <div>
+                    <span>索引失败</span>
+                    <strong>{formatCompactNumber(adminTrendSummary.recentIndexFailures)}</strong>
+                    <small>最近 7 天</small>
+                  </div>
+                </div>
+
+                <div className="home-ai-trend-days" aria-label="近期智能服务每日活动">
+                  {adminTrendSummary.recentDays.map((point) => {
+                    const activity = point.promptCalls + point.retrievals + point.embeddingCalls + point.indexJobs;
+                    const failures =
+                      point.promptFailures + point.promptTimeouts + point.embeddingFailures + point.indexFailures;
+                    const width = Math.max(6, Math.round((activity / adminTrendSummary.maxDailyActivity) * 100));
+                    return (
+                      <div key={point.date} className="home-ai-trend-day-row">
+                        <span>{formatTrendDate(point.date)}</span>
+                        <div>
+                          <i style={{ width: `${width}%` }} />
+                        </div>
+                        <strong>
+                          {formatCompactNumber(activity)}活动 · {formatCompactNumber(failures)}失败
+                        </strong>
+                      </div>
+                    );
+                  })}
+                  {!roleDashboardLoading && adminTrendSummary.recentDays.length === 0 ? (
+                    <p className="home-ai-muted">暂无智能服务趋势数据。</p>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {!isEducator ? (
+              <div className="home-ai-audit-list">
+                <div className="home-ai-worklist-heading">
+                  <h3>失败审计</h3>
+                  <span>{roleDashboard.aiFailures.length}近期</span>
+                </div>
+
+                <form className="home-ai-audit-filters" onSubmit={handleFailureFilterSubmit}>
+                  <label>
+                    <span>类型</span>
+                    <select
+                      value={failureFilters.kind}
+                      onChange={(event) => updateFailureFilter("kind", event.target.value as AdminAiTelemetryFailureFilters["kind"])}
+                    >
+                      <option value="">全部</option>
+                      <option value="prompt">提示词</option>
+                      <option value="embedding">向量化</option>
+                      <option value="index_job">索引任务</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>状态</span>
+                    <select
+                      value={failureFilters.status}
+                      onChange={(event) => updateFailureFilter("status", event.target.value as AdminAiTelemetryFailureFilters["status"])}
+                    >
+                      <option value="">全部</option>
+                      <option value="failed">失败</option>
+                      <option value="timeout">超时</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>用户编号</span>
+                    <input
+                      inputMode="numeric"
+                      value={failureFilters.userId}
+                      onChange={(event) => updateFailureFilter("userId", event.target.value)}
+                      placeholder="任意"
+                    />
+                  </label>
+                  <label>
+                    <span>课程编号</span>
+                    <input
+                      inputMode="numeric"
+                      value={failureFilters.courseId}
+                      onChange={(event) => updateFailureFilter("courseId", event.target.value)}
+                      placeholder="任意"
+                    />
+                  </label>
+                  <label>
+                    <span>模块编号</span>
+                    <input
+                      inputMode="numeric"
+                      value={failureFilters.moduleId}
+                      onChange={(event) => updateFailureFilter("moduleId", event.target.value)}
+                      placeholder="任意"
+                    />
+                  </label>
+                  <label>
+                    <span>开始时间</span>
+                    <input
+                      type="datetime-local"
+                      value={failureFilters.since}
+                      onChange={(event) => updateFailureFilter("since", event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <span>结束时间</span>
+                    <input
+                      type="datetime-local"
+                      value={failureFilters.until}
+                      onChange={(event) => updateFailureFilter("until", event.target.value)}
+                    />
+                  </label>
+                  <div className="home-ai-audit-filter-actions">
+                    <button type="submit" disabled={failureAuditLoading}>
+                      <LuSearch size={15} aria-hidden="true" />
+                      <span>{failureAuditLoading ? "Filtering" : "Apply"}</span>
+                    </button>
+                    <button type="button" onClick={handleFailureFilterReset} disabled={failureAuditLoading}>
+                      <LuRefreshCw size={15} aria-hidden="true" />
+                      <span>重置</span>
+                    </button>
+                    <button type="button" onClick={() => void handleFailureAuditExport()} disabled={failureAuditExporting}>
+                      <LuDownload size={15} aria-hidden="true" />
+                      <span>{failureAuditExporting ? "Exporting" : "CSV"}</span>
+                    </button>
+                  </div>
+                </form>
+
+                {roleDashboardLoading || failureAuditLoading ? <p className="home-ai-muted">正在加载失败审计...</p> : null}
+                {failureAuditError ? <p className="home-ai-muted">{failureAuditError}</p> : null}
+                {failureAuditNotice ? <p className="home-ai-muted">{failureAuditNotice}</p> : null}
+                {!roleDashboardLoading && roleDashboard.aiFailures.length === 0 ? (
+                  <p className="home-ai-muted">未发现近期智能服务失败记录。</p>
+                ) : null}
+
+                {roleDashboard.aiFailures.map((failure) => (
+                  <div key={`${failure.kind}-${failure.id}`} className="home-ai-audit-row">
+                    <span>
+                      <strong>{formatTelemetryKind(failure.kind)}</strong>
+                      <small>
+                        {failure.status} · {formatSessionTimestamp(failure.occurredAt)}
+                      </small>
+                    </span>
+                    <div className="home-ai-audit-row-side">
+                      <em>{failure.errorSummary || failure.callType || `#${failure.id}`}</em>
+                      {failure.kind === "index_job" && failure.status === "failed" ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleRetryIndexJob(failure.id)}
+                          disabled={retryingIndexJobId !== null}
+                          title="重新排队该资料索引任务"
+                        >
+                          <LuRefreshCw size={14} aria-hidden="true" />
+                          <span>{retryingIndexJobId === failure.id ? "Retrying" : "重试"}</span>
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </article>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="home-ai-page">
       <div className="home-ai-hero">
-        <span className="home-content-badge">AI</span>
-        <h1>AI Workspace</h1>
-        <p>
-          Review all chat sessions here. Module recommendations stay as a placeholder until
-          the backend recommendation flow is ready.
-        </p>
+        <span className="home-content-badge">{workspaceCopy.badge}</span>
+        <h1>{workspaceCopy.title}</h1>
+        <p>{workspaceCopy.body}</p>
       </div>
 
       <div className="home-ai-grid">
@@ -139,10 +1351,10 @@ function HomeAiPage() {
               <div className="home-ai-panel-heading home-ai-detail-heading">
                 <button type="button" className="home-ai-back" onClick={handleBackToSessions}>
                   <LuArrowLeft size={18} aria-hidden="true" />
-                  <span>Back to sessions</span>
+                  <span>返回会话列表</span>
                 </button>
                 <div className="home-ai-detail-meta">
-                  <h2>{activeSession.session.title || "Untitled session"}</h2>
+                  <h2>{activeSession.session.title || "未命名会话"}</h2>
                   <span>{formatSessionTimestamp(activeSession.session.last_message_at)}</span>
                 </div>
               </div>
@@ -150,9 +1362,9 @@ function HomeAiPage() {
               {detailErrorMessage ? <p className="home-ai-muted">{detailErrorMessage}</p> : null}
 
               <div className="home-ai-detail-body">
-                {detailLoading ? <p className="home-ai-muted">Loading conversation...</p> : null}
+                {detailLoading ? <p className="home-ai-muted">正在加载对话...</p> : null}
                 {!detailLoading && activeSession.messages.length === 0 ? (
-                  <p className="home-ai-muted">No messages were found in this session.</p>
+                  <p className="home-ai-muted">该会话中没有消息。</p>
                 ) : null}
 
                 {!detailLoading && activeSession.messages.length > 0 ? (
@@ -176,14 +1388,14 @@ function HomeAiPage() {
           ) : (
             <>
               <div className="home-ai-panel-heading">
-                <h2>All Sessions</h2>
-                <span>{loading ? "Loading..." : `${sessions.length} total`}</span>
+                <h2>全部会话</h2>
+                <span>{loading ? "加载中..." : `${sessions.length} 个会话`}</span>
               </div>
 
-              {loading ? <p className="home-ai-muted">Loading sessions...</p> : null}
+              {loading ? <p className="home-ai-muted">正在加载会话...</p> : null}
               {errorMessage ? <p className="home-ai-muted">{errorMessage}</p> : null}
               {!loading && !errorMessage && sessions.length === 0 ? (
-                <p className="home-ai-muted">No AI sessions found yet.</p>
+                <p className="home-ai-muted">暂无智能会话。</p>
               ) : null}
 
               <div className="home-ai-session-list">
@@ -195,7 +1407,7 @@ function HomeAiPage() {
                     onClick={() => handleOpenSession(session.session_uuid)}
                   >
                     <div className="home-ai-session-meta">
-                      <strong>{session.title || "Untitled session"}</strong>
+                      <strong>{session.title || "未命名会话"}</strong>
                       <span>{formatSessionTimestamp(session.last_message_at)}</span>
                     </div>
                     <p className="home-ai-session-context">{getSessionContextLabel(session)}</p>
@@ -208,12 +1420,48 @@ function HomeAiPage() {
 
         <article className="home-ai-panel">
           <div className="home-ai-panel-heading">
-            <h2>Module Recommendations</h2>
-            <span>Coming soon</span>
+            <h2>{workspaceCopy.secondaryTitle}</h2>
+            <span>课程上下文</span>
           </div>
-          <div className="home-ai-placeholder">
-            Module recommendations for learners will appear here after the backend
-            recommendation flow is implemented.
+          <div className="home-ai-checklist">
+            <div className="home-ai-checklist-row">
+              <span>聊天范围</span>
+              <strong>{sessions.length}已保存会话</strong>
+            </div>
+            <div className="home-ai-checklist-row">
+              <span>课程地图</span>
+              <strong>{courses.length}已加入课程</strong>
+            </div>
+            {coursesErrorMessage ? <p className="home-ai-muted">{coursesErrorMessage}</p> : null}
+            <Link to="/home/ai/profile-init" className="home-ai-worklist-row">
+              <span>
+                <strong>学生画像</strong>
+                <small>初始化或更新技能偏好</small>
+              </span>
+              <em>打开</em>
+            </Link>
+            {!coursesErrorMessage && learnerAiModuleEntries.length === 0 ? (
+              <Link to="/home/my-courses" className="home-ai-worklist-row">
+                <span>
+                  <strong>暂无已解锁模块</strong>
+                  <small>从已加入课程继续</small>
+                </span>
+                <em>课程</em>
+              </Link>
+            ) : null}
+            {learnerAiModuleEntries.map(({ course, module }) => (
+              <Link
+                key={`${course.courseUuid}-${module.moduleUuid}`}
+                to={getLearnerAiModulePath(course.courseUuid, module.moduleUuid)}
+                className="home-ai-worklist-row"
+              >
+                <span>
+                  <strong>{module.title}</strong>
+                  <small>{course.title}</small>
+                </span>
+                <em>助手</em>
+              </Link>
+            ))}
           </div>
         </article>
       </div>

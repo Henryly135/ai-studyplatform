@@ -3,9 +3,40 @@ set -eu
 
 MYSQL_HOST="${MYSQL_HOST:-mysql}"
 MYSQL_PORT="${MYSQL_INTERNAL_PORT:-3306}"
-DEFAULT_ADMIN_EMAIL="${DEFAULT_ADMIN_EMAIL:-admin@example.com}"
-DEFAULT_ADMIN_PASSWORD="${DEFAULT_ADMIN_PASSWORD:-DemoAdmin123!}"
-DEFAULT_ADMIN_FULL_NAME="${DEFAULT_ADMIN_FULL_NAME:-Demo Admin}"
+DEFAULT_ADMIN_EMAIL="${DEFAULT_ADMIN_EMAIL:-eduplatform.aibot@gmail.com}"
+DEFAULT_ADMIN_PASSWORD="${DEFAULT_ADMIN_PASSWORD:-Eduadmin123!}"
+DEFAULT_ADMIN_FULL_NAME="${DEFAULT_ADMIN_FULL_NAME:-Edu Platform Admin}"
+PASSWORD_HASH_ITERATIONS="${PASSWORD_HASH_ITERATIONS:-600000}"
+
+is_production_env() {
+  app_env="$(printf "%s" "${APP_ENV:-local}" | tr '[:upper:]' '[:lower:]')"
+  [ "${app_env}" = "prod" ] || [ "${app_env}" = "production" ]
+}
+
+validate_production_bootstrap_config() {
+  if ! is_production_env; then
+    return 0
+  fi
+
+  case "${DEFAULT_ADMIN_EMAIL}" in
+    ""|"admin@gmail.com"|"eduplatform.aibot@gmail.com"|"your.team.email@gmail.com")
+      echo "DEFAULT_ADMIN_EMAIL must be changed from the demo/default value in production." >&2
+      exit 1
+      ;;
+  esac
+
+  case "${DEFAULT_ADMIN_PASSWORD}" in
+    ""|"Eduadmin123!"|"your-admin-password"|"password"|"secret")
+      echo "DEFAULT_ADMIN_PASSWORD must be changed from the demo/default value in production." >&2
+      exit 1
+      ;;
+  esac
+
+  if [ "${#DEFAULT_ADMIN_PASSWORD}" -lt 16 ]; then
+    echo "DEFAULT_ADMIN_PASSWORD must be at least 16 characters in production." >&2
+    exit 1
+  fi
+}
 
 mysql_root() {
   mysql -h"${MYSQL_HOST}" -P"${MYSQL_PORT}" -uroot -p"${MYSQL_ROOT_PASSWORD}" "$@"
@@ -13,6 +44,22 @@ mysql_root() {
 
 sql_escape() {
   printf "%s" "$1" | sed "s/'/''/g"
+}
+
+generate_pbkdf2_password_hash() {
+  password="$1"
+  salt_value="$(openssl rand -hex 16)"
+  salt_b64="$(printf "%s" "${salt_value}" | base64 | tr -d '\n')"
+  hash_b64="$(openssl kdf \
+    -keylen 32 \
+    -binary \
+    -kdfopt digest:SHA256 \
+    -kdfopt "pass:${password}" \
+    -kdfopt "salt:${salt_value}" \
+    -kdfopt "iter:${PASSWORD_HASH_ITERATIONS}" \
+    PBKDF2 | base64 | tr -d '\n')"
+
+  printf "pbkdf2_sha256$%s$%s$%s" "${PASSWORD_HASH_ITERATIONS}" "${salt_b64}" "${hash_b64}"
 }
 
 wait_for_mysql() {
@@ -108,14 +155,14 @@ seed_communication_baseline_migrations() {
 seed_default_admin_account() {
   db_name="$1"
   admin_email="$(sql_escape "${DEFAULT_ADMIN_EMAIL}")"
-  admin_password="$(sql_escape "${DEFAULT_ADMIN_PASSWORD}")"
+  admin_password_hash="$(sql_escape "$(generate_pbkdf2_password_hash "${DEFAULT_ADMIN_PASSWORD}")")"
   admin_full_name="$(sql_escape "${DEFAULT_ADMIN_FULL_NAME}")"
 
   mysql_root "${db_name}" <<EOSQL
 UPDATE users
 SET
     email = '${admin_email}',
-    password_hash = SHA2('${admin_password}', 256),
+    password_hash = '${admin_password_hash}',
     full_name = '${admin_full_name}',
     account_status = 'active',
     email_verified = TRUE
@@ -134,7 +181,7 @@ INSERT INTO users (
 )
 VALUES (
     '${admin_email}',
-    SHA2('${admin_password}', 256),
+    '${admin_password_hash}',
     '${admin_full_name}',
     'active',
     TRUE
@@ -193,6 +240,7 @@ ensure_index() {
   fi
 }
 
+validate_production_bootstrap_config
 wait_for_mysql
 
 mysql_root <<-EOSQL
@@ -236,7 +284,8 @@ seed_baseline_migrations "${IDENTITY_DB_NAME}" \
   "009_remove_admin_course_create_permission.sql" \
   "010_add_communication_permissions.sql" \
   "012_seed_default_admin_account.sql" \
-  "014_add_ai_chat_and_learner_profile_permissions.sql"
+  "014_add_ai_chat_and_learner_profile_permissions.sql" \
+  "015_add_ai_governance_manage_permission.sql"
 
 seed_default_admin_account "${IDENTITY_DB_NAME}"
 
@@ -292,7 +341,5 @@ ensure_index "${LEARNING_DB_NAME}" "quiz_attempts" "idx_quiz_attempts_quiz_learn
 ensure_index "${LEARNING_DB_NAME}" "quiz_attempts" "idx_quiz_attempts_module_learner_passed" "(module_id, learner_id, is_passed)"
 ensure_index "${LEARNING_DB_NAME}" "quiz_attempts" "idx_quiz_attempts_learner_id" "(learner_id)"
 ensure_index "${LEARNING_DB_NAME}" "quiz_attempt_answers" "idx_quiz_attempt_answers_attempt_order" "(quiz_attempt_id, question_order)"
-ensure_index "${LEARNING_DB_NAME}" "study_plans" "idx_study_plans_learner_updated" "(learner_id, updated_at)"
-ensure_index "${LEARNING_DB_NAME}" "study_plans" "idx_study_plans_status" "(status)"
 
 ensure_index "${COMMUNICATION_DB_NAME}" "course_forum_posts" "idx_course_forum_posts_course_pinned_created" "(course_id, is_pinned, pinned_at, created_at, post_id)"

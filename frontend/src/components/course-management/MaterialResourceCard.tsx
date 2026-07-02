@@ -39,35 +39,35 @@ function getMaterialVisual(material: CourseMaterial): MaterialVisual {
   const extension = getExtension(material.resourceUrl || material.title);
 
   if (combinedType.includes("pdf") || extension === "pdf") {
-    return { icon: FaFilePdf, label: "PDF", toneClassName: "material-resource-card-pdf" };
+    return { icon: FaFilePdf, label: "文档", toneClassName: "material-resource-card-pdf" };
   }
 
   if (["doc", "docx"].includes(extension) || combinedType.includes("word")) {
-    return { icon: FaFileWord, label: "Word", toneClassName: "material-resource-card-word" };
+    return { icon: FaFileWord, label: "文档", toneClassName: "material-resource-card-word" };
   }
 
   if (["ppt", "pptx"].includes(extension) || combinedType.includes("powerpoint") || combinedType.includes("slide")) {
-    return { icon: FaFilePowerpoint, label: "PowerPoint", toneClassName: "material-resource-card-powerpoint" };
+    return { icon: FaFilePowerpoint, label: "演示文稿", toneClassName: "material-resource-card-powerpoint" };
   }
 
   if (["xls", "xlsx"].includes(extension) || combinedType.includes("excel") || combinedType.includes("spreadsheet")) {
-    return { icon: FaFileExcel, label: "Excel", toneClassName: "material-resource-card-excel" };
+    return { icon: FaFileExcel, label: "表格", toneClassName: "material-resource-card-excel" };
   }
 
   if (extension === "csv" || combinedType.includes("csv")) {
-    return { icon: FaFileCsv, label: "CSV", toneClassName: "material-resource-card-csv" };
+    return { icon: FaFileCsv, label: "表格数据", toneClassName: "material-resource-card-csv" };
   }
 
   if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"].includes(extension) || combinedType.includes("image")) {
-    return { icon: FaFileImage, label: "Image", toneClassName: "material-resource-card-image" };
+    return { icon: FaFileImage, label: "图片", toneClassName: "material-resource-card-image" };
   }
 
   if (["mp4", "mov", "avi", "mkv", "webm"].includes(extension) || combinedType.includes("video")) {
-    return { icon: FaFileVideo, label: "Video", toneClassName: "material-resource-card-video" };
+    return { icon: FaFileVideo, label: "视频", toneClassName: "material-resource-card-video" };
   }
 
   if (["mp3", "wav", "m4a", "aac", "ogg"].includes(extension) || combinedType.includes("audio")) {
-    return { icon: FaFileAudio, label: "Audio", toneClassName: "material-resource-card-audio" };
+    return { icon: FaFileAudio, label: "音频", toneClassName: "material-resource-card-audio" };
   }
 
   if (
@@ -75,27 +75,27 @@ function getMaterialVisual(material: CourseMaterial): MaterialVisual {
     combinedType.includes("archive") ||
     combinedType.includes("zip")
   ) {
-    return { icon: FaFileArchive, label: "Archive", toneClassName: "material-resource-card-archive" };
+    return { icon: FaFileArchive, label: "压缩包", toneClassName: "material-resource-card-archive" };
   }
 
   if (
     ["py", "js", "ts", "tsx", "jsx", "java", "c", "cpp", "cs", "html", "css", "json", "sql", "sh"].includes(extension) ||
     combinedType.includes("code")
   ) {
-    return { icon: FaCode, label: "Code", toneClassName: "material-resource-card-code" };
+    return { icon: FaCode, label: "代码", toneClassName: "material-resource-card-code" };
   }
 
   if (combinedType.includes("http://") || combinedType.includes("https://")) {
-    return extension ? { icon: FaLink, label: extension.toUpperCase(), toneClassName: "material-resource-card-link" } : { icon: FaGlobe, label: "Link", toneClassName: "material-resource-card-link" };
+    return extension ? { icon: FaLink, label: extension.toUpperCase(), toneClassName: "material-resource-card-link" } : { icon: FaGlobe, label: "链接", toneClassName: "material-resource-card-link" };
   }
 
   if (["txt", "md", "rtf"].includes(extension) || combinedType.includes("text")) {
-    return { icon: FaFileAlt, label: extension ? extension.toUpperCase() : "Text", toneClassName: "material-resource-card-text" };
+    return { icon: FaFileAlt, label: extension ? extension.toUpperCase() : "文本", toneClassName: "material-resource-card-text" };
   }
 
   return {
     icon: FaFileAlt,
-    label: material.materialType || (extension ? extension.toUpperCase() : "File"),
+    label: material.materialType || (extension ? extension.toUpperCase() : "文件"),
     toneClassName: "material-resource-card-default",
   };
 }
@@ -115,10 +115,10 @@ function MaterialResourceCard({ material, moduleStatus, trailingAction }: Materi
     Boolean(normalizedMaterialType) && normalizedMaterialType !== visual.label.trim().toLowerCase();
   const statusIcon =
     moduleStatus === "available"
-      ? { icon: FaCheckCircle, label: "Published", className: "material-resource-card-status-published" }
+      ? { icon: FaCheckCircle, label: "已发布", className: "material-resource-card-status-published" }
       : moduleStatus === "locked"
-        ? { icon: FaArchive, label: "Archived", className: "material-resource-card-status-archived" }
-        : { icon: FaRegClock, label: "Draft", className: "material-resource-card-status-draft" };
+        ? { icon: FaArchive, label: "已归档", className: "material-resource-card-status-archived" }
+        : { icon: FaRegClock, label: "草稿", className: "material-resource-card-status-draft" };
   const StatusIcon = statusIcon.icon;
   const content = (
     <>
@@ -164,7 +164,7 @@ function MaterialResourceCard({ material, moduleStatus, trailingAction }: Materi
               <StatusIcon aria-hidden="true" />
             </span>
           ) : null}
-          {!hasUrl ? <span>Unavailable</span> : null}
+          {!hasUrl ? <span>不可用</span> : null}
           {trailingAction}
         </div>
       </div>
@@ -191,7 +191,7 @@ function MaterialResourceCard({ material, moduleStatus, trailingAction }: Materi
             <StatusIcon aria-hidden="true" />
           </span>
         ) : null}
-        {!hasUrl ? <span>Unavailable</span> : null}
+        {!hasUrl ? <span>不可用</span> : null}
       </div>
     </Wrapper>
   );

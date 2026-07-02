@@ -6,24 +6,24 @@ import re
 from time import sleep
 from uuid import uuid4
 
+from google import genai
+from google.genai import errors as genai_errors
+from google.genai import types
 from langchain_core.messages import BaseMessage
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.prompts import get_prompt_template
 from app.models.ai_prompt_logs import AIPromptStatus
+from app.services.provider_error_messages import (
+    AI_PROVIDER_CONFIGURATION_UNAVAILABLE,
+    AI_PROVIDER_TEMPORARILY_UNAVAILABLE,
+)
 from app.services.chat.chat_history_service import ChatHistoryService
 from app.services.chat.custom_pgvector_retriever import CustomPgvectorRetriever, CustomPgvectorRetrieverInput
 from app.services.chat.langchain_message_adapter import to_langchain_messages
 from app.services.chat.langchain_rag_service import render_rag_user_prompt, run_langchain_chat
 from app.services.chat.rag_retrieval_service import RetrievalResult
-from app.services.providers import (
-    AIProviderConfigurationError,
-    AIProviderError,
-    ChatGenerationMessage,
-    ChatGenerationRequest,
-    get_chat_provider,
-)
 
 _COURSE_CONTEXT_MARKERS = {
     "module",
@@ -207,6 +207,12 @@ class ChatWorkflowResult:
         ]
 
 
+def _build_client() -> genai.Client:
+    if not settings.gemini_api_key:
+        raise AIChatConfigurationError(AI_PROVIDER_CONFIGURATION_UNAVAILABLE)
+    return genai.Client(api_key=settings.gemini_api_key)
+
+
 def _extract_usage_value(usage_metadata: object, *names: str) -> int | None:
     for name in names:
         if isinstance(usage_metadata, dict) and usage_metadata.get(name) is not None:
@@ -244,34 +250,6 @@ def build_rag_user_prompt(*, current_user_message: str, retrieval_result: Retrie
         current_user_message=current_user_message,
         retrieval_result=retrieval_result,
     )
-
-
-def _message_content_as_text(message: BaseMessage) -> str:
-    content = message.content
-    if isinstance(content, list):
-        return " ".join(str(item) for item in content).strip()
-    return str(content).strip()
-
-
-def _provider_messages_from_history(history: list[BaseMessage] | None) -> tuple[ChatGenerationMessage, ...]:
-    role_map = {
-        "human": "user",
-        "ai": "assistant",
-        "assistant": "assistant",
-        "system": "system",
-    }
-    messages: list[ChatGenerationMessage] = []
-    for message in history or []:
-        content = _message_content_as_text(message)
-        if not content:
-            continue
-        messages.append(
-            ChatGenerationMessage(
-                role=role_map.get(message.type, "user"),
-                content=content,
-            )
-        )
-    return tuple(messages)
 
 
 def _has_retrieved_context(retrieval_result: RetrievalResult | None) -> bool:
@@ -330,10 +308,6 @@ def _build_time_sensitive_unavailable_reply() -> str:
 
 
 def _classify_provider_error(exc: Exception) -> str:
-    provider_error_type = getattr(exc, "error_type", None)
-    if provider_error_type:
-        return str(provider_error_type)
-
     message = str(exc).lower()
     if "resource_exhausted" in message or "quota" in message or "429" in message:
         return "quota"
@@ -369,18 +343,18 @@ def _invoke_with_short_retries(
     for attempt in range(len(delays) + 1):
         try:
             return invoke_fn(), None
-        except AIProviderError as exc:
+        except genai_errors.ClientError as exc:
             provider_error_type = _classify_provider_error(exc)
             if provider_error_type == "quota":
                 raise AIChatQuotaError(
-                    "AI provider quota exceeded. Please retry shortly or check billing/quota limits."
+                    "Gemini quota exceeded. Please retry shortly or check billing/quota limits."
                 ) from exc
             if attempt < len(delays) and _is_retryable_provider_error(provider_error_type):
                 sleep(delays[attempt])
                 last_exc = exc
                 continue
             raise AIModelInvocationError(
-                f"Model invocation failed: {exc}",
+                AI_PROVIDER_TEMPORARILY_UNAVAILABLE,
                 provider_error_type=provider_error_type,
                 orchestrator=orchestrator,
                 chain_name=chain_name,
@@ -393,7 +367,7 @@ def _invoke_with_short_retries(
                 last_exc = exc
                 continue
             raise AIModelInvocationError(
-                f"Model invocation failed: {exc}",
+                AI_PROVIDER_TEMPORARILY_UNAVAILABLE,
                 provider_error_type=provider_error_type,
                 orchestrator=orchestrator,
                 chain_name=chain_name,
@@ -401,7 +375,7 @@ def _invoke_with_short_retries(
             ) from exc
 
     raise AIModelInvocationError(
-        f"Model invocation failed: {last_exc}",
+        AI_PROVIDER_TEMPORARILY_UNAVAILABLE,
         provider_error_type=_classify_provider_error(last_exc or RuntimeError("unknown error")),
         orchestrator=orchestrator,
         chain_name=chain_name,
@@ -455,7 +429,7 @@ def generate_chat_reply(
         )
 
     langchain_failure: AIModelInvocationError | None = None
-    if settings.ai_chat_provider.strip().lower() == "gemini" and settings.ai_chat_orchestrator.strip().lower() == "langchain":
+    if settings.ai_chat_orchestrator.strip().lower() == "langchain":
         try:
             chain_result, _ = _invoke_with_short_retries(
                 invoke_fn=lambda: run_langchain_chat(
@@ -502,10 +476,7 @@ def generate_chat_reply(
         except AIModelInvocationError as exc:
             langchain_failure = exc
 
-    try:
-        provider = get_chat_provider()
-    except AIProviderConfigurationError as exc:
-        raise AIChatConfigurationError(str(exc)) from exc
+    client = _build_client()
     prompt_input_text = (
         build_rag_user_prompt(
             current_user_message=current_user_message,
@@ -514,13 +485,9 @@ def generate_chat_reply(
         if use_retrieval
         else current_user_message
     )
-    fallback_used = langchain_failure is not None
-    provider_messages = _provider_messages_from_history(conversation_history)
     request_json = {
-        "provider": settings.ai_chat_provider,
-        "model": settings.ai_chat_model,
+        "model": settings.ai_demo_model_name,
         "contents": prompt_input_text,
-        "history": [{"role": message.role, "content": message.content} for message in provider_messages],
         "config": {
             "system_instruction": prompt.system_instruction,
             "temperature": 0.5,
@@ -529,25 +496,24 @@ def generate_chat_reply(
         "prompt_template_name": prompt.name,
         "orchestrator": "direct_sdk",
         "chain_name": chain_name,
-        "fallback_used": fallback_used,
+        "fallback_used": settings.ai_chat_orchestrator.strip().lower() == "langchain",
         "provider_error_type": None,
         "fallback_source_error_type": langchain_failure.provider_error_type if langchain_failure else None,
     }
     try:
         response, _ = _invoke_with_short_retries(
-            invoke_fn=lambda: provider.generate(
-                ChatGenerationRequest(
-                    model=settings.ai_chat_model,
+            invoke_fn=lambda: client.models.generate_content(
+                model=settings.ai_demo_model_name,
+                contents=prompt_input_text,
+                config=types.GenerateContentConfig(
                     system_instruction=prompt.system_instruction,
-                    contents=prompt_input_text,
                     temperature=0.5,
                     max_output_tokens=settings.ai_chat_max_output_tokens,
-                    messages=provider_messages,
-                )
+                ),
             ),
             orchestrator="direct_sdk",
             chain_name=chain_name,
-            fallback_used=fallback_used,
+            fallback_used=settings.ai_chat_orchestrator.strip().lower() == "langchain",
         )
     except AIChatQuotaError:
         raise
@@ -556,22 +522,21 @@ def generate_chat_reply(
         raise
 
     latency_ms = int((perf_counter() - started_at) * 1000)
-    usage_metadata = response.usage_metadata
+    usage_metadata = getattr(response, "usage_metadata", None)
     prompt_tokens = _extract_usage_value(usage_metadata, "prompt_token_count", "input_tokens")
     completion_tokens = _extract_usage_value(usage_metadata, "candidates_token_count", "output_tokens")
     total_tokens = _extract_usage_value(usage_metadata, "total_token_count", "total_tokens")
     response_json = {
-        "text": response.text,
+        "text": getattr(response, "text", None),
         "usage_metadata": _safe_usage_metadata(usage_metadata),
-        "provider": settings.ai_chat_provider,
         "orchestrator": "direct_sdk",
         "chain_name": chain_name,
-        "fallback_used": fallback_used,
+        "fallback_used": settings.ai_chat_orchestrator.strip().lower() == "langchain",
         "provider_error_type": None,
         "fallback_source_error_type": langchain_failure.provider_error_type if langchain_failure else None,
     }
 
-    if response.text:
+    if getattr(response, "text", None):
         return AIChatReplyResult(
             reply=response.text.strip(),
             prompt_tokens=prompt_tokens,

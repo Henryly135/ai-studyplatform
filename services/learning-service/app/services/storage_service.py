@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import mimetypes
+import posixpath
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse, urlunparse
 
 from fastapi import UploadFile
 from minio.error import S3Error
 from app.core.config import settings
+from app.services.upload_scan_service import UploadScanResult, UploadScanService
+from platform_common.ids.secret import get_public_id_secret
 from platform_common.storage import (
     abort_multipart_upload,
     build_minio_client,
@@ -17,6 +23,35 @@ from platform_common.storage import (
     create_multipart_upload,
     ensure_bucket_exists,
 )
+
+
+def normalize_local_material_object_key(object_key: str) -> str:
+    candidate = unquote(object_key or "").replace("\\", "/").strip()
+    if not candidate or candidate.startswith("/") or "\x00" in candidate:
+        raise ValueError("Material path is invalid")
+
+    normalized = posixpath.normpath(candidate)
+    if normalized in {".", ".."} or normalized.startswith("../"):
+        raise ValueError("Material path must stay within the configured material root")
+    return normalized
+
+
+def sign_local_material_access_url(object_key: str, expires_at: int) -> str:
+    normalized_key = normalize_local_material_object_key(object_key)
+    secret = get_public_id_secret(settings.public_id_secret)
+    payload = f"{normalized_key}:{expires_at}"
+    return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def validate_local_material_access_url(object_key: str, expires: int, signature: str) -> str:
+    if expires < int(time.time()):
+        raise ValueError("Material access URL has expired")
+
+    normalized_key = normalize_local_material_object_key(object_key)
+    expected_signature = sign_local_material_access_url(normalized_key, expires)
+    if not hmac.compare_digest(signature or "", expected_signature):
+        raise ValueError("Material access URL signature is invalid")
+    return normalized_key
 
 
 @dataclass(frozen=True)
@@ -94,16 +129,18 @@ class StorageService:
         if self.provider != "minio":
             raise ValueError("Multipart direct uploads require OBJECT_STORAGE_PROVIDER=minio")
 
+        normalized_bucket = bucket or settings.minio_bucket
         client = self._build_minio_client()
         expires = timedelta(seconds=settings.minio_multipart_part_url_expires_seconds)
-        return build_multipart_part_upload_url(
+        presigned_url = build_multipart_part_upload_url(
             client,
-            bucket_name=bucket or settings.minio_bucket,
+            bucket_name=normalized_bucket,
             object_name=object_key,
             upload_id=upload_id,
             part_number=part_number,
             expires=expires,
         )
+        return self._rewrite_minio_presigned_url(presigned_url=presigned_url, bucket=normalized_bucket)
 
     def complete_multipart_material_upload(
         self,
@@ -158,7 +195,8 @@ class StorageService:
 
     def get_material_access_url(self, *, metadata: dict | None, fallback_url: str | None) -> str:
         if self.provider != "minio":
-            return fallback_url or ""
+            object_key = self._resolve_local_material_object_key(metadata=metadata, fallback_url=fallback_url)
+            return self._build_local_material_access_url(object_key) if object_key else ""
 
         metadata = metadata or {}
         object_key = metadata.get("objectKey") or metadata.get("storedRelativePath")
@@ -168,7 +206,8 @@ class StorageService:
 
         client = self._build_minio_client()
         expires = timedelta(seconds=settings.minio_signed_url_expires_seconds)
-        return client.presigned_get_object(bucket, object_key, expires=expires)
+        presigned_url = client.presigned_get_object(bucket, object_key, expires=expires)
+        return self._rewrite_minio_presigned_url(presigned_url=presigned_url, bucket=bucket)
 
     def delete_course_cover(
         self,
@@ -227,6 +266,30 @@ class StorageService:
             raise ValueError("Material storage path must remain within the configured material root") from exc
         target_path.unlink(missing_ok=True)
 
+    def scan_stored_file(self, *, stored_file: StoredFile, scanner: UploadScanService) -> UploadScanResult:
+        normalized_provider = stored_file.provider.strip().lower()
+        if normalized_provider == "local":
+            target_path = stored_file.absolute_path or (settings.material_root_path / stored_file.object_key).resolve()
+            try:
+                target_path.relative_to(settings.material_root_path.resolve())
+            except ValueError as exc:
+                raise ValueError("Material storage path must remain within the configured material root") from exc
+            return scanner.scan_path(target_path, label=stored_file.original_filename)
+
+        if normalized_provider == "minio":
+            client = self._build_minio_client()
+            response = client.get_object(stored_file.bucket or settings.minio_bucket, stored_file.object_key)
+            try:
+                return scanner.scan_chunks(
+                    response.stream(max(4096, settings.material_scan_chunk_bytes)),
+                    label=stored_file.original_filename,
+                )
+            finally:
+                response.close()
+                response.release_conn()
+
+        raise ValueError("Unsupported storage provider for material security scan")
+
     def _store_upload(self, *, upload: UploadFile, object_key: str) -> StoredFile:
         if self.provider == "minio":
             return self._store_minio(upload=upload, object_key=object_key)
@@ -246,6 +309,10 @@ class StorageService:
                     if not chunk:
                         break
                     size_bytes += len(chunk)
+                    if size_bytes > settings.max_material_upload_bytes:
+                        raise ValueError(
+                            f"File is too large for standard upload. Maximum is {settings.max_material_upload_bytes} bytes."
+                        )
                     output_stream.write(chunk)
         except Exception:
             self._delete_file_if_exists(target_path)
@@ -269,19 +336,23 @@ class StorageService:
         client = self._build_minio_client()
         ensure_bucket_exists(client, settings.minio_bucket)
         normalized_key = object_key
+        size_bytes = self._get_upload_size(upload)
+        if size_bytes > settings.max_material_upload_bytes:
+            raise ValueError(
+                f"File is too large for standard upload. Maximum is {settings.max_material_upload_bytes} bytes."
+            )
 
-        upload.file.seek(0)
-        payload = upload.file.read()
-        size_bytes = len(payload)
-        upload.file.close()
-
-        client.put_object(
-            settings.minio_bucket,
-            normalized_key,
-            data=self._to_stream(payload),
-            length=size_bytes,
-            content_type=upload.content_type or "application/octet-stream",
-        )
+        try:
+            upload.file.seek(0)
+            client.put_object(
+                settings.minio_bucket,
+                normalized_key,
+                data=upload.file,
+                length=size_bytes,
+                content_type=upload.content_type or "application/octet-stream",
+            )
+        finally:
+            upload.file.close()
         return StoredFile(
             provider="minio",
             bucket=settings.minio_bucket,
@@ -298,6 +369,35 @@ class StorageService:
         encoded_segments = "/".join(quote(part) for part in object_key.split("/"))
         return f"{base}/{encoded_segments}"
 
+    def _build_local_material_access_url(self, object_key: str) -> str:
+        normalized_key = normalize_local_material_object_key(object_key)
+        expires_at = int(time.time()) + max(1, settings.material_access_url_expires_seconds)
+        signature = sign_local_material_access_url(normalized_key, expires_at)
+        base = settings.learning_material_public_base_url.rstrip("/")
+        encoded_segments = "/".join(quote(part, safe="") for part in normalized_key.split("/"))
+        query = urlencode({"expires": str(expires_at), "signature": signature})
+        return f"{base}/{encoded_segments}?{query}"
+
+    def _resolve_local_material_object_key(self, *, metadata: dict | None, fallback_url: str | None) -> str | None:
+        metadata = metadata or {}
+        object_key = metadata.get("objectKey") or metadata.get("storedRelativePath")
+        if isinstance(object_key, str) and object_key.strip():
+            return normalize_local_material_object_key(object_key)
+
+        if not fallback_url:
+            return None
+
+        parsed = urlparse(fallback_url.strip())
+        parsed_path = parsed.path or fallback_url.strip()
+        material_base_path = urlparse(settings.learning_material_public_base_url).path.rstrip("/")
+        if material_base_path and parsed_path.startswith(f"{material_base_path}/"):
+            suffix = parsed_path.removeprefix(material_base_path).lstrip("/")
+            return normalize_local_material_object_key(suffix)
+
+        if fallback_url.strip().startswith(("http://", "https://", "/")):
+            return None
+        return normalize_local_material_object_key(fallback_url)
+
     def _build_minio_public_url(self, object_key: str) -> str:
         if settings.minio_public_base_url.strip():
             base = settings.minio_public_base_url.rstrip("/")
@@ -306,7 +406,39 @@ class StorageService:
 
         client = self._build_minio_client()
         expires = timedelta(seconds=settings.minio_signed_url_expires_seconds)
-        return client.presigned_get_object(settings.minio_bucket, object_key, expires=expires)
+        presigned_url = client.presigned_get_object(settings.minio_bucket, object_key, expires=expires)
+        return self._rewrite_minio_presigned_url(presigned_url=presigned_url, bucket=settings.minio_bucket)
+
+    def _rewrite_minio_presigned_url(self, *, presigned_url: str, bucket: str) -> str:
+        public_base_url = settings.minio_public_base_url.strip()
+        if not public_base_url:
+            return presigned_url
+
+        parsed_presigned = urlparse(presigned_url)
+        parsed_base = urlparse(public_base_url)
+        bucket_prefix = f"/{bucket.strip('/')}/"
+        if parsed_presigned.path.startswith(bucket_prefix):
+            object_path = parsed_presigned.path.removeprefix(bucket_prefix).lstrip("/")
+        else:
+            object_path = parsed_presigned.path.lstrip("/")
+
+        base_path = parsed_base.path.rstrip("/")
+        rewritten_path = f"{base_path}/{object_path}" if base_path else f"/{object_path}"
+        rewritten_path = "/" + "/".join(quote(unquote(part), safe="") for part in rewritten_path.split("/") if part)
+
+        if parsed_base.scheme and parsed_base.netloc:
+            return urlunparse(
+                (
+                    parsed_base.scheme,
+                    parsed_base.netloc,
+                    rewritten_path,
+                    "",
+                    parsed_presigned.query,
+                    parsed_presigned.fragment,
+                )
+            )
+
+        return urlunparse(("", "", rewritten_path, "", parsed_presigned.query, parsed_presigned.fragment))
 
     def _build_minio_client(self):
         return build_minio_client(
@@ -337,6 +469,20 @@ class StorageService:
                 return candidate
             counter += 1
 
+    def _get_upload_size(self, upload: UploadFile) -> int:
+        size = getattr(upload, "size", None)
+        if isinstance(size, int) and size >= 0:
+            return size
+
+        try:
+            current_position = upload.file.tell()
+            upload.file.seek(0, 2)
+            size_bytes = upload.file.tell()
+            upload.file.seek(current_position)
+            return size_bytes
+        except (AttributeError, OSError) as exc:
+            raise ValueError("Unable to determine upload size") from exc
+
     def _delete_file_if_exists(self, target_path: Path) -> None:
         try:
             target_path.unlink(missing_ok=True)
@@ -361,8 +507,3 @@ class StorageService:
         if filename:
             return f"{course_uuid}/{filename}"
         return None
-
-    def _to_stream(self, payload: bytes):
-        from io import BytesIO
-
-        return BytesIO(payload)

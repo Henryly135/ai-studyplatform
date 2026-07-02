@@ -1,5 +1,4 @@
 export type AppRefreshScope =
-  | "admin:educator-requests"
   | "admin:users"
   | "course:catalog"
   | "course:detail"

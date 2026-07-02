@@ -1,5 +1,6 @@
 from platform_common.permissions.codes import (
     AI_CHAT_USE,
+    AI_GOVERNANCE_MANAGE,
     AUDIT_LOG_READ,
     COURSE_CREATE,
     COURSE_UPDATE,
@@ -35,6 +36,7 @@ from platform_common.permissions.checker import extract_permission_codes
 
 __all__ = [
     "AI_CHAT_USE",
+    "AI_GOVERNANCE_MANAGE",
     "AUDIT_LOG_READ",
     "COURSE_CREATE",
     "COURSE_UPDATE",

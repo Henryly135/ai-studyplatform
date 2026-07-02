@@ -6,30 +6,26 @@ function RoleSection() {
     return (
         <section className="role-section">
             <div className="role-card featured">
-                <h3>Learner</h3>
-                <p>Join classes, complete lessons, and track your progress.</p>
+                <h3>学生</h3>
+                <p>加入课程、完成学习并追踪进度。</p>
                 <button
                     type="button"
                     onClick={() => {
-                        console.log("learner clicked");
                         navigate("/register/learner");
                     }}
-                >
-                    Sign up as Learner
+                >注册学生账号
                 </button>
             </div>
 
             <div className="role-card">
-                <h3>Educator</h3>
-                <p>Create courses, assign activities, and support learners.</p>
+                <h3>教师</h3>
+                <p>创建课程、安排活动并支持学生。</p>
                 <button
                     type="button"
                     onClick={() => {
-                        console.log("educator clicked");
                         navigate("/register/educator");
                     }}
-                >
-                    Sign up as Educator
+                >注册教师账号
                 </button>
             </div>
         </section>

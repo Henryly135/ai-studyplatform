@@ -3,9 +3,11 @@ import type {
   ChangePasswordRequest,
   CurrentUserResponse,
   CurrentUserPermissionsResponse,
+  Identity,
   EducatorInviteRegisterRequest,
   LoginRequest,
   LoginSuccessResponse,
+  PermissionItem,
   RegisterRequest,
   RegisterSuccessResponse,
   ResetPasswordRequest,
@@ -14,6 +16,7 @@ import {
   buildAuthHeaders,
   handleAuthenticationFailureFromResponse,
 } from "./api";
+import { isUsableAccessToken } from "../utils/accessToken";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 
@@ -37,14 +40,140 @@ function getErrorMessage(data: ApiErrorResponse | null, fallback: string) {
   return data.detail || fallback;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function getField(data: Record<string, unknown>, camelKey: string, snakeKey?: string) {
+  return data[camelKey] ?? (snakeKey ? data[snakeKey] : undefined);
+}
+
+function toNonNegativeNumber(value: unknown, fallback = 0) {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : fallback;
+
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
+}
+
+function toBoolean(value: unknown, fallback = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
+function toNullableString(value: unknown) {
+  return value === null || value === undefined ? null : String(value);
+}
+
+function normalizeIdentity(value: unknown): Identity {
+  return value === "Admin" || value === "Educator" || value === "Learner" ? value : "Learner";
+}
+
+function normalizeUser(payload: unknown): CurrentUserResponse {
+  const data = asRecord(payload);
+  const accountStatus = toNullableString(getField(data, "accountStatus", "account_status"));
+
+  return {
+    id: toNonNegativeNumber(data.id),
+    userUuid: String(getField(data, "userUuid", "user_uuid") ?? ""),
+    email: String(data.email ?? ""),
+    userName: String(getField(data, "userName", "user_name") ?? ""),
+    identity: normalizeIdentity(data.identity),
+    emailVerified: toBoolean(getField(data, "emailVerified", "email_verified")),
+    ...(accountStatus === null ? {} : { accountStatus }),
+  };
+}
+
+function normalizeRegisterSuccess(payload: unknown): RegisterSuccessResponse {
+  const data = asRecord(payload);
+  const userPayload = getField(data, "user");
+
+  return {
+    detail: String(data.detail ?? ""),
+    ...(userPayload && typeof userPayload === "object" && !Array.isArray(userPayload)
+      ? { user: normalizeUser(userPayload) }
+      : {}),
+  };
+}
+
+function normalizeLoginSuccess(payload: unknown): LoginSuccessResponse {
+  const data = asRecord(payload);
+  const accessToken = String(getField(data, "accessToken", "access_token") ?? "");
+
+  if (!isUsableAccessToken(accessToken)) {
+    throw new Error("登录响应无效，请重试。");
+  }
+
+  return {
+    accessToken,
+    tokenType: "bearer",
+    expiresIn: toNonNegativeNumber(getField(data, "expiresIn", "expires_in")),
+    shouldShowGlobalProfileInitPrompt: toBoolean(
+      getField(data, "shouldShowGlobalProfileInitPrompt", "should_show_global_profile_init_prompt")
+    ),
+    user: normalizeUser(data.user),
+  };
+}
+
+function normalizeDetail(payload: unknown, fallback: string): { detail: string } {
+  const data = asRecord(payload);
+  return { detail: String(data.detail ?? fallback) };
+}
+
+function normalizeInviteValidation(payload: unknown): { valid: boolean; expiresAt: string } {
+  const data = asRecord(payload);
+  const result = {
+    valid: toBoolean(data.valid),
+    expiresAt: String(getField(data, "expiresAt", "expires_at") ?? ""),
+  };
+
+  if (!result.valid) {
+    throw new Error("Invalid or expired invite link.");
+  }
+
+  return result;
+}
+
+function normalizePermission(payload: unknown): PermissionItem {
+  const data = asRecord(payload);
+
+  return {
+    permissionId: toNonNegativeNumber(getField(data, "permissionId", "permission_id")),
+    permissionCode: String(getField(data, "permissionCode", "permission_code") ?? ""),
+    permissionName: String(getField(data, "permissionName", "permission_name") ?? ""),
+    description: toNullableString(data.description),
+  };
+}
+
+function normalizePermissions(payload: unknown): CurrentUserPermissionsResponse {
+  const data = asRecord(payload);
+
+  return {
+    permissions: Array.isArray(data.permissions) ? data.permissions.map(normalizePermission) : [],
+  };
+}
+
 export async function registerUser(
   payload: RegisterRequest
 ): Promise<RegisterSuccessResponse> {
-  console.log("[auth] register request", {
-    url: `${API_BASE_URL}/auth/register`,
-    payload,
-  });
-
   const response = await fetch(`${API_BASE_URL}/auth/register`, {
     method: "POST",
     headers: {
@@ -55,27 +184,16 @@ export async function registerUser(
 
   const data = await parseJsonSafe(response);
 
-  console.log("[auth] register response", {
-    status: response.status,
-    ok: response.ok,
-    data,
-  });
-
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Register failed."));
+    throw new Error(getErrorMessage(data, "注册失败。"));
   }
 
-  return data as RegisterSuccessResponse;
+  return normalizeRegisterSuccess(data);
 }
 
 export async function loginUser(
   payload: LoginRequest
 ): Promise<LoginSuccessResponse> {
-  console.log("[auth] login request", {
-    url: `${API_BASE_URL}/auth/login`,
-    payload,
-  });
-
   const response = await fetch(`${API_BASE_URL}/auth/login`, {
     method: "POST",
     headers: {
@@ -86,17 +204,11 @@ export async function loginUser(
 
   const data = await parseJsonSafe(response);
 
-  console.log("[auth] login response", {
-    status: response.status,
-    ok: response.ok,
-    data,
-  });
-
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Login failed."));
+    throw new Error(getErrorMessage(data, "登录失败。"));
   }
 
-  return data as LoginSuccessResponse;
+  return normalizeLoginSuccess(data);
 }
 
 export async function verifyEmail(token: string): Promise<{ detail: string }> {
@@ -108,10 +220,10 @@ export async function verifyEmail(token: string): Promise<{ detail: string }> {
   const data = await parseJsonSafe(response);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Email verification failed."));
+    throw new Error(getErrorMessage(data, "邮箱验证失败。"));
   }
 
-  return data as { detail: string };
+  return normalizeDetail(data, "邮箱验证成功。");
 }
 
 export async function resendVerification(
@@ -128,10 +240,10 @@ export async function resendVerification(
   const data = await parseJsonSafe(response);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to resend verification email."));
+    throw new Error(getErrorMessage(data, "重新发送验证邮件失败。"));
   }
 
-  return data as { detail: string };
+  return normalizeDetail(data, "Verification email resent.");
 }
 
 export async function changePassword(
@@ -151,10 +263,10 @@ export async function changePassword(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to change password."));
+    throw new Error(getErrorMessage(data, "修改密码失败。"));
   }
 
-  return data as { detail: string };
+  return normalizeDetail(data, "Password changed.");
 }
 
 export async function forgotPassword(email: string): Promise<{ detail: string }> {
@@ -167,10 +279,10 @@ export async function forgotPassword(email: string): Promise<{ detail: string }>
   const data = await parseJsonSafe(response);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to send reset email."));
+    throw new Error(getErrorMessage(data, "发送重置邮件失败。"));
   }
 
-  return data as { detail: string };
+  return normalizeDetail(data, "If the email exists, a reset link will be sent.");
 }
 
 export async function resetPassword(
@@ -185,10 +297,10 @@ export async function resetPassword(
   const data = await parseJsonSafe(response);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to reset password."));
+    throw new Error(getErrorMessage(data, "重置密码失败。"));
   }
 
-  return data as { detail: string };
+  return normalizeDetail(data, "Password reset.");
 }
 
 export async function getCurrentUser(
@@ -206,10 +318,10 @@ export async function getCurrentUser(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to fetch current user."));
+    throw new Error(getErrorMessage(data, "获取当前用户失败。"));
   }
 
-  return data as CurrentUserResponse;
+  return normalizeUser(data);
 }
 
 export async function validateEducatorInviteToken(
@@ -226,7 +338,7 @@ export async function validateEducatorInviteToken(
     throw new Error(getErrorMessage(data, "Invalid or expired invite link."));
   }
 
-  return data as { valid: boolean; expiresAt: string };
+  return normalizeInviteValidation(data);
 }
 
 export async function registerEducatorViaInvite(
@@ -241,10 +353,10 @@ export async function registerEducatorViaInvite(
   const data = await parseJsonSafe(response);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Registration failed."));
+    throw new Error(getErrorMessage(data, "注册失败。"));
   }
 
-  return data as RegisterSuccessResponse;
+  return normalizeRegisterSuccess(data);
 }
 
 export async function getCurrentUserPermissions(
@@ -262,8 +374,8 @@ export async function getCurrentUserPermissions(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to fetch current user permissions."));
+    throw new Error(getErrorMessage(data, "获取当前用户权限失败。"));
   }
 
-  return data as CurrentUserPermissionsResponse;
+  return normalizePermissions(data);
 }

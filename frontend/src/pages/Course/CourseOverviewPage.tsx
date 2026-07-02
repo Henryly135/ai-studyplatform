@@ -18,19 +18,19 @@ function CourseOverviewPage() {
 
         <div className="course-stat-grid">
           <article className="course-stat-card">
-            <span>Duration</span>
+            <span>时长</span>
             <strong>{course.estimatedMinutes ? `${course.estimatedMinutes} min` : "-"}</strong>
           </article>
           <article className="course-stat-card">
-            <span>Language</span>
+            <span>语言</span>
             <strong>{course.languageCode ? course.languageCode.toUpperCase() : "-"}</strong>
           </article>
           <article className="course-stat-card">
-            <span>Modules</span>
+            <span>模块</span>
             <strong>{course.modules.length}</strong>
           </article>
           <article className="course-stat-card">
-            <span>Difficulty</span>
+            <span>难度</span>
             <strong>{course.difficultyLevel}</strong>
           </article>
         </div>
@@ -39,7 +39,7 @@ function CourseOverviewPage() {
       <div className="course-detail-grid">
         <article className="course-panel">
           <div className="course-panel-heading">
-            <h3>About this course</h3>
+            <h3>关于这门课程</h3>
           </div>
           {course.subtitle ? <p>{course.subtitle}</p> : null}
           {course.description ? <p>{course.description}</p> : null}
@@ -47,15 +47,14 @@ function CourseOverviewPage() {
 
         <article className="course-panel">
           <div className="course-panel-heading">
-            <h3>Start learning</h3>
+            <h3>开始学习</h3>
           </div>
-          <p>Use the module navigation on the left, or jump into the first module directly.</p>
+          <p>使用左侧模块导航，或直接进入第一个模块。</p>
           {firstModule ? (
             <Link
               to={`/course/${course.courseUuid}/modules/${firstModule.moduleUuid}${location.search}`}
               className="course-primary-link"
-            >
-              Open first module
+            >打开第一个模块
             </Link>
           ) : null}
         </article>

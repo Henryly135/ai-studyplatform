@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -65,8 +65,6 @@ class ModuleResponse(BaseModel):
     hasPublishedQuiz: bool = False
     quizTitle: str | None = None
     quizTimeLimitSeconds: int | None = None
-    hasPublishedShortAnswer: bool = False
-    shortAnswerTitle: str | None = None
     progressStatus: str | None = None
     isCompleted: bool = False
     completedAt: datetime | None = None
@@ -180,59 +178,48 @@ class EducatorQuizAnalyticsResponse(BaseModel):
     items: list[QuizModuleStatsItem]
 
 
-class ModuleBottleneckInsightItem(BaseModel):
-    courseUuid: str
-    courseTitle: str
-    moduleUuid: str
-    moduleTitle: str
-    enrolledLearnerCount: int
-    startedLearnerCount: int
-    completedLearnerCount: int
-    completionRate: float | None
-    avgProgressPercent: float | None
-    signals: list[str]
-
-
-class AtRiskLearnerInsightItem(BaseModel):
-    courseUuid: str
-    courseTitle: str
-    learnerId: int
-    learnerUuid: str
-    progressPercent: float
-    completedModuleCount: int
-    totalModuleCount: int
-    incompleteModuleCount: int
-    lastAccessedAt: datetime | None
-    riskReasons: list[str]
-
-
-class CompletionTrendInsightItem(BaseModel):
-    courseUuid: str
-    courseTitle: str
-    bucketDate: date
-    completedCount: int
-
-
-class AssessmentSignalInsightItem(BaseModel):
-    courseUuid: str
-    courseTitle: str
-    moduleUuid: str
-    moduleTitle: str
-    quizTitle: str | None
-    quizAttemptCount: int
-    quizAvgScorePercent: float | None
-    quizPassRate: float | None
-    shortAnswerTitle: str | None
-    shortAnswerSubmissionCount: int
-    shortAnswerAvgAiScore: float | None
-    shortAnswerAvgFinalScore: float | None
-    shortAnswerMaxScore: float | None
-    shortAnswerPendingReviewCount: int
-    signals: list[str]
+class TeachingInsightItem(BaseModel):
+    insightId: str
+    priority: str
+    category: str
+    title: str
+    detail: str
+    actionLabel: str
+    courseUuid: str | None = None
+    courseTitle: str | None = None
+    moduleUuid: str | None = None
+    moduleTitle: str | None = None
+    metricLabel: str | None = None
+    metricValue: str | None = None
 
 
 class EducatorTeachingInsightsResponse(BaseModel):
-    moduleBottlenecks: list[ModuleBottleneckInsightItem]
-    atRiskLearners: list[AtRiskLearnerInsightItem]
-    completionTrends: list[CompletionTrendInsightItem]
-    assessmentSignals: list[AssessmentSignalInsightItem]
+    generatedAt: datetime
+    totalInsights: int
+    highPriorityCount: int
+    items: list[TeachingInsightItem]
+
+
+class EducatorMaterialBriefItem(BaseModel):
+    briefId: str
+    priority: str
+    courseUuid: str
+    courseTitle: str
+    moduleUuid: str
+    moduleTitle: str
+    moduleStatus: str
+    materialCount: int
+    materialTypes: list[str]
+    quizTitle: str | None = None
+    passRate: float | None = None
+    averageScorePercent: float | None = None
+    summary: str
+    difficultySignal: str
+    recommendedAction: str
+
+
+class EducatorMaterialBriefsResponse(BaseModel):
+    generatedAt: datetime
+    totalBriefs: int
+    highPriorityCount: int
+    items: list[EducatorMaterialBriefItem]

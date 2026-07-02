@@ -19,14 +19,14 @@ type DraggableModuleCardProps = {
 
 function formatModuleStatus(status: CourseModule["status"]) {
   if (status === "available") {
-    return "Published";
+    return "已发布";
   }
 
   if (status === "locked") {
-    return "Locked";
+    return "已锁定";
   }
 
-  return "Draft";
+  return "草稿";
 }
 
 function getModuleStatusTextClassName(status: CourseModule["status"]) {
@@ -92,14 +92,14 @@ function DraggableModuleCard({
       <Link to={`/course/${courseUuid}/management/modules/${module.moduleUuid}${managementSearchSuffix}`} className="course-management-module-body">
         <div className="course-management-list-top">
           <div>
-            <span>Module {module.sortOrder ?? index + 1}</span>
+            <span>模块 {module.sortOrder ?? index + 1}</span>
             <h3>{module.title}</h3>
           </div>
         </div>
         <p>{module.summary}</p>
         <div className="course-management-inline-tags">
-          <span className="course-management-tag-duration">{module.durationLabel || "No duration"}</span>
-          <span className="course-management-tag-materials">{module.materials.length} materials</span>
+          <span className="course-management-tag-duration">{module.durationLabel || "未设置时长"}</span>
+          <span className="course-management-tag-materials">{module.materials.length}份资料</span>
         </div>
       </Link>
 

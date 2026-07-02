@@ -10,6 +10,7 @@ def publish_quiz_node(*, state: QuizGenerationWorkflowState) -> QuizGenerationWo
         course_uuid=request.courseUuid,
         module_uuid=request.moduleUuid,
         candidate_set=state["candidateSet"],
+        purpose="attempt" if request.learnerId is not None else "authoring",
     )
     return {
         **state,

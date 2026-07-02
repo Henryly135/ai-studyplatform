@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.core.uuid_codec import decode_course_uuid, decode_user_uuid, encode_course_uuid, encode_user_uuid
 from app.models.course_enrollment_audit_logs import EnrollmentAuditActionType, EnrollmentAuditActorRole
 from app.models.course_enrollments import EnrollmentStatus
+from app.models.courses import CourseStatus
 from app.repositories.course_enrollment_audit_log_repository import CourseEnrollmentAuditLogRepository
 from app.repositories.course_enrollment_repository import CourseEnrollmentRepository
 from app.repositories.course_repository import CourseRepository
@@ -20,6 +21,11 @@ class CourseEnrollmentServiceError(AppServiceError):
 class CourseNotFoundError(CourseEnrollmentServiceError):
     def __init__(self) -> None:
         super().__init__("Course not found", 404)
+
+
+class CourseNotAvailableForEnrollmentError(CourseEnrollmentServiceError):
+    def __init__(self) -> None:
+        super().__init__("Course is not available for public enrollment", 403)
 
 
 class LearnerOnlyEnrollmentError(CourseEnrollmentServiceError):
@@ -79,6 +85,8 @@ class CourseEnrollmentService:
         course = self.courses.get_by_id(course_id)
         if course is None:
             raise CourseNotFoundError()
+        if course.status != CourseStatus.PUBLISHED or not course.is_public:
+            raise CourseNotAvailableForEnrollmentError()
 
         total_module_count, progress_percent = self.aggregates.build_initial_aggregate(course_id=course_id)
         existing_enrollment = self.enrollments.get_by_course_and_learner(course_id=course_id, learner_id=learner_id)

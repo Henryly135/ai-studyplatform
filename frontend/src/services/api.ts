@@ -1,12 +1,18 @@
+import { isUsableAccessToken } from "../utils/accessToken";
+import type { CurrentUserResponse, Identity } from "../types/auth";
+
 const AUTHENTICATION_ERROR_MESSAGES = new Set([
   "Invalid credentials",
   "Unable to resolve current user",
+  "无法解析当前用户",
 ]);
 
 const AUTHENTICATION_ERROR_CODES = new Set([
   "INVALID_CREDENTIALS",
   "UNAUTHORIZED",
 ]);
+
+const VALID_IDENTITIES = new Set<Identity>(["Learner", "Educator", "Admin"]);
 
 export function clearStoredSession() {
   localStorage.removeItem("accessToken");
@@ -27,12 +33,89 @@ export function handleAuthenticationFailure() {
 
 export function getStoredAccessToken(): string {
   const accessToken = localStorage.getItem("accessToken");
-  if (!accessToken) {
+  if (!accessToken || !isUsableAccessToken(accessToken)) {
     handleAuthenticationFailure();
     throw new Error("Invalid credentials");
   }
 
   return accessToken;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function pickField(data: Record<string, unknown>, camelKey: string, snakeKey?: string) {
+  return data[camelKey] ?? (snakeKey ? data[snakeKey] : undefined);
+}
+
+function toNonNegativeNumber(value: unknown) {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : 0;
+
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
+function toBoolean(value: unknown) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function normalizeStoredCurrentUser(payload: unknown): CurrentUserResponse | null {
+  const data = readRecord(payload);
+  if (!data || !VALID_IDENTITIES.has(data.identity as Identity)) {
+    return null;
+  }
+
+  const accountStatus = pickField(data, "accountStatus", "account_status");
+
+  return {
+    id: toNonNegativeNumber(data.id),
+    userUuid: String(pickField(data, "userUuid", "user_uuid") ?? ""),
+    email: String(data.email ?? ""),
+    userName: String(pickField(data, "userName", "user_name") ?? ""),
+    identity: data.identity as Identity,
+    emailVerified: toBoolean(pickField(data, "emailVerified", "email_verified")),
+    ...(accountStatus === null || accountStatus === undefined ? {} : { accountStatus: String(accountStatus) }),
+  };
+}
+
+export function getStoredCurrentUser(): CurrentUserResponse | null {
+  const raw = localStorage.getItem("currentUser");
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const user = normalizeStoredCurrentUser(JSON.parse(raw));
+    if (user) {
+      return user;
+    }
+  } catch {
+    // Fall through to remove the corrupt cache entry.
+  }
+
+  localStorage.removeItem("currentUser");
+  return null;
 }
 
 export function buildAuthHeaders(headers: HeadersInit = {}): HeadersInit {

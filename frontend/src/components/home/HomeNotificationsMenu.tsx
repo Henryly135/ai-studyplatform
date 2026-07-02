@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LuBell, LuCheckCheck, LuChevronRight } from "react-icons/lu";
 
@@ -26,7 +26,7 @@ function formatRelativeTime(value: string) {
   const differenceMinutes = Math.max(0, Math.floor(differenceMs / 60000));
 
   if (differenceMinutes < 1) {
-    return "Just now";
+    return "刚刚";
   }
 
   if (differenceMinutes < 60) {
@@ -52,6 +52,7 @@ function formatRelativeTime(value: string) {
 function HomeNotificationsMenu() {
   const navigate = useNavigate();
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isMarkingAll, setIsMarkingAll] = useState(false);
@@ -59,6 +60,16 @@ function HomeNotificationsMenu() {
   const [notifications, setNotifications] = useState<NotificationRecipientRead[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const pollInFlightRef = useRef(false);
+  const closeMenu = useCallback((options?: { restoreFocus?: boolean }) => {
+    setIsOpen(false);
+    if (options?.restoreFocus === false) {
+      return;
+    }
+
+    window.setTimeout(() => {
+      triggerRef.current?.focus();
+    }, 0);
+  }, []);
 
   const loadUnreadCount = async () => {
     try {
@@ -88,7 +99,7 @@ function HomeNotificationsMenu() {
       setUnreadCount(unreadResponse.unreadCount);
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : "Failed to load notifications."
+        error instanceof Error ? error.message : "通知加载失败。"
       );
     } finally {
       setIsLoading(false);
@@ -146,13 +157,13 @@ function HomeNotificationsMenu() {
 
     const handlePointerDown = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
+        closeMenu({ restoreFocus: false });
       }
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setIsOpen(false);
+        closeMenu();
       }
     };
 
@@ -163,7 +174,7 @@ function HomeNotificationsMenu() {
       window.removeEventListener("mousedown", handlePointerDown);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen]);
+  }, [closeMenu, isOpen]);
 
   const handleToggle = () => {
     const nextOpen = !isOpen;
@@ -175,7 +186,7 @@ function HomeNotificationsMenu() {
   };
 
   const handleOpenNotificationCenter = () => {
-    setIsOpen(false);
+    closeMenu({ restoreFocus: false });
     navigate("/home/communication");
   };
 
@@ -203,7 +214,7 @@ function HomeNotificationsMenu() {
       emitAppRefresh({ scope: "notifications" });
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : "Failed to mark all notifications as read."
+        error instanceof Error ? error.message : "全部标记为已读失败。"
       );
     } finally {
       setIsMarkingAll(false);
@@ -234,7 +245,7 @@ function HomeNotificationsMenu() {
       }
     }
 
-    setIsOpen(false);
+    closeMenu({ restoreFocus: false });
     navigate("/home/communication");
   };
 
@@ -242,11 +253,13 @@ function HomeNotificationsMenu() {
     <div className="home-notifications" ref={menuRef}>
       <button
         type="button"
+        ref={triggerRef}
         className={`home-notifications-trigger${isOpen ? " home-notifications-trigger-open" : ""}`}
         onClick={handleToggle}
-        aria-label="Open notifications"
+        aria-label="打开通知"
         aria-expanded={isOpen}
         aria-haspopup="dialog"
+        aria-controls={isOpen ? "home-notifications-panel" : undefined}
       >
         <LuBell size={18} aria-hidden="true" />
         {unreadCount > 0 ? (
@@ -257,10 +270,10 @@ function HomeNotificationsMenu() {
       </button>
 
       {isOpen ? (
-        <div className="home-notifications-panel" role="dialog" aria-label="Notifications">
+        <div id="home-notifications-panel" className="home-notifications-panel" role="dialog" aria-label="通知">
           <div className="home-notifications-panel-header">
             <div>
-              <h3>Notifications</h3>
+              <h3>通知</h3>
             </div>
 
             <button
@@ -270,7 +283,7 @@ function HomeNotificationsMenu() {
               disabled={unreadCount < 1 || isMarkingAll}
             >
               <LuCheckCheck size={16} aria-hidden="true" />
-              {isMarkingAll ? "Marking..." : "Mark all as read"}
+              {isMarkingAll ? "标记中..." : "全部标记为已读"}
             </button>
           </div>
 
@@ -282,11 +295,11 @@ function HomeNotificationsMenu() {
 
           <div className="home-notifications-list">
             {isLoading ? (
-              <p className="home-notifications-feedback">Loading notifications...</p>
+              <p className="home-notifications-feedback">正在加载通知...</p>
             ) : notifications.length === 0 ? (
               <div className="home-notifications-empty">
-                <strong>Nothing new right now</strong>
-                <p>New updates will appear here when the platform sends them.</p>
+                <strong>暂时没有新内容</strong>
+                <p>平台发送的新通知会显示在这里。</p>
               </div>
             ) : (
               notifications.map((notification) => (
@@ -302,8 +315,7 @@ function HomeNotificationsMenu() {
                   </div>
                   <div className="home-notifications-item-meta">
                     <span>{formatRelativeTime(notification.receivedAt)}</span>
-                    <span className="home-notifications-item-link">
-                      View notification
+                    <span className="home-notifications-item-link">查看通知
                       <LuChevronRight size={15} aria-hidden="true" />
                     </span>
                   </div>
@@ -316,8 +328,7 @@ function HomeNotificationsMenu() {
             type="button"
             className="home-notifications-footer"
             onClick={handleOpenNotificationCenter}
-          >
-            View all notifications
+          >查看全部通知
           </button>
         </div>
       ) : null}

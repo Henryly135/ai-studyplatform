@@ -1,19 +1,18 @@
-from collections import defaultdict
-from datetime import date, datetime, timedelta
-from decimal import Decimal
+from dataclasses import dataclass
+from pathlib import Path
 
 from fastapi import UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.time import now_local
-from app.core.uuid_codec import decode_course_uuid, decode_module_uuid, encode_course_uuid, encode_module_uuid, encode_user_uuid
+from app.core.uuid_codec import decode_course_uuid, decode_module_uuid, encode_course_uuid, encode_module_uuid
 from app.models.courses import Course, CourseStatus, DifficultyLevelStatus
 from app.models.modules import ModuleStatus
 from app.models.quizzes import QuizStatus
 from app.repositories.course_repository import CourseRepository
 from app.repositories.learning_path_repository import LearningPathRepository
 from app.repositories.module_material_repository import ModuleMaterialRepository
-from app.repositories.module_progress_repository import ModuleProgressRepository
 from app.repositories.module_repository import ModuleRepository
 from app.repositories.module_repository import _UNSET
 from app.repositories.quiz_question_option_repository import QuizQuestionOptionRepository
@@ -21,29 +20,65 @@ from app.repositories.quiz_question_repository import QuizQuestionRepository
 from app.repositories.quiz_repository import QuizRepository
 from app.repositories.course_enrollment_repository import CourseEnrollmentRepository
 from app.repositories.quiz_attempt_repository import QuizAttemptRepository
-from app.repositories.short_answer_assessment_repository import ShortAnswerAssessmentRepository
-from app.repositories.short_answer_submission_repository import ShortAnswerSubmissionRepository
 from app.schemas.course import (
-    AssessmentSignalInsightItem,
-    AtRiskLearnerInsightItem,
-    CompletionTrendInsightItem,
     CourseCreateRequest,
     CourseDetailResponse,
     CoursePublishRequest,
     CourseUpdateRequest,
     EducatorAnalyticsResponse,
     EducatorCourseAnalyticsItem,
+    EducatorMaterialBriefItem,
+    EducatorMaterialBriefsResponse,
     EducatorQuizAnalyticsResponse,
     EducatorTeachingInsightsResponse,
-    ModuleBottleneckInsightItem,
     QuizModuleStatsItem,
+    TeachingInsightItem,
 )
 from app.services.ai_index_job_client import AIIndexJobClient
 from app.services.course_catalog_service import CourseCatalogService
 from app.services.course_enrollment_aggregate_service import CourseEnrollmentAggregateService
 from app.services.module_material_service import ModuleMaterialService
-from app.services.storage_service import StorageService
+from app.services.storage_service import StorageService, StoredFile, normalize_local_material_object_key
+from app.services.upload_scan_service import UploadScanFailure, UploadScanService
 from platform_common.errors import http_error, invalid_identity_response_error, invalid_request_error
+
+
+_ALLOWED_COVER_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+_ALLOWED_COVER_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+_MATERIAL_BRIEF_TEXT_CONTENT_TYPES = {
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/json",
+}
+_MATERIAL_BRIEF_TEXT_SUFFIXES = {".txt", ".md", ".csv", ".json"}
+_MATERIAL_BRIEF_MAX_TEXT_BYTES = 64 * 1024
+_MATERIAL_BRIEF_OBJECTIVE_TERMS = {"objective", "outcome", "goal", "you will learn", "by the end"}
+_MATERIAL_BRIEF_EXAMPLE_TERMS = {"example", "worked example", "walkthrough", "case study", "sample"}
+_MATERIAL_BRIEF_PRACTICE_TERMS = {"practice", "exercise", "checkpoint", "try it", "quiz", "question"}
+_MATERIAL_BRIEF_PREREQUISITE_TERMS = {"prerequisite", "assume", "before you start", "prior knowledge", "background"}
+_MATERIAL_BRIEF_ADVANCED_TERMS = {
+    "advanced",
+    "complex",
+    "proof",
+    "theorem",
+    "derive",
+    "optimization",
+    "edge case",
+    "debug",
+    "architecture",
+}
+
+
+@dataclass(frozen=True)
+class _MaterialBriefTextSignal:
+    extracted_count: int
+    total_chars: int
+    labels: tuple[str, ...]
+    has_worked_examples: bool
+    has_practice: bool
+    has_prerequisites: bool
+    has_advanced_terms: bool
 
 
 class CourseManagementService:
@@ -53,19 +88,17 @@ class CourseManagementService:
         self.learning_paths = LearningPathRepository(session)
         self.modules = ModuleRepository(session)
         self.materials = ModuleMaterialRepository(session)
-        self.module_progress = ModuleProgressRepository(session)
         self.ai_index_jobs = AIIndexJobClient()
         self.catalog = CourseCatalogService(session)
         self.enrollment_aggregates = CourseEnrollmentAggregateService(session)
         self.enrollments = CourseEnrollmentRepository(session)
         self.quiz_attempts = QuizAttemptRepository(session)
         self.storage = StorageService()
+        self.upload_scanner = UploadScanService()
         self.material_service = ModuleMaterialService(session)
         self.quizzes = QuizRepository(session)
         self.quiz_questions = QuizQuestionRepository(session)
         self.quiz_options = QuizQuestionOptionRepository(session)
-        self.short_answer_assessments = ShortAnswerAssessmentRepository(session)
-        self.short_answer_submissions = ShortAnswerSubmissionRepository(session)
 
     def create_course(
         self,
@@ -109,6 +142,7 @@ class CourseManagementService:
 
         try:
             if cover_image is not None:
+                self._validate_course_cover_upload(cover_image)
                 stored_cover_image = self.storage.store_course_cover(course_uuid=course_uuid, upload=cover_image)
                 self.courses.update(
                     course,
@@ -119,8 +153,7 @@ class CourseManagementService:
             self.session.refresh(course)
         except Exception:
             self.session.rollback()
-            if stored_cover_image is not None:
-                self._delete_file_if_exists(stored_cover_image.absolute_path)
+            self._delete_stored_course_cover_quietly(course_uuid=course_uuid, stored_cover_image=stored_cover_image)
             raise
 
         return self.catalog.get_course_by_id(course_id=course.course_id, current_user=current_user)
@@ -292,6 +325,7 @@ class CourseManagementService:
         stored_cover_image = None
 
         try:
+            self._validate_course_cover_upload(cover_image)
             stored_cover_image = self.storage.store_course_cover(course_uuid=course_uuid, upload=cover_image)
             self.courses.update(
                 course,
@@ -302,8 +336,7 @@ class CourseManagementService:
             self.session.refresh(course)
         except Exception:
             self.session.rollback()
-            if stored_cover_image is not None:
-                self._delete_file_if_exists(stored_cover_image.absolute_path)
+            self._delete_stored_course_cover_quietly(course_uuid=course_uuid, stored_cover_image=stored_cover_image)
             raise
 
         return self.catalog.get_course_by_id(course_id=course.course_id, current_user=current_user)
@@ -347,6 +380,58 @@ class CourseManagementService:
             raise invalid_request_error(
                 "difficultyLevel must be one of beginner, intermediate, advanced"
             ) from exc
+
+    def _validate_course_cover_upload(self, upload: UploadFile) -> None:
+        normalized_content_type = (upload.content_type or "").strip().lower()
+        filename = upload.filename or ""
+        extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        normalized_extension = f".{extension}" if extension else ""
+
+        if normalized_content_type not in _ALLOWED_COVER_IMAGE_CONTENT_TYPES and (
+            normalized_content_type or normalized_extension not in _ALLOWED_COVER_IMAGE_EXTENSIONS
+        ):
+            raise invalid_request_error("Course cover must be a JPEG, PNG, WebP, or GIF image")
+
+        size_bytes = self._get_upload_size(upload)
+        if size_bytes is not None and size_bytes > settings.max_material_upload_bytes:
+            raise invalid_request_error(
+                f"Course cover image is too large. Maximum is {settings.max_material_upload_bytes} bytes."
+            )
+
+        try:
+            self.upload_scanner.scan_upload(upload, label=filename or "course-cover")
+        except UploadScanFailure as exc:
+            raise invalid_request_error(str(exc)) from exc
+
+    def _get_upload_size(self, upload: UploadFile) -> int | None:
+        size = getattr(upload, "size", None)
+        if isinstance(size, int) and size >= 0:
+            return size
+
+        try:
+            current_position = upload.file.tell()
+            upload.file.seek(0, 2)
+            size_bytes = upload.file.tell()
+            upload.file.seek(current_position)
+            return size_bytes
+        except (AttributeError, OSError):
+            return None
+
+    def _delete_stored_course_cover_quietly(
+        self,
+        *,
+        course_uuid: str,
+        stored_cover_image: StoredFile | None,
+    ) -> None:
+        if stored_cover_image is None:
+            return
+        try:
+            self.storage.delete_course_cover(
+                course_uuid=course_uuid,
+                cover_image_url=stored_cover_image.public_url,
+            )
+        except Exception:
+            pass
 
     def _build_learning_path_title(self, *, payload: CourseCreateRequest, course: Course) -> str:
         custom_title = self._normalize_optional_text(payload.learningPathTitle)
@@ -429,208 +514,487 @@ class CourseManagementService:
         if not isinstance(educator_id, int):
             raise invalid_identity_response_error()
 
-        courses = self.courses.list_by_educator(educator_id)
-        if not courses:
-            return EducatorTeachingInsightsResponse(
-                moduleBottlenecks=[],
-                atRiskLearners=[],
-                completionTrends=[],
-                assessmentSignals=[],
-            )
+        course_rows = self.enrollments.aggregate_stats_by_educator(educator_id=educator_id)
+        quiz_rows = self.quiz_attempts.aggregate_stats_by_educator(educator_id=educator_id)
+        insights: list[TeachingInsightItem] = []
 
-        quiz_rows_by_module = {
-            row["module_id"]: row
+        for row in course_rows:
+            course_uuid = encode_course_uuid(row["course_id"])
+            course_title = row["course_title"]
+            total_enrollments = int(row["total_enrollments"] or 0)
+            active_enrollments = int(row["active_enrollments"] or 0)
+            completed_enrollments = int(row["completed_enrollments"] or 0)
+            avg_progress = row["avg_progress_percent"]
+
+            if total_enrollments == 0:
+                insights.append(
+                    TeachingInsightItem(
+                        insightId=f"course-{row['course_id']}-no-enrolments",
+                        priority="medium",
+                        category="course_launch",
+                        title="Invite learners to start this course",
+                        detail=f"{course_title} is published but has no learner enrolments yet.",
+                        actionLabel="Share course or invite link",
+                        courseUuid=course_uuid,
+                        courseTitle=course_title,
+                        metricLabel="Enrolments",
+                        metricValue="0",
+                    )
+                )
+            elif avg_progress is not None and avg_progress < 40 and active_enrollments > 0:
+                insights.append(
+                    TeachingInsightItem(
+                        insightId=f"course-{row['course_id']}-low-progress",
+                        priority="high",
+                        category="learner_progress",
+                        title="Review low course progress",
+                        detail=f"{course_title} has {active_enrollments} active learners with average progress below 40%.",
+                        actionLabel="Check modules and send guidance",
+                        courseUuid=course_uuid,
+                        courseTitle=course_title,
+                        metricLabel="Average progress",
+                        metricValue=f"{round(float(avg_progress))}%",
+                    )
+                )
+            elif total_enrollments > 0 and completed_enrollments == 0 and active_enrollments >= 3:
+                insights.append(
+                    TeachingInsightItem(
+                        insightId=f"course-{row['course_id']}-no-completions",
+                        priority="medium",
+                        category="learner_progress",
+                        title="No learners have completed this course yet",
+                        detail=f"{course_title} has learner activity, but no completion records.",
+                        actionLabel="Review prerequisites and assessment difficulty",
+                        courseUuid=course_uuid,
+                        courseTitle=course_title,
+                        metricLabel="Completions",
+                        metricValue="0",
+                    )
+                )
+
+        for row in quiz_rows:
+            course_uuid = encode_course_uuid(row["course_id"])
+            module_uuid = encode_module_uuid(row["module_id"])
+            total_attempts = int(row["total_attempts"] or 0)
+            avg_score = row["avg_score_percent"]
+            pass_rate = row["pass_rate"]
+            avg_duration = row["avg_duration_seconds"]
+
+            if total_attempts == 0:
+                insights.append(
+                    TeachingInsightItem(
+                        insightId=f"quiz-{row['module_id']}-no-attempts",
+                        priority="medium",
+                        category="quiz_engagement",
+                        title="Published quiz has no attempts",
+                        detail=f"Learners have not attempted {row['quiz_title']} in {row['module_title']} yet.",
+                        actionLabel="Add a prompt in the module or announcement",
+                        courseUuid=course_uuid,
+                        courseTitle=row["course_title"],
+                        moduleUuid=module_uuid,
+                        moduleTitle=row["module_title"],
+                        metricLabel="Attempts",
+                        metricValue="0",
+                    )
+                )
+            elif pass_rate is not None and pass_rate < 0.6 and total_attempts >= 3:
+                insights.append(
+                    TeachingInsightItem(
+                        insightId=f"quiz-{row['module_id']}-low-pass-rate",
+                        priority="high",
+                        category="quiz_difficulty",
+                        title="Quiz pass rate needs review",
+                        detail=f"{row['quiz_title']} has a pass rate below 60% across {total_attempts} attempts.",
+                        actionLabel="Review explanations and prerequisite material",
+                        courseUuid=course_uuid,
+                        courseTitle=row["course_title"],
+                        moduleUuid=module_uuid,
+                        moduleTitle=row["module_title"],
+                        metricLabel="Pass rate",
+                        metricValue=f"{round(float(pass_rate) * 100)}%",
+                    )
+                )
+            elif avg_score is not None and avg_score < 70 and total_attempts >= 2:
+                insights.append(
+                    TeachingInsightItem(
+                        insightId=f"quiz-{row['module_id']}-low-score",
+                        priority="medium",
+                        category="quiz_difficulty",
+                        title="Average quiz score is low",
+                        detail=f"{row['quiz_title']} average score is below 70%.",
+                        actionLabel="Add worked examples before the quiz",
+                        courseUuid=course_uuid,
+                        courseTitle=row["course_title"],
+                        moduleUuid=module_uuid,
+                        moduleTitle=row["module_title"],
+                        metricLabel="Average score",
+                        metricValue=f"{round(float(avg_score))}%",
+                    )
+                )
+            elif avg_duration is not None and avg_duration > 900 and total_attempts >= 2:
+                insights.append(
+                    TeachingInsightItem(
+                        insightId=f"quiz-{row['module_id']}-long-duration",
+                        priority="low",
+                        category="quiz_timing",
+                        title="Quiz may be taking too long",
+                        detail=f"{row['quiz_title']} average duration is above 15 minutes.",
+                        actionLabel="Check wording and time limit",
+                        courseUuid=course_uuid,
+                        courseTitle=row["course_title"],
+                        moduleUuid=module_uuid,
+                        moduleTitle=row["module_title"],
+                        metricLabel="Average duration",
+                        metricValue=f"{round(float(avg_duration) / 60)} min",
+                    )
+                )
+
+        priority_rank = {"high": 0, "medium": 1, "low": 2}
+        insights.sort(key=lambda item: (priority_rank.get(item.priority, 9), item.category, item.title))
+        limited_items = insights[:8]
+        return EducatorTeachingInsightsResponse(
+            generatedAt=now_local(),
+            totalInsights=len(insights),
+            highPriorityCount=sum(1 for item in insights if item.priority == "high"),
+            items=limited_items,
+        )
+
+    def get_educator_material_briefs(self, *, current_user: dict) -> EducatorMaterialBriefsResponse:
+        educator_id = current_user.get("id")
+        if not isinstance(educator_id, int):
+            raise invalid_identity_response_error()
+
+        quiz_stats_by_module = {
+            int(row["module_id"]): row
             for row in self.quiz_attempts.aggregate_stats_by_educator(educator_id=educator_id)
         }
-        module_bottlenecks: list[ModuleBottleneckInsightItem] = []
-        at_risk_learners: list[AtRiskLearnerInsightItem] = []
-        assessment_signals: list[AssessmentSignalInsightItem] = []
-        completion_counts: dict[tuple[int, date], int] = defaultdict(int)
-        course_titles: dict[int, str] = {}
+        briefs: list[EducatorMaterialBriefItem] = []
 
-        for course in courses:
-            course_titles[course.course_id] = course.title
-            learning_path = self.learning_paths.get_by_course_id(course.course_id)
-            modules = self.modules.list_by_learning_path(learning_path.learning_path_id) if learning_path else []
-            enrollments = self.enrollments.list_current_by_course(course.course_id)
-            module_ids = [module.module_id for module in modules]
-            current_learner_ids = [int(enrollment.learner_id) for enrollment in enrollments]
-            progress_rows = self.module_progress.list_by_module_ids(
-                module_ids,
-                learner_ids=current_learner_ids,
-            )
-            module_stats = {
-                row["module_id"]: row
-                for row in self.module_progress.aggregate_stats_by_module_ids(
-                    module_ids,
-                    learner_ids=current_learner_ids,
+        for course in self.courses.list_by_educator(educator_id):
+            learning_path = getattr(course, "learning_path", None)
+            learning_path_id = getattr(learning_path, "learning_path_id", None)
+            if learning_path_id is None:
+                continue
+
+            for module in self.modules.list_by_learning_path(learning_path_id):
+                materials = self.materials.list_by_module(module.module_id)
+                material_types = self._format_material_types(materials)
+                quiz_stats = quiz_stats_by_module.get(module.module_id)
+                text_signal = self._build_material_text_signal(materials)
+                priority, difficulty_signal, recommended_action = self._build_material_brief_signal(
+                    material_count=len(materials),
+                    material_types=material_types,
+                    quiz_stats=quiz_stats,
+                    text_signal=text_signal,
                 )
-            }
-            assessments = self.short_answer_assessments.list_by_module_ids(module_ids)
-            assessment_by_module = {assessment.module_id: assessment for assessment in assessments}
-            short_answer_stats = {
-                row["assessment_id"]: row
-                for row in self.short_answer_submissions.aggregate_stats_by_assessment_ids(
-                    [assessment.short_answer_assessment_id for assessment in assessments]
+                summary = self._build_material_brief_summary(
+                    module_title=module.title,
+                    material_count=len(materials),
+                    material_types=material_types,
+                    quiz_stats=quiz_stats,
+                    text_signal=text_signal,
                 )
-            }
 
-            enrolled_count = len(enrollments)
-            course_uuid = encode_course_uuid(course.course_id)
-
-            for module in modules:
-                stats = module_stats.get(module.module_id, {})
-                started_count = int(stats.get("started_count") or 0)
-                completed_count = int(stats.get("completed_count") or 0)
-                avg_progress_percent = stats.get("avg_progress_percent")
-                completion_rate = completed_count / enrolled_count if enrolled_count else None
-                bottleneck_signals: list[str] = []
-                if enrolled_count == 0:
-                    bottleneck_signals.append("no_enrollments")
-                elif started_count == 0:
-                    bottleneck_signals.append("no_activity")
-                if completion_rate is not None and completion_rate < 0.5:
-                    bottleneck_signals.append("low_completion")
-                if avg_progress_percent is not None and avg_progress_percent < 35:
-                    bottleneck_signals.append("low_progress")
-
-                module_bottlenecks.append(
-                    ModuleBottleneckInsightItem(
-                        courseUuid=course_uuid,
+                briefs.append(
+                    EducatorMaterialBriefItem(
+                        briefId=f"module-{module.module_id}-material-brief",
+                        priority=priority,
+                        courseUuid=encode_course_uuid(course.course_id),
                         courseTitle=course.title,
                         moduleUuid=encode_module_uuid(module.module_id),
                         moduleTitle=module.title,
-                        enrolledLearnerCount=enrolled_count,
-                        startedLearnerCount=started_count,
-                        completedLearnerCount=completed_count,
-                        completionRate=completion_rate,
-                        avgProgressPercent=avg_progress_percent,
-                        signals=bottleneck_signals,
+                        moduleStatus=self._enum_value(module.status),
+                        materialCount=len(materials),
+                        materialTypes=material_types,
+                        quizTitle=quiz_stats["quiz_title"] if quiz_stats else None,
+                        passRate=float(quiz_stats["pass_rate"]) if quiz_stats and quiz_stats["pass_rate"] is not None else None,
+                        averageScorePercent=(
+                            float(quiz_stats["avg_score_percent"])
+                            if quiz_stats and quiz_stats["avg_score_percent"] is not None
+                            else None
+                        ),
+                        summary=summary,
+                        difficultySignal=difficulty_signal,
+                        recommendedAction=recommended_action,
                     )
                 )
 
-            for enrollment in enrollments:
-                total_module_count = int(getattr(enrollment, "total_module_count", 0) or len(modules))
-                completed_module_count = int(getattr(enrollment, "completed_module_count", 0) or 0)
-                incomplete_module_count = max(0, total_module_count - completed_module_count)
-                progress_percent = self._to_float(getattr(enrollment, "progress_percent", 0)) or 0.0
-                risk_reasons: list[str] = []
-                if progress_percent < 35:
-                    risk_reasons.append("low_progress")
-                last_accessed_at = getattr(enrollment, "last_accessed_at", None)
-                if last_accessed_at is None:
-                    risk_reasons.append("no_recent_activity")
-                elif self._is_older_than(last_accessed_at, days=14):
-                    risk_reasons.append("inactive_14_days")
-                incomplete_threshold = max(2, (total_module_count + 1) // 2) if total_module_count else 0
-                if incomplete_threshold and incomplete_module_count >= incomplete_threshold:
-                    risk_reasons.append("many_incomplete_modules")
-
-                if risk_reasons:
-                    learner_id = int(enrollment.learner_id)
-                    at_risk_learners.append(
-                        AtRiskLearnerInsightItem(
-                            courseUuid=course_uuid,
-                            courseTitle=course.title,
-                            learnerId=learner_id,
-                            learnerUuid=encode_user_uuid(learner_id),
-                            progressPercent=progress_percent,
-                            completedModuleCount=completed_module_count,
-                            totalModuleCount=total_module_count,
-                            incompleteModuleCount=incomplete_module_count,
-                            lastAccessedAt=last_accessed_at,
-                            riskReasons=risk_reasons,
-                        )
-                    )
-
-            for progress in progress_rows:
-                if progress.completed_at is not None:
-                    completion_counts[(course.course_id, progress.completed_at.date())] += 1
-
-            for module in modules:
-                quiz_row = quiz_rows_by_module.get(module.module_id)
-                assessment = assessment_by_module.get(module.module_id)
-                if quiz_row is None and assessment is None:
-                    continue
-
-                short_stats = short_answer_stats.get(
-                    assessment.short_answer_assessment_id if assessment is not None else -1,
-                    {},
-                )
-                quiz_attempt_count = int(quiz_row["total_attempts"]) if quiz_row else 0
-                quiz_avg_score = quiz_row.get("avg_score_percent") if quiz_row else None
-                quiz_pass_rate = quiz_row.get("pass_rate") if quiz_row else None
-                short_answer_submission_count = int(short_stats.get("submission_count") or 0)
-                short_answer_pending_count = int(short_stats.get("pending_review_count") or 0)
-                short_answer_avg_ai_score = short_stats.get("avg_ai_score")
-                short_answer_avg_final_score = short_stats.get("avg_final_score")
-                short_answer_max_score = self._to_float(assessment.max_score) if assessment is not None else None
-                signal_codes: list[str] = []
-
-                if quiz_row is not None:
-                    if quiz_attempt_count == 0 and enrolled_count > 0:
-                        signal_codes.append("quiz_no_attempts")
-                    if quiz_attempt_count > 0 and quiz_pass_rate is not None and quiz_pass_rate < 0.6:
-                        signal_codes.append("low_quiz_pass_rate")
-                    if quiz_attempt_count > 0 and quiz_avg_score is not None and quiz_avg_score < 60:
-                        signal_codes.append("low_quiz_avg_score")
-                if short_answer_pending_count > 0:
-                    signal_codes.append("short_answer_pending_review")
-                score_for_signal = (
-                    short_answer_avg_final_score
-                    if short_answer_avg_final_score is not None
-                    else short_answer_avg_ai_score
-                )
-                if (
-                    score_for_signal is not None
-                    and short_answer_max_score is not None
-                    and short_answer_max_score > 0
-                    and (score_for_signal / short_answer_max_score) < 0.6
-                ):
-                    signal_codes.append("low_short_answer_score")
-
-                assessment_signals.append(
-                    AssessmentSignalInsightItem(
-                        courseUuid=course_uuid,
-                        courseTitle=course.title,
-                        moduleUuid=encode_module_uuid(module.module_id),
-                        moduleTitle=module.title,
-                        quizTitle=quiz_row.get("quiz_title") if quiz_row else None,
-                        quizAttemptCount=quiz_attempt_count,
-                        quizAvgScorePercent=quiz_avg_score,
-                        quizPassRate=quiz_pass_rate,
-                        shortAnswerTitle=assessment.title if assessment is not None else None,
-                        shortAnswerSubmissionCount=short_answer_submission_count,
-                        shortAnswerAvgAiScore=short_answer_avg_ai_score,
-                        shortAnswerAvgFinalScore=short_answer_avg_final_score,
-                        shortAnswerMaxScore=short_answer_max_score,
-                        shortAnswerPendingReviewCount=short_answer_pending_count,
-                        signals=signal_codes,
-                    )
-                )
-
-        completion_trends = [
-            CompletionTrendInsightItem(
-                courseUuid=encode_course_uuid(course_id),
-                courseTitle=course_titles[course_id],
-                bucketDate=bucket_date,
-                completedCount=count,
-            )
-            for (course_id, bucket_date), count in sorted(
-                completion_counts.items(),
-                key=lambda item: (item[0][1], item[0][0]),
-            )
-        ]
-
-        at_risk_learners.sort(key=lambda item: (item.progressPercent, item.courseTitle, item.learnerId))
-        assessment_signals.sort(key=lambda item: (item.courseTitle, item.moduleTitle))
-
-        return EducatorTeachingInsightsResponse(
-            moduleBottlenecks=module_bottlenecks,
-            atRiskLearners=at_risk_learners,
-            completionTrends=completion_trends,
-            assessmentSignals=assessment_signals,
+        priority_rank = {"high": 0, "medium": 1, "low": 2}
+        briefs.sort(key=lambda item: (priority_rank.get(item.priority, 9), item.courseTitle, item.moduleTitle))
+        limited_items = briefs[:8]
+        return EducatorMaterialBriefsResponse(
+            generatedAt=now_local(),
+            totalBriefs=len(briefs),
+            highPriorityCount=sum(1 for item in briefs if item.priority == "high"),
+            items=limited_items,
         )
+
+    def _format_material_types(self, materials: list[object]) -> list[str]:
+        return sorted(
+            {
+                self._enum_value(getattr(material, "material_type", "file")).strip().lower()
+                for material in materials
+                if self._enum_value(getattr(material, "material_type", "file")).strip()
+            }
+        )
+
+    def _build_material_brief_summary(
+        self,
+        *,
+        module_title: str,
+        material_count: int,
+        material_types: list[str],
+        quiz_stats: dict | None,
+        text_signal: _MaterialBriefTextSignal | None,
+    ) -> str:
+        material_label = "no materials" if material_count == 0 else f"{material_count} materials"
+        type_label = ", ".join(material_types) if material_types else "no material types"
+        text_signal_sentence = self._format_material_text_signal_sentence(text_signal)
+        if not quiz_stats:
+            return f"{module_title} currently has {material_label} ({type_label}) and no quiz signal yet.{text_signal_sentence}"
+        attempts = int(quiz_stats["total_attempts"] or 0)
+        pass_rate = quiz_stats["pass_rate"]
+        if pass_rate is None:
+            return f"{module_title} currently has {material_label} ({type_label}); the quiz has no attempts yet.{text_signal_sentence}"
+        return (
+            f"{module_title} currently has {material_label} ({type_label}); "
+            f"quiz pass rate is {round(float(pass_rate) * 100)}% across {attempts} attempts.{text_signal_sentence}"
+        )
+
+    def _build_material_brief_signal(
+        self,
+        *,
+        material_count: int,
+        material_types: list[str],
+        quiz_stats: dict | None,
+        text_signal: _MaterialBriefTextSignal | None,
+    ) -> tuple[str, str, str]:
+        if material_count == 0:
+            return (
+                "high",
+                "No learning materials are attached to this module.",
+                "Add at least one learner-facing material before asking students to use AI or attempt the quiz.",
+            )
+
+        if quiz_stats:
+            attempts = int(quiz_stats["total_attempts"] or 0)
+            pass_rate = quiz_stats["pass_rate"]
+            average_score = quiz_stats["avg_score_percent"]
+            if pass_rate is not None and pass_rate < 0.6 and attempts >= 3:
+                if text_signal and text_signal.extracted_count and not (
+                    text_signal.has_worked_examples or text_signal.has_practice
+                ):
+                    return (
+                        "high",
+                        f"Quiz pass rate is below 60% across {attempts} attempts, and extracted material text lacks explicit example or practice cues.",
+                        "Add worked examples and practice checkpoints before students attempt the quiz again.",
+                    )
+                return (
+                    "high",
+                    f"Quiz pass rate is below 60% across {attempts} attempts.",
+                    "Review material explanations, add worked examples, and check whether quiz questions rely on unstated prerequisites.",
+                )
+            if average_score is not None and average_score < 70 and attempts >= 2:
+                if text_signal and text_signal.extracted_count and not text_signal.has_worked_examples:
+                    return (
+                        "medium",
+                        "Average quiz score is below 70%, and extracted material text does not show worked-example cues.",
+                        "Add a short worked solution or guided example before the quiz and review distractor wording.",
+                    )
+                return (
+                    "medium",
+                    "Average quiz score is below 70%.",
+                    "Add a short recap or practice activity before the quiz and review distractor wording.",
+                )
+
+        if text_signal and text_signal.extracted_count and text_signal.has_advanced_terms and not text_signal.has_prerequisites:
+            return (
+                "medium",
+                "Extracted material text includes advanced or technical cues without clear prerequisite guidance.",
+                "Add a short prerequisite note or warm-up section before learners enter the advanced material.",
+            )
+
+        if not quiz_stats:
+            return (
+                "medium",
+                "No quiz or learner performance signal is available for this module.",
+                "Add or publish a quiz so material effectiveness can be measured.",
+            )
+
+        if text_signal and text_signal.extracted_count and not (
+            text_signal.has_worked_examples or text_signal.has_practice
+        ):
+            return (
+                "low",
+                "Extracted material text lacks clear worked-example or practice cues.",
+                "Add one worked example, practice prompt, or checkpoint to make the material easier to act on.",
+            )
+
+        if material_count == 1:
+            return (
+                "low",
+                "Only one material type is available for this module.",
+                "Consider adding a second representation such as notes, worked examples, or a short video.",
+            )
+
+        if material_types == ["video"]:
+            return (
+                "low",
+                "The module relies only on video material.",
+                "Add a text summary or downloadable reference so learners can review key points quickly.",
+            )
+
+        return (
+            "low",
+            "Materials and quiz signals do not show an urgent issue.",
+            "Keep monitoring learner questions and quiz results after the next cohort activity.",
+        )
+
+    def _build_material_text_signal(self, materials: list[object]) -> _MaterialBriefTextSignal | None:
+        text_payloads = []
+        for material in materials:
+            text_payload = self._extract_material_text(material)
+            if text_payload:
+                text_payloads.append(text_payload)
+
+        if not text_payloads:
+            return None
+
+        combined_text = "\n".join(text_payloads).lower()
+        labels: list[str] = []
+        has_objectives = self._contains_any(combined_text, _MATERIAL_BRIEF_OBJECTIVE_TERMS)
+        has_worked_examples = self._contains_any(combined_text, _MATERIAL_BRIEF_EXAMPLE_TERMS)
+        has_practice = self._contains_any(combined_text, _MATERIAL_BRIEF_PRACTICE_TERMS)
+        has_prerequisites = self._contains_any(combined_text, _MATERIAL_BRIEF_PREREQUISITE_TERMS)
+        has_advanced_terms = self._contains_any(combined_text, _MATERIAL_BRIEF_ADVANCED_TERMS)
+
+        if has_objectives:
+            labels.append("learning objectives")
+        if has_worked_examples:
+            labels.append("worked examples")
+        if has_practice:
+            labels.append("practice checkpoints")
+        if has_prerequisites:
+            labels.append("prerequisite guidance")
+        if has_advanced_terms:
+            labels.append("advanced concept cues")
+
+        return _MaterialBriefTextSignal(
+            extracted_count=len(text_payloads),
+            total_chars=sum(len(payload) for payload in text_payloads),
+            labels=tuple(labels),
+            has_worked_examples=has_worked_examples,
+            has_practice=has_practice,
+            has_prerequisites=has_prerequisites,
+            has_advanced_terms=has_advanced_terms,
+        )
+
+    def _extract_material_text(self, material: object) -> str | None:
+        metadata = getattr(material, "metadata_json", None)
+        if not isinstance(metadata, dict):
+            return None
+
+        storage_provider = str(metadata.get("storageProvider") or "").strip().lower()
+        if storage_provider not in {"local", "minio"}:
+            return None
+
+        object_key = metadata.get("objectKey") or metadata.get("storedRelativePath")
+        if not isinstance(object_key, str) or not object_key.strip():
+            return None
+
+        content_type = str(metadata.get("contentType") or "").strip().lower()
+        if not self._is_text_material(content_type=content_type, object_key=object_key):
+            return None
+
+        if storage_provider == "minio":
+            return self._extract_minio_material_text(
+                bucket=metadata.get("bucket"),
+                object_key=object_key,
+            )
+
+        return self._extract_local_material_text(object_key)
+
+    def _extract_local_material_text(self, object_key: str) -> str | None:
+        try:
+            normalized_object_key = normalize_local_material_object_key(object_key)
+            material_root = settings.material_root_path
+            target_path = (material_root / normalized_object_key).resolve()
+            target_path.relative_to(material_root.resolve())
+        except (OSError, ValueError):
+            return None
+
+        if not target_path.is_file():
+            return None
+
+        try:
+            payload = target_path.read_bytes()[:_MATERIAL_BRIEF_MAX_TEXT_BYTES]
+        except OSError:
+            return None
+
+        return self._decode_material_brief_text(payload)
+
+    def _extract_minio_material_text(self, *, bucket: object, object_key: str) -> str | None:
+        try:
+            normalized_object_key = normalize_local_material_object_key(object_key)
+        except ValueError:
+            return None
+
+        bucket_name = str(bucket or settings.minio_bucket or "").strip()
+        if not bucket_name:
+            return None
+
+        response = None
+        try:
+            client = self.storage._build_minio_client()
+            response = client.get_object(bucket_name, normalized_object_key)
+            payload = response.read(_MATERIAL_BRIEF_MAX_TEXT_BYTES)
+        except Exception:
+            return None
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+                try:
+                    response.release_conn()
+                except Exception:
+                    pass
+
+        return self._decode_material_brief_text(payload)
+
+    def _is_text_material(self, *, content_type: str, object_key: str) -> bool:
+        if content_type in _MATERIAL_BRIEF_TEXT_CONTENT_TYPES:
+            return True
+        return Path(object_key).suffix.lower() in _MATERIAL_BRIEF_TEXT_SUFFIXES
+
+    def _decode_material_brief_text(self, payload: bytes) -> str | None:
+        for encoding in ("utf-8", "utf-8-sig", "latin-1"):
+            try:
+                text = payload.decode(encoding)
+                normalized = " ".join(text.split())
+                return normalized or None
+            except UnicodeDecodeError:
+                continue
+        return None
+
+    def _format_material_text_signal_sentence(self, text_signal: _MaterialBriefTextSignal | None) -> str:
+        if not text_signal or not text_signal.extracted_count:
+            return ""
+
+        material_label = (
+            "1 text-backed material"
+            if text_signal.extracted_count == 1
+            else f"{text_signal.extracted_count} text-backed materials"
+        )
+        signal_label = ", ".join(text_signal.labels[:4]) if text_signal.labels else "general explanations"
+        return f" Text scan found {material_label} with {signal_label}."
+
+    def _contains_any(self, text: str, terms: set[str]) -> bool:
+        return any(term in text for term in terms)
+
+    def _enum_value(self, value: object) -> str:
+        return str(getattr(value, "value", value))
 
     def _normalize_optional_text(self, value: str | None) -> str | None:
         if value is None:
@@ -643,17 +1007,3 @@ class CourseManagementService:
         if not normalized:
             raise invalid_request_error(f"Course {field_name} is required")
         return normalized
-
-    def _to_float(self, value: Decimal | float | int | None) -> float | None:
-        if value is None:
-            return None
-        return float(value)
-
-    def _is_older_than(self, value: datetime, *, days: int) -> bool:
-        current = now_local()
-        compared = value
-        if compared.tzinfo is None and current.tzinfo is not None:
-            current = current.replace(tzinfo=None)
-        if compared.tzinfo is not None and current.tzinfo is None:
-            compared = compared.replace(tzinfo=None)
-        return compared < current - timedelta(days=days)

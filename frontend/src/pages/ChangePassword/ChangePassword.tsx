@@ -5,7 +5,9 @@ import AuthField from "../../components/auth/AuthField";
 import AuthHeader from "../../components/auth/AuthHeader";
 import AuthLayout from "../../components/auth/AuthLayout";
 import AuthMessage from "../../components/auth/AuthMessage";
+import { clearStoredSession } from "../../services/api";
 import { changePassword } from "../../services/auth";
+import { isUsableAccessToken } from "../../utils/accessToken";
 import { validatePassword, PASSWORD_HINT } from "../../utils/password";
 
 function ChangePassword() {
@@ -31,7 +33,7 @@ function ChangePassword() {
     setSuccess("");
 
     if (!form.currentPassword || !form.newPassword || !form.confirmPassword) {
-      setError("Please fill in all fields.");
+      setError("请填写所有字段。");
       return;
     }
 
@@ -42,12 +44,13 @@ function ChangePassword() {
     }
 
     if (form.newPassword !== form.confirmPassword) {
-      setError("New passwords do not match.");
+      setError("两次输入的新密码不一致。");
       return;
     }
 
     const accessToken = localStorage.getItem("accessToken");
-    if (!accessToken) {
+    if (!accessToken || !isUsableAccessToken(accessToken)) {
+      clearStoredSession();
       navigate("/login");
       return;
     }
@@ -64,7 +67,7 @@ function ChangePassword() {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError("An unknown error occurred.");
+        setError("发生未知错误。");
       }
     } finally {
       setLoading(false);
@@ -74,21 +77,21 @@ function ChangePassword() {
   return (
     <AuthLayout>
       <AuthHeader
-        badge="Account"
-        title="Change Password"
-        description="Enter your current password and choose a new one."
+        badge="账号"
+        title="修改密码"
+        description="输入当前密码并设置新密码。"
       />
       <form className="auth-form" onSubmit={handleSubmit}>
         <AuthField
-          label="Current Password"
+          label="当前密码"
           type="password"
           name="currentPassword"
-          placeholder="Enter your current password"
+          placeholder="请输入当前密码"
           value={form.currentPassword}
           onChange={handleChange}
         />
         <AuthField
-          label="New Password"
+          label="新密码"
           type="password"
           name="newPassword"
           placeholder={PASSWORD_HINT}
@@ -96,10 +99,10 @@ function ChangePassword() {
           onChange={handleChange}
         />
         <AuthField
-          label="Confirm New Password"
+          label="确认新密码"
           type="password"
           name="confirmPassword"
-          placeholder="Re-enter your new password"
+          placeholder="请再次输入新密码"
           value={form.confirmPassword}
           onChange={handleChange}
         />
@@ -108,7 +111,7 @@ function ChangePassword() {
         {success && <AuthMessage tone="success" message={success} />}
 
         <button className="primary-btn auth-submit-btn" type="submit" disabled={loading}>
-          {loading ? "Changing..." : "Change Password"}
+          {loading ? "修改中..." : "修改密码"}
         </button>
       </form>
     </AuthLayout>

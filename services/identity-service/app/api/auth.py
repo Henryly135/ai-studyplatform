@@ -1,14 +1,27 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_access_token, require_auth
-from app.core.public_url import resolve_public_frontend_base_url
+from app.core.public_url import PublicFrontendUrlNotConfiguredError, resolve_trusted_public_frontend_base_url
 from app.db.session import get_db_session
 from app.schemas.auth import ChangePasswordRequest, EducatorInviteRegisterRequest, ForgotPasswordRequest, LoginRequest, MeResponse, RegisterRequest, ResetPasswordRequest, TokenResponse, PermissionListResponse
 from app.services.auth_service import AuthService
 from app.services.auth_service import AuthServiceError
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+_EMAIL_LINK_CONFIGURATION_UNAVAILABLE = "Email link generation is temporarily unavailable."
+
+
+def _trusted_email_frontend_base_url(request: Request) -> str | None:
+    try:
+        return resolve_trusted_public_frontend_base_url(request)
+    except PublicFrontendUrlNotConfiguredError as exc:
+        logger.error("Trusted public frontend URL is unavailable for auth email link generation")
+        raise HTTPException(status_code=500, detail=_EMAIL_LINK_CONFIGURATION_UNAVAILABLE) from exc
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
@@ -18,7 +31,7 @@ def register(req: RegisterRequest, request: Request, session: Session = Depends(
         email=str(req.email),
         password=req.password,
         identity=req.identity,
-        public_frontend_base_url=resolve_public_frontend_base_url(request),
+        public_frontend_base_url=_trusted_email_frontend_base_url(request),
     )
 
 
@@ -53,7 +66,7 @@ def verify_email(token: str | None = None, session: Session = Depends(get_db_ses
 def resend_verification(payload: dict, request: Request, session: Session = Depends(get_db_session)):
     return AuthService(session).resend_verification(
         email=payload.get("email"),
-        public_frontend_base_url=resolve_public_frontend_base_url(request),
+        public_frontend_base_url=_trusted_email_frontend_base_url(request),
     )
 
 
@@ -66,7 +79,7 @@ def me(current_user: dict = Depends(require_auth)):
 def forgot_password(req: ForgotPasswordRequest, request: Request, session: Session = Depends(get_db_session)):
     return AuthService(session).forgot_password(
         email=str(req.email),
-        public_frontend_base_url=resolve_public_frontend_base_url(request),
+        public_frontend_base_url=_trusted_email_frontend_base_url(request),
     )
 
 
@@ -118,7 +131,7 @@ def register_educator_invite(
             email=str(req.email),
             password=req.password,
             invite_token=req.inviteToken,
-            public_frontend_base_url=resolve_public_frontend_base_url(request),
+            public_frontend_base_url=_trusted_email_frontend_base_url(request),
         )
     except AuthServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

@@ -29,25 +29,25 @@ type ProfileFieldConfig = {
 const FIELD_CONFIG: ProfileFieldConfig[] = [
   {
     key: "supportRole",
-    label: "Support role",
+    label: "支持角色",
     options: ["Coach", "Study partner", "Mentor", "Examiner", OTHER_OPTION],
     otherPlaceholder: "Describe another support role",
   },
   {
     key: "helpStyle",
-    label: "Help style",
+    label: "帮助方式",
     options: ["Step-by-step", "Concise", "Example-driven", "Reflective", OTHER_OPTION],
     otherPlaceholder: "Describe another help style",
   },
   {
     key: "learningFocus",
-    label: "Learning focus",
+    label: "学习重点",
     options: ["Exam prep", "Theory mastery", "Practical problem solving", "Project work", OTHER_OPTION],
     otherPlaceholder: "Describe another learning focus",
   },
   {
     key: "responseTone",
-    label: "Response tone",
+    label: "回应语气",
     options: ["Encouraging", "Direct", "Calm", "Challenging", OTHER_OPTION],
     otherPlaceholder: "Describe another response tone",
   },
@@ -145,14 +145,14 @@ function GlobalProfileInitPage() {
     setErrorMessage(null);
 
     if (Object.values(payloadPreview).some((value) => value.length === 0)) {
-      setErrorMessage("Please choose one option for each attribute. If you pick Others, add a short description.");
+      setErrorMessage("请为每个属性选择一个选项。如果选择其他，请补充简短说明。");
       return;
     }
 
     try {
       setSubmitting(true);
       await initializeGlobalProfile(payloadPreview);
-      setSuccessMessage("Learning profile initialized successfully.");
+      setSuccessMessage("学习画像初始化成功。");
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Failed to initialize your profile."
@@ -169,7 +169,7 @@ function GlobalProfileInitPage() {
             <LuCircleCheckBig size={18} />
           </div>
           <div className="home-profile-init-toast-copy">
-            <strong>Success</strong>
+            <strong>成功</strong>
             <span>{successMessage}</span>
           </div>
         </div>
@@ -177,11 +177,10 @@ function GlobalProfileInitPage() {
 
       <div className="home-profile-init-card">
         <div className="home-profile-init-hero">
-          <span className="home-content-badge">Learner Profile</span>
-          <h1>Initialize your learning profile</h1>
+          <span className="home-content-badge">学生画像</span>
+          <h1>初始化学习画像</h1>
           <p>
-            Set your preferences once so the AI can support you more consistently across
-            future learning activities.
+            一次性设置偏好，让智能助手在之后的学习活动中更稳定地支持你。
           </p>
         </div>
 
@@ -214,7 +213,7 @@ function GlobalProfileInitPage() {
 
                 {isOtherSelected ? (
                   <label className="home-profile-init-other">
-                    <span>Other</span>
+                    <span>其他</span>
                     <input
                       type="text"
                       value={fieldState.otherValue}
@@ -240,8 +239,7 @@ function GlobalProfileInitPage() {
               className="home-profile-init-secondary"
               onClick={handleSkip}
               disabled={submitting}
-            >
-              Skip for now
+            >暂时跳过
             </button>
             <button type="submit" className="home-profile-init-primary" disabled={submitting}>
               {submitting ? "Saving profile..." : "Complete learning profile"}

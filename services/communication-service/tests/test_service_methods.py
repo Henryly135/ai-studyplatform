@@ -98,6 +98,10 @@ def _comment(comment_id=2, author_user_id=7, root_comment_id=None, reply_to_comm
     )
 
 
+def _allow_forum_access():
+    return SimpleNamespace(assert_forum_access=lambda **_kwargs: None)
+
+
 def test_notification_service_create_list_update_delete_and_state_transitions():
     # Tests notification service create/list/update/delete and recipient read/hidden state transitions.
     session = FakeSession()
@@ -196,12 +200,13 @@ def test_forum_service_create_list_get_update_delete_and_pin_paths():
         list_preview_top_level_by_post_ids=lambda **kwargs: {1: [preview]},
         count_replies_by_root_comment_ids=lambda root_comment_ids: {2: 1},
     )
+    service.course_access = _allow_forum_access()
     service.course_management = SimpleNamespace(assert_pin_access=lambda **kwargs: None)
 
     current_user = {"id": 7, "email": "user@example.com", "userName": "User", "identity": "Educator"}
     assert service.create_post(course_id=10, payload=CourseForumPostCreateRequest(title="T", content="Body"), current_user=current_user).postId == 1
-    assert service.list_posts(course_id=10).total == 1
-    assert service.get_post(post_id=1).commentCount == 2
+    assert service.list_posts(course_id=10, current_user=current_user).total == 1
+    assert service.get_post(post_id=1, current_user=current_user).commentCount == 2
     assert service.update_post(post_id=1, payload=CourseForumPostUpdateRequest(content="Updated"), current_user=current_user).postId == 1
     assert service.pin_post(post_id=1, current_user=current_user, token="tok").isPinned is True
     assert service.unpin_post(post_id=1, current_user={"id": 9, "identity": "Admin"}, token="tok").isPinned is False
@@ -215,6 +220,7 @@ def test_forum_service_rejects_invalid_post_kind_empty_update_and_forbidden_acce
     service = ForumService(FakeSession())
     post = _post(author_user_id=1)
     service.posts = SimpleNamespace(get_by_id=lambda post_id: post, create=lambda **kwargs: post)
+    service.course_access = _allow_forum_access()
 
     with pytest.raises(HTTPException):
         service.create_post(course_id=10, payload=CourseForumPostCreateRequest(content="Body", postKind="bad"), current_user={"id": 7, "email": "e", "userName": "n"})
@@ -224,6 +230,39 @@ def test_forum_service_rejects_invalid_post_kind_empty_update_and_forbidden_acce
         service.delete_post(post_id=1, current_user={"id": 2, "identity": "Learner"})
     with pytest.raises(HTTPException):
         service.pin_post(post_id=1, current_user={"id": 2, "identity": "Learner"}, token="tok")
+
+
+def test_forum_service_rejects_course_space_access_before_read_or_write():
+    # Tests forum posts cannot be listed or created without learning-service course access.
+    service = ForumService(FakeSession())
+    post = _post()
+    list_calls = []
+    create_calls = []
+    forbidden = HTTPException(
+        status_code=403,
+        detail={"code": "COURSE_ENROLLMENT_REQUIRED", "message": "Enrollment required"},
+    )
+    service.posts = SimpleNamespace(
+        list_by_course=lambda **kwargs: list_calls.append(kwargs) or ([post], 1, 1, 1),
+        create=lambda **kwargs: create_calls.append(kwargs) or post,
+    )
+    service.course_access = SimpleNamespace(
+        assert_forum_access=lambda **_kwargs: (_ for _ in ()).throw(forbidden)
+    )
+
+    with pytest.raises(HTTPException) as list_error:
+        service.list_posts(course_id=10, current_user={"id": 7, "identity": "Learner"})
+    with pytest.raises(HTTPException) as create_error:
+        service.create_post(
+            course_id=10,
+            payload=CourseForumPostCreateRequest(title="T", content="Body"),
+            current_user={"id": 7, "email": "e", "userName": "n", "identity": "Learner"},
+        )
+
+    assert list_error.value.status_code == 403
+    assert create_error.value.status_code == 403
+    assert list_calls == []
+    assert create_calls == []
 
 
 def test_forum_comment_service_create_list_replies_update_delete_paths():
@@ -242,12 +281,13 @@ def test_forum_comment_service_create_list_replies_update_delete_paths():
         count_replies_by_root_comment_ids=lambda root_comment_ids: {2: 1},
         update=lambda item, **kwargs: [setattr(item, key, value) for key, value in kwargs.items() if value.__class__.__name__ != "object"] and item,
     )
+    service.course_access = _allow_forum_access()
     current_user = {"id": 7, "email": "user@example.com", "userName": "User", "identity": "Learner"}
 
     assert service.create_comment(post_id=1, payload=CourseForumCommentCreateRequest(content="Reply", replyToCommentUuid=encode_comment_uuid(2)), current_user=current_user).replyToAuthorName == "Author 2"
-    assert service.list_post_comments(post_id=1).total == 1
-    assert service.list_comment_replies(comment_id=2).items[0].replyToAuthorName == "Author 2"
-    assert service.get_comment(comment_id=2).replyCount == 1
+    assert service.list_post_comments(post_id=1, current_user=current_user).total == 1
+    assert service.list_comment_replies(comment_id=2, current_user=current_user).items[0].replyToAuthorName == "Author 2"
+    assert service.get_comment(comment_id=2, current_user=current_user).replyCount == 1
     assert service.update_comment(comment_id=2, payload=CourseForumCommentUpdateRequest(content="Updated"), current_user=current_user).commentId == 2
     assert service.delete_comment(comment_id=2, deleted_at=NOW, current_user=current_user).isDeleted is True
 
@@ -267,6 +307,7 @@ def test_forum_comment_service_rejects_invalid_reply_update_and_forbidden_access
         get_by_id=lambda comment_id: comment if comment_id == 2 else deleted_comment,
         update=lambda item, **kwargs: item,
     )
+    service.course_access = _allow_forum_access()
 
     with pytest.raises(HTTPException):
         service.create_comment(post_id=404, payload=CourseForumCommentCreateRequest(content="C"), current_user={"id": 7, "email": "e", "userName": "n"})
@@ -275,4 +316,33 @@ def test_forum_comment_service_rejects_invalid_reply_update_and_forbidden_access
     with pytest.raises(HTTPException):
         service.update_comment(comment_id=2, payload=CourseForumCommentUpdateRequest(content="C"), current_user={"id": 9, "identity": "Learner"})
     with pytest.raises(HTTPException):
-        service.list_comment_replies(comment_id=3)
+        service.list_comment_replies(comment_id=3, current_user={"id": 7, "identity": "Learner"})
+
+
+def test_forum_comment_service_rejects_course_space_access_before_comment_payloads():
+    # Tests comment payloads are not returned when the caller cannot enter the course forum.
+    service = ForumCommentService(FakeSession())
+    post = _post()
+    comment = _comment()
+    list_calls = []
+    forbidden = HTTPException(
+        status_code=403,
+        detail={"code": "COURSE_ENROLLMENT_REQUIRED", "message": "Enrollment required"},
+    )
+    service.posts = SimpleNamespace(get_by_id=lambda post_id: post)
+    service.comments = SimpleNamespace(
+        get_by_id=lambda comment_id: comment,
+        list_top_level_by_post=lambda **kwargs: list_calls.append(kwargs) or ([comment], 1, 1, 1),
+    )
+    service.course_access = SimpleNamespace(
+        assert_forum_access=lambda **_kwargs: (_ for _ in ()).throw(forbidden)
+    )
+
+    with pytest.raises(HTTPException) as list_error:
+        service.list_post_comments(post_id=1, current_user={"id": 7, "identity": "Learner"})
+    with pytest.raises(HTTPException) as get_error:
+        service.get_comment(comment_id=2, current_user={"id": 7, "identity": "Learner"})
+
+    assert list_error.value.status_code == 403
+    assert get_error.value.status_code == 403
+    assert list_calls == []

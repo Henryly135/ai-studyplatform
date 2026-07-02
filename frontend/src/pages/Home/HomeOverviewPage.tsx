@@ -11,8 +11,9 @@ function HomeOverviewPage() {
     <section className="home-overview">
       <div className="home-overview-hero">
         <span className="home-content-badge">{currentUser.identity}</span>
-        <h1>Home</h1>
-        <p>Choose a workspace area below.</p>
+        <h1>学习工作区</h1>
+        <p>在一个工作区中管理课程学习、角色权限和智能辅助学习。
+        </p>
       </div>
 
       {isPendingEducator && (
@@ -25,8 +26,7 @@ function HomeOverviewPage() {
           fontSize: "0.9rem",
           color: "#854d0e",
         }}>
-          <strong>Account pending approval.</strong> Your educator account is awaiting admin review.
-          You can browse the platform but cannot create or modify courses until approved.
+          <strong>账号待审批。</strong>你的教师账号正在等待管理员审核。审核通过前可以浏览平台，但不能创建或修改课程。
         </div>
       )}
 
@@ -38,7 +38,7 @@ function HomeOverviewPage() {
             className="home-overview-card"
           >
             <strong>{section.title}</strong>
-            <span>Open</span>
+            <span>打开工作区</span>
           </Link>
         ))}
       </div>

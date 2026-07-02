@@ -1,11 +1,19 @@
+import logging
+import hmac
 import os
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_permission
-from app.core.public_url import normalize_public_frontend_base_url, resolve_public_frontend_base_url
+from app.core.public_url import (
+    PublicFrontendUrlNotConfiguredError,
+    configured_public_frontend_base_url,
+    normalize_public_frontend_base_url,
+    resolve_trusted_public_frontend_base_url,
+)
+from app.core.security import hash_token
 from app.db.session import get_db_session
 from app.schemas.admin import (
     EducatorApprovalListResponse,
@@ -14,10 +22,12 @@ from app.schemas.admin import (
     EducatorInviteTokenGenerateResponse,
     EducatorInviteTokenListResponse,
     EducatorInviteTokenRead,
+    EmailDeliveryStatus,
     AdminUserListResponse,
     AdminUserRead,
     ReviewEducatorApprovalRequest,
     SendEducatorInviteEmailRequest,
+    SendEducatorInviteEmailResponse,
     UpdateUserIdentityRequest,
     UpdateUserStatusRequest,
 )
@@ -29,26 +39,60 @@ from app.services.auth_service import AuthService
 from app.repositories.educator_invite_token_repository import EducatorInviteTokenRepository
 from platform_common.permissions.codes import EDUCATOR_APPROVAL_READ, EDUCATOR_APPROVAL_REVIEW, USER_READ, USER_UPDATE
 
+logger = logging.getLogger(__name__)
+
+_INVITE_LINK_CONFIGURATION_UNAVAILABLE = "Invite link generation is temporarily unavailable."
+
+
+def _trusted_invite_frontend_base_url(request: Request) -> str | None:
+    try:
+        return resolve_trusted_public_frontend_base_url(request)
+    except PublicFrontendUrlNotConfiguredError as exc:
+        logger.error("Trusted public frontend URL is unavailable for educator invite link generation")
+        raise HTTPException(status_code=500, detail=_INVITE_LINK_CONFIGURATION_UNAVAILABLE) from exc
+
 
 def _build_invite_url(raw_token: str, frontend_base_url: str | None = None) -> str:
     if frontend_base_url:
         base = normalize_public_frontend_base_url(frontend_base_url) or frontend_base_url.rstrip("/")
     else:
-        explicit = os.getenv("PUBLIC_FRONTEND_URL")
-        public_base = os.getenv("PUBLIC_BASE_URL", "")
-        if explicit:
-            base = normalize_public_frontend_base_url(explicit) or explicit.rstrip("/")
-        elif public_base:
-            if public_base.endswith("/api"):
-                base = public_base[:-4]
-            else:
-                base = public_base.rstrip("/")
-            base = normalize_public_frontend_base_url(base) or base
+        configured = configured_public_frontend_base_url()
+        if configured:
+            base = configured
         else:
             nginx_port = os.getenv("NGINX_PORT")
             base = f"http://localhost:{nginx_port}" if nginx_port else "http://localhost:5173"
     qs = urlencode({"token": raw_token})
     return f"{base}/register/educator-invite?{qs}"
+
+
+def _validated_invite_email_url(
+    invite_url: str,
+    *,
+    expected_token_hash: str,
+    frontend_base_url: str | None,
+) -> str:
+    parsed = urlparse(invite_url)
+    expected = urlparse(_build_invite_url("__token__", frontend_base_url=frontend_base_url))
+
+    if (
+        parsed.scheme != expected.scheme
+        or parsed.netloc.lower() != expected.netloc.lower()
+        or parsed.path != expected.path
+        or parsed.fragment
+    ):
+        raise HTTPException(status_code=400, detail="Invite URL does not match this platform")
+
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    token_values = params.get("token", [])
+    if set(params.keys()) != {"token"} or len(token_values) != 1:
+        raise HTTPException(status_code=400, detail="Invite URL token is invalid")
+
+    if not hmac.compare_digest(hash_token(token_values[0]), expected_token_hash):
+        raise HTTPException(status_code=400, detail="Invite URL token does not match this invite")
+
+    return invite_url
+
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -156,12 +200,13 @@ def generate_educator_invite_token(
     session: Session = Depends(get_db_session),
 ) -> EducatorInviteTokenGenerateResponse:
     """Generate a one-time educator invite link. Only admins can call this."""
+    frontend_base_url = _trusted_invite_frontend_base_url(request)
     result = AuthService(session).generate_educator_invite_token(
         created_by_user_id=int(current_user["id"]),
     )
     invite_url = _build_invite_url(
         result["rawToken"],
-        frontend_base_url=resolve_public_frontend_base_url(request),
+        frontend_base_url=frontend_base_url,
     )
     return EducatorInviteTokenGenerateResponse(
         inviteUuid=result["inviteUuid"],
@@ -171,16 +216,29 @@ def generate_educator_invite_token(
     )
 
 
-@router.post("/educator-invite-tokens/{invite_uuid}/send-email")
+def _invite_email_detail(delivered: bool, reason: str | None) -> str:
+    if delivered:
+        return "Invite email sent"
+    if reason == "smtp_not_configured":
+        return "Invite email was not sent because SMTP is not configured"
+    if reason == "invalid_smtp_port":
+        return "Invite email was not sent because SMTP_PORT is invalid"
+    return "Invite email could not be delivered"
+
+
+@router.post(
+    "/educator-invite-tokens/{invite_uuid}/send-email",
+    response_model=SendEducatorInviteEmailResponse,
+)
 def send_educator_invite_email_endpoint(
     invite_uuid: str,
     payload: SendEducatorInviteEmailRequest,
+    request: Request,
     current_user: dict = Depends(require_permission(EDUCATOR_APPROVAL_REVIEW)),
     session: Session = Depends(get_db_session),
-):
+) -> SendEducatorInviteEmailResponse:
     """Send the educator invite link (with the raw token URL) to a specific email address."""
     from app.core.email import send_educator_invite_email as _send_invite_email
-    from app.repositories.educator_invite_token_repository import EducatorInviteTokenRepository
 
     repo = EducatorInviteTokenRepository(session)
     token = repo.get_by_uuid(invite_uuid)
@@ -191,8 +249,20 @@ def send_educator_invite_email_endpoint(
     if token.used_at is not None:
         raise HTTPException(status_code=409, detail="Invite link has already been used")
 
-    _send_invite_email(str(payload.recipientEmail), payload.inviteUrl)
-    return {"detail": "Invite email sent"}
+    invite_url = _validated_invite_email_url(
+        payload.inviteUrl,
+        expected_token_hash=token.token_hash,
+        frontend_base_url=_trusted_invite_frontend_base_url(request),
+    )
+    delivery = _send_invite_email(str(payload.recipientEmail), invite_url)
+    return SendEducatorInviteEmailResponse(
+        detail=_invite_email_detail(delivery.delivered, delivery.reason),
+        emailDelivery=EmailDeliveryStatus(
+            attempted=delivery.attempted,
+            delivered=delivery.delivered,
+            reason=delivery.reason,
+        ),
+    )
 
 
 @router.get("/educator-invite-tokens", response_model=EducatorInviteTokenListResponse)

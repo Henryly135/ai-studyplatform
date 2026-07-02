@@ -993,6 +993,13 @@
   font: 700 2rem/1 "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
 }
 
+.notifications-modal-description {
+  max-width: 38rem;
+  margin: 0.45rem 0 0;
+  color: #64748b;
+  font: 600 0.88rem/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
 .notifications-modal-close {
   width: 2.4rem;
   height: 2.4rem;

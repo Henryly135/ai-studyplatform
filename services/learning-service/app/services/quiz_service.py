@@ -5,7 +5,6 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from fastapi import status
-from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.celery_app import celery_app
@@ -40,8 +39,6 @@ from app.repositories.quiz_question_option_repository import QuizQuestionOptionR
 from app.repositories.quiz_question_repository import QuizQuestionRepository
 from app.repositories.quiz_repository import QuizRepository
 from app.schemas.quiz import (
-    EducatorQuizDraftAcceptRequest,
-    EducatorQuizDraftCandidateSet,
     QuizAttemptHistoryResponse,
     QuizAttemptResultResponse,
     QuizAttemptStartQuestionResponse,
@@ -49,8 +46,6 @@ from app.schemas.quiz import (
     QuizAttemptSubmitRequest,
     QuizAttemptSummaryResponse,
     QuizAuthoringResponse,
-    EducatorQuizDraftGenerateRequest,
-    EducatorQuizDraftPreviewResponse,
     QuizOptionResponse,
     QuizPublishRequest,
     QuizQuestionResponse,
@@ -58,7 +53,6 @@ from app.schemas.quiz import (
     QuizQuestionWriteRequest,
     QuizUpsertRequest,
 )
-from app.services.educator_quiz_draft_ai_client import EducatorQuizDraftAIClient
 from app.schemas.quiz_generation import (
     GeneratedQuizAttemptStartRequest,
     GeneratedQuizQuestionRefResponse,
@@ -70,6 +64,10 @@ from app.services.module_profile_trigger_service import ModuleProfileTriggerServ
 from app.services.module_unlocking_service import ModuleUnlockingService
 from app.services.quiz_attempt_session_store import QuizAttemptSessionData, QuizAttemptSessionStore
 from platform_common.errors import http_error, invalid_identity_response_error, invalid_request_error
+
+
+ARCHIVED_QUIZ_SORT_ORDER_BASE = 10_000_000
+GENERATED_ATTEMPT_QUIZ_SORT_ORDER_BASE = 1_000_000_000
 
 
 class QuizService:
@@ -91,7 +89,6 @@ class QuizService:
         self.unlocking = ModuleUnlockingService(session)
         self.profile_triggers = ModuleProfileTriggerService(session)
         self.attempt_sessions = QuizAttemptSessionStore()
-        self.educator_quiz_draft_ai = EducatorQuizDraftAIClient()
 
     def upsert_quiz(
         self,
@@ -247,117 +244,6 @@ class QuizService:
             totalPages=total_pages,
         )
 
-    def generate_educator_ai_draft(
-        self,
-        *,
-        course_uuid: str,
-        module_uuid: str,
-        payload: EducatorQuizDraftGenerateRequest,
-        current_user: dict,
-    ) -> EducatorQuizDraftPreviewResponse:
-        return self.preview_educator_ai_draft(
-            course_uuid=course_uuid,
-            module_uuid=module_uuid,
-            payload=payload,
-            current_user=current_user,
-        )
-
-    def preview_educator_ai_draft(
-        self,
-        *,
-        course_uuid: str,
-        module_uuid: str,
-        payload: EducatorQuizDraftGenerateRequest,
-        current_user: dict,
-    ) -> EducatorQuizDraftPreviewResponse:
-        course = self._get_manageable_course(course_uuid=course_uuid, current_user=current_user)
-        module = self._get_course_module(course_id=course.course_id, module_uuid=module_uuid)
-        existing_quiz = self.quizzes.get_by_module_id(module.module_id)
-        quiz_title = self._resolve_ai_draft_title(title=payload.title, quiz=existing_quiz, module=module)
-        available_question_count = (
-            self.questions.count_by_quiz(existing_quiz.quiz_id, active_only=True)
-            if existing_quiz is not None
-            else 0
-        )
-        actor_id = current_user.get("id")
-        if not isinstance(actor_id, int):
-            raise invalid_identity_response_error()
-
-        generation = self.educator_quiz_draft_ai.generate_draft(
-            course_uuid=course_uuid,
-            module_uuid=module_uuid,
-            educator_id=actor_id,
-            course_title=course.title,
-            module_title=module.title,
-            quiz_title=quiz_title,
-            available_question_count=available_question_count,
-            payload=payload,
-        )
-        candidate_set = self._validate_ai_draft_candidate_set(
-            generation.get("candidateSet"),
-            expected_question_count=payload.questionCount,
-        )
-        retrieval_context = generation.get("retrievalContext")
-        retrieval_used = False
-        source_chunk_count = 0
-        if isinstance(retrieval_context, dict):
-            retrieval_used = bool(retrieval_context.get("usedRetrieval") or retrieval_context.get("used_retrieval"))
-            raw_chunk_count = retrieval_context.get("chunkCount", retrieval_context.get("chunk_count"))
-            source_chunk_count = raw_chunk_count if isinstance(raw_chunk_count, int) and raw_chunk_count >= 0 else 0
-
-        return EducatorQuizDraftPreviewResponse(
-            title=quiz_title,
-            questionCount=candidate_set.questionCount,
-            difficulty=payload.difficulty,
-            questionTypes=payload.questionTypes,
-            replaceExistingQuestions=payload.replaceExistingQuestions,
-            timeLimitSeconds=payload.timeLimitSeconds,
-            shuffleQuestions=payload.shuffleQuestions,
-            shuffleOptions=payload.shuffleOptions,
-            retrievalUsed=retrieval_used,
-            sourceChunkCount=source_chunk_count,
-            candidateSet=candidate_set,
-        )
-
-    def accept_educator_ai_draft(
-        self,
-        *,
-        course_uuid: str,
-        module_uuid: str,
-        payload: EducatorQuizDraftAcceptRequest,
-        current_user: dict,
-        include_questions: bool = True,
-    ) -> QuizAuthoringResponse:
-        course = self._get_manageable_course(course_uuid=course_uuid, current_user=current_user)
-        module = self._get_course_module(course_id=course.course_id, module_uuid=module_uuid)
-        existing_quiz = self.quizzes.get_by_module_id(module.module_id)
-        quiz_title = self._resolve_ai_draft_title(title=payload.title, quiz=existing_quiz, module=module)
-        candidate_set = self._validate_ai_draft_candidate_set(payload.candidateSet)
-
-        try:
-            quiz = self._upsert_ai_draft_quiz(
-                module_id=module.module_id,
-                quiz=existing_quiz,
-                title=quiz_title,
-                question_count=candidate_set.questionCount,
-                time_limit_seconds=payload.timeLimitSeconds,
-                shuffle_questions=payload.shuffleQuestions,
-                shuffle_options=payload.shuffleOptions,
-            )
-            self._replace_or_append_ai_draft_questions(
-                quiz=quiz,
-                candidate_set=candidate_set,
-                replace_existing=payload.replaceExistingQuestions,
-            )
-            self._touch_quiz_as_draft(quiz=quiz, course=course)
-            self.session.commit()
-            self.session.refresh(quiz)
-        except Exception:
-            if hasattr(self.session, "rollback"):
-                self.session.rollback()
-            raise
-        return self._to_quiz_authoring_response(quiz=quiz, module=module, include_questions=include_questions)
-
     def get_quiz_generation_context(self, *, course_uuid: str, module_uuid: str) -> QuizGenerationContextResponse:
         course = self._get_course(course_uuid)
         module = self._get_course_module(course_id=course.course_id, module_uuid=module_uuid)
@@ -392,17 +278,52 @@ class QuizService:
         self._ensure_learner_can_access_module(course=course, module=module, learner_id=learner_id)
         self._ensure_module_unlocked(module_id=module.module_id, learner_id=learner_id)
 
+    def ensure_authoring_quiz_access(
+        self,
+        *,
+        course_uuid: str,
+        module_uuid: str,
+        actor_id: int,
+        actor_identity: str,
+    ) -> None:
+        course = self._get_manageable_course(
+            course_uuid=course_uuid,
+            current_user={"id": actor_id, "identity": actor_identity},
+        )
+        self._get_course_module(course_id=course.course_id, module_uuid=module_uuid)
+
     def batch_create_generated_questions(
         self,
         *,
         course_uuid: str,
         module_uuid: str,
+        purpose: str = "authoring",
         questions: list[QuizQuestionWriteRequest],
     ) -> GeneratedQuizQuestionsCreateResponse:
         course = self._get_course(course_uuid)
         module = self._get_course_module(course_id=course.course_id, module_uuid=module_uuid)
         quiz = self._get_module_quiz(module.module_id)
-        next_sort_order = max((question.sort_order for question in self.questions.list_by_quiz(quiz.quiz_id)), default=0)
+        normalized_purpose = purpose.strip().lower()
+        if normalized_purpose not in {"authoring", "attempt"}:
+            raise invalid_request_error("Generated quiz question purpose must be authoring or attempt")
+        if normalized_purpose == "attempt":
+            next_sort_order = max(
+                (
+                    question.sort_order
+                    for question in self.questions.list_by_quiz(quiz.quiz_id)
+                    if question.sort_order >= GENERATED_ATTEMPT_QUIZ_SORT_ORDER_BASE
+                ),
+                default=GENERATED_ATTEMPT_QUIZ_SORT_ORDER_BASE,
+            )
+        else:
+            next_sort_order = max(
+                (
+                    question.sort_order
+                    for question in self.questions.list_by_quiz(quiz.quiz_id)
+                    if question.sort_order < ARCHIVED_QUIZ_SORT_ORDER_BASE
+                ),
+                default=0,
+            )
 
         created_questions: list[GeneratedQuizQuestionRefResponse] = []
         for offset, question_payload in enumerate(questions, start=1):
@@ -410,9 +331,8 @@ class QuizService:
                 questionUuid=None,
                 questionText=question_payload.questionText,
                 explanationText=question_payload.explanationText,
-                sourceGrounding=question_payload.sourceGrounding,
                 sortOrder=next_sort_order + offset,
-                isActive=True,
+                isActive=question_payload.isActive if normalized_purpose == "authoring" else False,
                 options=[
                     {
                         "optionUuid": None,
@@ -433,7 +353,10 @@ class QuizService:
                 )
             )
 
-        self.courses.touch(course)
+        if normalized_purpose == "authoring":
+            self._touch_quiz_as_draft(quiz=quiz, course=course)
+        else:
+            self.courses.touch(course)
         self.session.commit()
         self.session.refresh(quiz)
         return GeneratedQuizQuestionsCreateResponse(
@@ -483,7 +406,6 @@ class QuizService:
             quiz_id=quiz.quiz_id,
             question_text=self._normalize_required_text(payload.questionText, field_name="questionText"),
             explanation_text=self._normalize_optional_text(payload.explanationText),
-            source_grounding=self._normalize_optional_text(payload.sourceGrounding),
             sort_order=payload.sortOrder,
             is_active=payload.isActive,
         )
@@ -495,7 +417,6 @@ class QuizService:
             question,
             question_text=self._normalize_required_text(payload.questionText, field_name="questionText"),
             explanation_text=self._normalize_optional_text(payload.explanationText),
-            source_grounding=self._normalize_optional_text(payload.sourceGrounding),
             sort_order=payload.sortOrder,
             is_active=payload.isActive,
         )
@@ -512,130 +433,12 @@ class QuizService:
                 is_correct=option_payload.isCorrect,
             )
 
-    def _resolve_ai_draft_title(self, *, title: str | None, quiz: Quiz | None, module: Module) -> str:
-        if title:
-            return self._normalize_required_text(title, field_name="title")
-        if quiz is not None:
-            return quiz.title
-        return f"{module.title} Quiz"
-
-    def _upsert_ai_draft_quiz(
-        self,
-        *,
-        module_id: int,
-        quiz: Quiz | None,
-        title: str,
-        question_count: int,
-        time_limit_seconds: int | None,
-        shuffle_questions: bool,
-        shuffle_options: bool,
-    ) -> Quiz:
-        if quiz is not None:
-            return self.quizzes.update(
-                quiz,
-                title=title,
-                status=QuizStatus.DRAFT,
-                time_limit_seconds=time_limit_seconds,
-                question_count_per_attempt=question_count,
-                shuffle_questions=shuffle_questions,
-                shuffle_options=shuffle_options,
-                published_at=None,
-            )
-        return self.quizzes.create(
-            module_id=module_id,
-            title=title,
-            description=None,
-            status=QuizStatus.DRAFT,
-            time_limit_seconds=time_limit_seconds,
-            question_count_per_attempt=question_count,
-            shuffle_questions=shuffle_questions,
-            shuffle_options=shuffle_options,
-        )
-
-    def _replace_or_append_ai_draft_questions(
-        self,
-        *,
-        quiz: Quiz,
-        candidate_set: EducatorQuizDraftCandidateSet,
-        replace_existing: bool,
-    ) -> None:
-        existing_questions = self.questions.list_by_quiz(quiz.quiz_id)
-        if replace_existing:
-            for question in existing_questions:
-                if question.sort_order < 10_000_000:
-                    self._archive_question(question)
-            next_sort_order = 0
-        else:
-            next_sort_order = max(
-                (question.sort_order for question in existing_questions if question.sort_order < 10_000_000),
-                default=0,
-            )
-
-        for offset, raw_question in enumerate(candidate_set.questions, start=1):
-            question_payload = QuizQuestionWriteRequest(
-                questionUuid=None,
-                questionText=raw_question.questionText,
-                explanationText=raw_question.explanationText,
-                sourceGrounding=raw_question.sourceGrounding,
-                sortOrder=next_sort_order + offset,
-                isActive=True,
-                options=[
-                    {
-                        "optionUuid": None,
-                        "optionLabel": option.optionLabel,
-                        "optionText": option.optionText,
-                        "sortOrder": option_index,
-                        "isCorrect": option.isCorrect,
-                    }
-                    for option_index, option in enumerate(raw_question.options, start=1)
-                ],
-            )
-            self._create_question(quiz=quiz, payload=question_payload)
-
-    def _validate_ai_draft_candidate_set(
-        self,
-        candidate_set: Any,
-        *,
-        expected_question_count: int | None = None,
-    ) -> EducatorQuizDraftCandidateSet:
-        if not isinstance(candidate_set, dict):
-            raise self._invalid_ai_quiz_draft_response()
-        raw_questions = candidate_set.get("questions")
-        if not isinstance(raw_questions, list) or not raw_questions:
-            raise self._invalid_ai_quiz_draft_response()
-        for raw_question in raw_questions:
-            if not isinstance(raw_question, dict):
-                raise self._invalid_ai_quiz_draft_response()
-            if not str(raw_question.get("sourceGrounding") or "").strip():
-                raise self._invalid_ai_quiz_draft_response()
-            raw_options = raw_question.get("options")
-            if not isinstance(raw_options, list) or not raw_options:
-                raise self._invalid_ai_quiz_draft_response()
-            for raw_option in raw_options:
-                if not isinstance(raw_option, dict):
-                    raise self._invalid_ai_quiz_draft_response()
-        try:
-            validated = EducatorQuizDraftCandidateSet.model_validate(candidate_set)
-        except (TypeError, ValidationError) as exc:
-            raise self._invalid_ai_quiz_draft_response() from exc
-        if expected_question_count is not None and validated.questionCount != expected_question_count:
-            raise self._invalid_ai_quiz_draft_response()
-        return validated
-
-    def _invalid_ai_quiz_draft_response(self):
-        return http_error(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            code="INVALID_AI_QUIZ_DRAFT_RESPONSE",
-            message="AI service returned an invalid quiz draft",
-        )
-
     def _archive_question(self, question) -> None:
-        archived_sort_order = 10_000_000 + int(question.quiz_question_id)
+        archived_sort_order = ARCHIVED_QUIZ_SORT_ORDER_BASE + int(question.quiz_question_id)
         self.questions.update(
             question,
             question_text=question.question_text,
             explanation_text=question.explanation_text,
-            source_grounding=getattr(question, "source_grounding", None),
             sort_order=archived_sort_order,
             is_active=False,
         )
@@ -730,7 +533,7 @@ class QuizService:
                 self.random.shuffle(option_rows)
             correct_option = next((option for option in option_rows if option.is_correct), None)
             if correct_option is None:
-                raise invalid_request_error("Each active question must have exactly one correct option before starting an attempt")
+                raise invalid_request_error("Each quiz attempt question must have exactly one correct option before starting an attempt")
             question_set_json.append(
                 {
                     "questionId": question.quiz_question_id,
@@ -837,7 +640,7 @@ class QuizService:
         ordered_questions = []
         for question_id in question_ids:
             question = questions_by_id.get(question_id)
-            if question is None or question.quiz_id != quiz.quiz_id or not question.is_active:
+            if question is None or question.quiz_id != quiz.quiz_id or not self._is_generated_attempt_question(question):
                 raise http_error(
                     status_code=status.HTTP_404_NOT_FOUND,
                     code="QUIZ_QUESTION_NOT_FOUND",
@@ -1125,7 +928,7 @@ class QuizService:
                 self.random.shuffle(option_rows)
             correct_option = next((option for option in option_rows if option.is_correct), None)
             if correct_option is None:
-                raise invalid_request_error("Each active question must have exactly one correct option before starting an attempt")
+                raise invalid_request_error("Each quiz attempt question must have exactly one correct option before starting an attempt")
             question_set_json.append(
                 {
                     "questionId": question.quiz_question_id,
@@ -1222,7 +1025,6 @@ class QuizService:
             questionUuid=encode_quiz_question_uuid(question.quiz_question_id),
             questionText=question.question_text,
             explanationText=question.explanation_text,
-            sourceGrounding=getattr(question, "source_grounding", None),
             sortOrder=question.sort_order,
             isActive=question.is_active,
             options=[
@@ -1242,7 +1044,7 @@ class QuizService:
         questions: list[QuizQuestionResponse] = []
         if include_questions:
             for question in self.questions.list_by_quiz(quiz.quiz_id):
-                if question.sort_order >= 10_000_000:
+                if question.sort_order >= ARCHIVED_QUIZ_SORT_ORDER_BASE:
                     continue  # Skip archived/tombstoned questions
                 questions.append(self._to_question_response(question))
 
@@ -1264,6 +1066,12 @@ class QuizService:
             createdAt=quiz.created_at,
             updatedAt=quiz.updated_at,
             questions=questions,
+        )
+
+    def _is_generated_attempt_question(self, question) -> bool:
+        return bool(
+            not question.is_active
+            and int(question.sort_order) >= GENERATED_ATTEMPT_QUIZ_SORT_ORDER_BASE
         )
 
     def _to_attempt_result_response(self, *, attempt, quiz: Quiz, module: Module, module_completed: bool) -> QuizAttemptResultResponse:

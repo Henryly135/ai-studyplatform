@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from fastapi import HTTPException
-
 from app.services.workflows.quiz_generation.schemas import (
     CreatedQuizQuestionRead,
-    EducatorQuizDraftGenerationResponse,
     QuizGenerationCandidateSetRead,
     QuizGenerationContextRead,
     QuizGenerationPlanQuestionRead,
@@ -68,7 +65,6 @@ def _run_response() -> QuizGenerationRunResponse:
                 {
                     "questionText": "Which statement is correct?",
                     "explanationText": "Because ownership matters",
-                    "sourceGrounding": "Memory Ownership notes, ownership basics.",
                     "sortOrder": 1,
                     "isActive": True,
                     "options": [
@@ -79,7 +75,6 @@ def _run_response() -> QuizGenerationRunResponse:
                 {
                     "questionText": "True or false?",
                     "explanationText": "Because heap and stack differ",
-                    "sourceGrounding": "Memory Ownership notes, heap vs stack.",
                     "sortOrder": 2,
                     "isActive": True,
                     "options": [
@@ -116,63 +111,3 @@ def test_internal_quiz_generation_run_endpoint(client, monkeypatch):
     body = response.json()
     assert body["context"]["questionCountPerAttempt"] == 2
     assert len(body["createdQuestions"]) == 2
-
-
-def test_internal_educator_quiz_draft_endpoint_returns_source_grounding(client, monkeypatch):
-    # Tests educator AI draft internal endpoint returns a grounded candidate preview.
-    from app.services.workflows.quiz_generation.services.educator_draft_service import EducatorQuizDraftGenerationService
-
-    run_response = _run_response()
-    monkeypatch.setattr(
-        EducatorQuizDraftGenerationService,
-        "generate_draft",
-        lambda self, payload: EducatorQuizDraftGenerationResponse(
-            context=run_response.context,
-            retrievalContext=run_response.retrievalContext,
-            plan=run_response.plan,
-            candidateSet=run_response.candidateSet,
-        ),
-    )
-
-    response = client.post(
-        "/internal/quiz-generation/educator-draft",
-        json={
-            "courseUuid": "course-uuid",
-            "moduleUuid": "module-uuid",
-            "educatorId": 7,
-            "courseTitle": "Pointers 101",
-            "moduleTitle": "Memory Ownership",
-            "quizTitle": "Ownership Quiz",
-            "questionCount": 2,
-            "questionTypes": ["multiple_choice", "true_false"],
-        },
-    )
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["candidateSet"]["questions"][0]["sourceGrounding"] == "Memory Ownership notes, ownership basics."
-
-
-def test_internal_educator_quiz_draft_endpoint_surfaces_generation_failure(client, monkeypatch):
-    # Tests educator AI draft internal endpoint propagates generation failures.
-    from app.services.workflows.quiz_generation.services.educator_draft_service import EducatorQuizDraftGenerationService
-
-    def fail_generation(self, payload):
-        raise HTTPException(status_code=503, detail={"code": "AI_PROVIDER_UNAVAILABLE"})
-
-    monkeypatch.setattr(EducatorQuizDraftGenerationService, "generate_draft", fail_generation)
-
-    response = client.post(
-        "/internal/quiz-generation/educator-draft",
-        json={
-            "courseUuid": "course-uuid",
-            "moduleUuid": "module-uuid",
-            "educatorId": 7,
-            "courseTitle": "Pointers 101",
-            "moduleTitle": "Memory Ownership",
-            "quizTitle": "Ownership Quiz",
-            "questionCount": 2,
-        },
-    )
-
-    assert response.status_code == 503

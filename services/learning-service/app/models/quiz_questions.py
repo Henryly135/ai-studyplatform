@@ -34,10 +34,6 @@ class QuizQuestion(Base):
         Text,
         nullable=True,
     )
-    source_grounding: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-    )
     sort_order: Mapped[int] = mapped_column(nullable=False)
     is_active: Mapped[bool] = mapped_column(
         Boolean,
