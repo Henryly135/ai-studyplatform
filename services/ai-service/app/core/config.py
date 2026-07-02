@@ -34,13 +34,27 @@ class Settings:
     ai_embedding_task_type: str = get_env("AI_EMBEDDING_TASK_TYPE", default="RETRIEVAL_DOCUMENT")
     ai_embedding_version: str = get_env("AI_EMBEDDING_VERSION", default="gemini-embedding-001@1536")
     ai_embedding_batch_size: int = int(get_env("AI_EMBEDDING_BATCH_SIZE", default="16"))
-    ai_embedding_orchestrator: str = get_env("AI_EMBEDDING_ORCHESTRATOR", default="langchain")
+    ai_embedding_orchestrator: str = get_env("AI_EMBEDDING_ORCHESTRATOR", default="provider_adapter")
     ai_chunk_size_chars: int = int(get_env("AI_CHUNK_SIZE_CHARS", default="1200"))
     ai_chunk_overlap_chars: int = int(get_env("AI_CHUNK_OVERLAP_CHARS", default="200"))
     ai_retrieval_top_k: int = int(get_env("AI_RETRIEVAL_TOP_K", default="5"))
     ai_retrieval_min_score: float = float(get_env("AI_RETRIEVAL_MIN_SCORE", default="0.45"))
     ai_chat_max_output_tokens: int = int(get_env("AI_CHAT_MAX_OUTPUT_TOKENS", default="900"))
-    ai_chat_orchestrator: str = get_env("AI_CHAT_ORCHESTRATOR", default="langchain")
+    ai_chat_temperature: float = float(get_env("AI_CHAT_TEMPERATURE", default="0.5"))
+    ai_chat_timeout_seconds: int = int(get_env("AI_CHAT_TIMEOUT_SECONDS", default="60"))
+    ai_chat_orchestrator: str = get_env("AI_CHAT_ORCHESTRATOR", default="provider_adapter")
+    ai_default_chat_model: str = get_env(
+        "AI_DEFAULT_CHAT_MODEL",
+        "AI_DEMO_MODEL_NAME",
+        default="gemini-2.5-flash-lite",
+    )
+    ai_default_embedding_model: str = get_env(
+        "AI_DEFAULT_EMBEDDING_MODEL",
+        "AI_EMBEDDING_MODEL",
+        default="gemini-embedding-001",
+    )
+    ai_model_catalog_seed_enabled: bool = get_env("AI_MODEL_CATALOG_SEED_ENABLED", default="true").lower() == "true"
+    ai_provider_key_encryption_secret: str = get_env("AI_PROVIDER_KEY_ENCRYPTION_SECRET", default="")
     ai_prompt_input_cost_per_1m_tokens: float = float(get_env("AI_PROMPT_INPUT_COST_PER_1M_TOKENS", default="0"))
     ai_prompt_output_cost_per_1m_tokens: float = float(get_env("AI_PROMPT_OUTPUT_COST_PER_1M_TOKENS", default="0"))
     ai_embedding_cost_per_1m_tokens: float = float(get_env("AI_EMBEDDING_COST_PER_1M_TOKENS", default="0"))
@@ -125,19 +139,19 @@ class Settings:
             "PUBLIC_ID_SECRET": self.public_id_secret,
             "INTERNAL_API_TOKEN": self.internal_api_token,
             "AI_DB_PASSWORD": self.ai_db_password,
-            "GEMINI_API_KEY": self.gemini_api_key,
+            "AI_PROVIDER_KEY_ENCRYPTION_SECRET": self.ai_provider_key_encryption_secret,
         }
         forbidden_values = {
             "PUBLIC_ID_SECRET": {"change-me-in-production-public-id-secret"},
             "INTERNAL_API_TOKEN": {"change_me_internal_api_token"},
             "AI_DB_PASSWORD": {"ai_password", "change_me_ai_password"},
-            "GEMINI_API_KEY": {"your-gemini-api-key"},
+            "AI_PROVIDER_KEY_ENCRYPTION_SECRET": {"change_me_ai_provider_key_encryption_secret"},
         }
         min_lengths = {
             "PUBLIC_ID_SECRET": 32,
             "INTERNAL_API_TOKEN": 32,
             "AI_DB_PASSWORD": 12,
-            "GEMINI_API_KEY": 16,
+            "AI_PROVIDER_KEY_ENCRYPTION_SECRET": 32,
         }
 
         if self.object_storage_provider.strip().lower() == "minio":

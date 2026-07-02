@@ -6,6 +6,7 @@ from app.repositories.ai_chat_sessions_repository import AIChatSessionsRepositor
 from app.repositories.ai_index_jobs_repository import AIIndexJobsRepository
 from app.repositories.ai_knowledge_chunks_repository import AIKnowledgeChunksRepository
 from app.repositories.ai_knowledge_sources_repository import AIKnowledgeSourcesRepository
+from app.repositories.ai_model_catalog_repository import AIModelCatalogRepository
 from app.repositories.ai_prompt_logs_repository import AIPromptLogsRepository
 from app.repositories.ai_retrieval_logs_repository import AIRetrievalLogsRepository
 from app.repositories.learner_global_profile_assets_repository import LearnerGlobalProfileAssetsRepository
@@ -18,6 +19,7 @@ __all__ = [
     "AIIndexJobsRepository",
     "AIKnowledgeSourcesRepository",
     "AIKnowledgeChunksRepository",
+    "AIModelCatalogRepository",
     "AIPromptLogsRepository",
     "AIRetrievalLogsRepository",
     "LearnerGlobalProfileAssetsRepository",

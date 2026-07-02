@@ -1207,6 +1207,136 @@
   text-align: right;
 }
 
+.home-ai-default-model-row,
+.home-ai-provider-card {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.75rem;
+  border: 1px solid #dbe4ef;
+  border-radius: 0.85rem;
+  background: #ffffff;
+}
+
+.home-ai-default-model-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.home-ai-default-model-row label {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.home-ai-default-model-row span,
+.home-ai-provider-card small,
+.home-ai-model-chip {
+  color: #64748b;
+  font: 650 0.78rem/1.35 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.home-ai-default-model-row select,
+.home-ai-provider-actions input {
+  width: 100%;
+  min-width: 0;
+  height: 2.45rem;
+  padding: 0 0.65rem;
+  border: 1px solid #d5deeb;
+  border-radius: 0.7rem;
+  background: #fff;
+  color: #0f172a;
+  font: 650 0.84rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.home-ai-default-model-row select:focus,
+.home-ai-provider-actions input:focus {
+  outline: none;
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
+}
+
+.home-ai-default-model-row button,
+.home-ai-provider-actions button {
+  min-height: 2.45rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.75rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  font: 800 0.78rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.home-ai-default-model-row button:hover:not(:disabled),
+.home-ai-provider-actions button:hover:not(:disabled) {
+  border-color: rgba(15, 118, 110, 0.35);
+  color: #0f766e;
+}
+
+.home-ai-default-model-row button:disabled,
+.home-ai-provider-actions button:disabled {
+  opacity: 0.55;
+}
+
+.home-ai-provider-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.home-ai-provider-card-header span {
+  min-width: 0;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.home-ai-provider-card-header strong {
+  color: #111827;
+  font: 750 0.92rem/1.3 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.home-ai-provider-card-header em {
+  flex: 0 0 auto;
+  color: #64748b;
+  font: 650 0.78rem/1.4 "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-style: normal;
+  text-align: right;
+}
+
+.home-ai-model-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.home-ai-model-chip {
+  min-height: 1.8rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.55rem;
+  border-radius: 999px;
+  overflow-wrap: anywhere;
+}
+
+.home-ai-model-chip-ready {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.home-ai-model-chip-disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
+.home-ai-provider-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+  gap: 0.5rem;
+}
+
 .home-ai-trend-metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1670,7 +1800,9 @@
 
   .home-ai-audit-filters,
   .home-ai-trend-metrics,
-  .home-ai-audit-filter-actions {
+  .home-ai-audit-filter-actions,
+  .home-ai-default-model-row,
+  .home-ai-provider-actions {
     grid-template-columns: 1fr;
   }
 
@@ -1728,6 +1860,15 @@
   .home-ai-config-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .home-ai-provider-card-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .home-ai-provider-card-header em {
+    text-align: left;
   }
 
   .home-ai-trend-day-row {

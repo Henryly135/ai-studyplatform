@@ -1,5 +1,9 @@
 import type { ApiErrorResponse, Identity } from "../types/auth";
 import type {
+  AdminAiDefaultModelResponse,
+  AdminAiProviderCredential,
+  AdminAiProviderCredentialHealthResponse,
+  AdminAiProviderCredentialListResponse,
   AdminUpdateUserIdentityRequest,
   AdminUpdateUserStatusRequest,
   AdminUserListResponse,
@@ -12,8 +16,10 @@ import type {
   EducatorInviteTokenListResponse,
   EducatorInviteTokenResponse,
   ReviewEducatorApprovalRequest,
+  SaveAdminAiProviderCredentialRequest,
   SendEducatorInviteEmailResponse,
   SendEducatorInviteEmailRequest,
+  SetAdminAiDefaultModelRequest,
 } from "../types/admin";
 import {
   buildAuthHeaders,
@@ -22,6 +28,8 @@ import {
 } from "./api";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
+const AI_ADMIN_PROVIDERS_URL = `${API_BASE_URL}/ai/admin/ai/providers`;
+const AI_ADMIN_DEFAULTS_URL = `${API_BASE_URL}/ai/admin/ai/defaults`;
 
 async function parseJsonSafe(response: Response) {
   return parseJsonText(await response.text());
@@ -212,6 +220,62 @@ function normalizeSendInviteEmailResponse(payload: unknown): SendEducatorInviteE
   };
 }
 
+function normalizeProviderCredential(payload: unknown): AdminAiProviderCredential {
+  const data = asRecord(payload);
+
+  return {
+    provider: String(data.provider ?? ""),
+    label: String(getField(data, "providerLabel", "provider_label") ?? data.label ?? data.provider ?? ""),
+    backendSupported: toBoolean(getField(data, "backendSupported", "backend_supported"), true),
+    configured: toBoolean(data.configured ?? getField(data, "hasCredential", "has_credential")),
+    keyPreview: toNullableString(getField(data, "apiKeyHint", "api_key_hint") ?? getField(data, "keyPreview", "key_preview")),
+    defaultModelId: toNullableString(getField(data, "defaultModelId", "default_model_id")),
+    status: String(data.status ?? data.healthStatus ?? "unknown"),
+    lastHealthCheckAt: toNullableString(getField(data, "lastCheckedAt", "last_checked_at") ?? getField(data, "lastHealthCheckAt", "last_health_check_at")),
+    lastHealthStatus: toNullableString(getField(data, "healthStatus", "health_status") ?? getField(data, "lastHealthStatus", "last_health_status")),
+    updatedAt: toNullableString(getField(data, "updatedAt", "updated_at")),
+  };
+}
+
+function normalizeProviderCredentialList(payload: unknown): AdminAiProviderCredentialListResponse {
+  const data = asRecord(payload);
+  const rawCredentials = Array.isArray(data.providers)
+    ? data.providers
+    : Array.isArray(data.credentials)
+      ? data.credentials
+      : Array.isArray(data.items)
+      ? data.items
+      : [];
+
+  return {
+    credentials: rawCredentials.filter(isRecord).map(normalizeProviderCredential),
+  };
+}
+
+function normalizeProviderCredentialHealth(
+  payload: unknown,
+  fallbackProvider: string
+): AdminAiProviderCredentialHealthResponse {
+  const data = asRecord(payload);
+
+  return {
+    provider: String(data.provider ?? fallbackProvider),
+    status: String(data.status ?? (toBoolean(data.ok) ? "ready" : "blocked")),
+    ok: toBoolean(data.ok ?? data.healthy),
+    checkedAt: String(getField(data, "checkedAt", "checked_at") ?? ""),
+    message: toNullableString(data.message ?? data.detail),
+  };
+}
+
+function normalizeDefaultModel(payload: unknown): AdminAiDefaultModelResponse {
+  const data = asRecord(payload);
+
+  return {
+    modelId: String(getField(data, "defaultChatModelId", "default_chat_model_id") ?? getField(data, "modelId", "model_id") ?? ""),
+    provider: toNullableString(data.provider),
+  };
+}
+
 export async function getAdminUsers(
   accessToken: string
 ): Promise<AdminUserListResponse> {
@@ -232,6 +296,125 @@ export async function getAdminUsers(
   }
 
   return normalizeAdminUserList(data);
+}
+
+export async function listAdminAiProviderCredentials(
+  accessToken: string
+): Promise<AdminAiProviderCredentialListResponse> {
+  void accessToken;
+
+  const response = await fetch(AI_ADMIN_PROVIDERS_URL, {
+    method: "GET",
+    headers: buildAuthHeaders({
+      "Content-Type": "application/json",
+    }),
+  });
+
+  const data = await parseJsonSafe(response);
+  handleAuthenticationFailureFromResponse(response.status, data);
+
+  if (!response.ok) {
+    throw new Error(getErrorMessage(data, "获取 AI provider key 配置失败。"));
+  }
+
+  return normalizeProviderCredentialList(data);
+}
+
+export async function saveAdminAiProviderCredential(
+  accessToken: string,
+  payload: SaveAdminAiProviderCredentialRequest
+): Promise<AdminAiProviderCredential> {
+  void accessToken;
+  const { provider, ...requestBody } = payload;
+
+  const response = await fetch(`${AI_ADMIN_PROVIDERS_URL}/${encodeURIComponent(provider)}/credential`, {
+    method: "PUT",
+    headers: buildAuthHeaders({
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify({
+      apiKey: requestBody.apiKey,
+      baseUrl: null,
+      enabled: true,
+    }),
+  });
+
+  const data = await parseJsonSafe(response);
+  handleAuthenticationFailureFromResponse(response.status, data);
+
+  if (!response.ok) {
+    throw new Error(getErrorMessage(data, "保存 AI provider key 失败。"));
+  }
+
+  return normalizeProviderCredential(data);
+}
+
+export async function deleteAdminAiProviderCredential(
+  accessToken: string,
+  provider: string
+): Promise<void> {
+  void accessToken;
+
+  const response = await fetch(`${AI_ADMIN_PROVIDERS_URL}/${encodeURIComponent(provider)}/credential`, {
+    method: "DELETE",
+    headers: buildAuthHeaders({
+      "Content-Type": "application/json",
+    }),
+  });
+
+  const data = await parseJsonSafe(response);
+  handleAuthenticationFailureFromResponse(response.status, data);
+
+  if (!response.ok) {
+    throw new Error(getErrorMessage(data, "删除 AI provider key 失败。"));
+  }
+}
+
+export async function checkAdminAiProviderCredentialHealth(
+  accessToken: string,
+  provider: string
+): Promise<AdminAiProviderCredentialHealthResponse> {
+  void accessToken;
+
+  const response = await fetch(`${AI_ADMIN_PROVIDERS_URL}/${encodeURIComponent(provider)}/health-check`, {
+    method: "POST",
+    headers: buildAuthHeaders({
+      "Content-Type": "application/json",
+    }),
+  });
+
+  const data = await parseJsonSafe(response);
+  handleAuthenticationFailureFromResponse(response.status, data);
+
+  if (!response.ok) {
+    throw new Error(getErrorMessage(data, "AI provider health check 失败。"));
+  }
+
+  return normalizeProviderCredentialHealth(data, provider);
+}
+
+export async function setAdminAiDefaultModel(
+  accessToken: string,
+  payload: SetAdminAiDefaultModelRequest
+): Promise<AdminAiDefaultModelResponse> {
+  void accessToken;
+
+  const response = await fetch(AI_ADMIN_DEFAULTS_URL, {
+    method: "PATCH",
+    headers: buildAuthHeaders({
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify({ defaultChatModelId: payload.modelId }),
+  });
+
+  const data = await parseJsonSafe(response);
+  handleAuthenticationFailureFromResponse(response.status, data);
+
+  if (!response.ok) {
+    throw new Error(getErrorMessage(data, "设置默认 AI 模型失败。"));
+  }
+
+  return normalizeDefaultModel(data);
 }
 
 export async function updateAdminUserIdentity(

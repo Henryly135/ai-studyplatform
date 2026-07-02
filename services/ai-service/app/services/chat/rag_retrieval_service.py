@@ -46,7 +46,7 @@ class RagRetrievalService:
         self.session = session
         self.chunk_repository = AIKnowledgeChunksRepository(session)
         self.retrieval_logs = AIRetrievalLogsRepository(session)
-        self.embedding_service = EmbeddingService()
+        self.embedding_service = EmbeddingService(session)
 
     def retrieve(
         self,

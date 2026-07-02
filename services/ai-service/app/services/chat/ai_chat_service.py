@@ -35,6 +35,9 @@ class PersistedChatResult:
     assistant_message_id: int
     reply: str
     sources: list[dict[str, object]]
+    model_id: str | None = None
+    model_name: str | None = None
+    provider: str | None = None
 
 
 def generate_chat_reply(
@@ -43,12 +46,18 @@ def generate_chat_reply(
     prompt_template_name: str = "chat_reply_v1",
     retrieval_result=None,
     conversation_history=None,
+    db: Session | None = None,
+    user_id: int | None = None,
+    model_id: str | None = None,
 ) -> AIChatReplyResult:
     return workflow_generate_chat_reply(
         current_user_message=current_user_message,
         prompt_template_name=prompt_template_name,
         retrieval_result=retrieval_result,
         conversation_history=conversation_history,
+        db=db,
+        user_id=user_id,
+        model_id=model_id,
     )
 
 
@@ -112,6 +121,7 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
             current_user_message=payload.message.strip(),
             course_id=payload.course_id,
             module_id=payload.module_id,
+            model_id=payload.model_id,
         )
     except AIModelInvocationError as exc:
         prompt_logs_repo.create(
@@ -120,7 +130,7 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
             user_id=payload.user_id,
             call_type=AIPromptCallType.CHAT,
             prompt_template_name="chat_rag_v1" if payload.course_id is not None else "chat_reply_v1",
-            model_name=settings.ai_demo_model_name,
+            model_name=settings.ai_default_chat_model,
             input_text=payload.message.strip(),
             output_text=None,
             request_json={
@@ -148,20 +158,20 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
             user_id=payload.user_id,
             call_type=AIPromptCallType.CHAT,
             prompt_template_name="chat_rag_v1" if payload.course_id is not None else "chat_reply_v1",
-            model_name=settings.ai_demo_model_name,
+            model_name=settings.ai_default_chat_model,
             input_text=payload.message.strip(),
             output_text=None,
             request_json={
-                "orchestrator": settings.ai_chat_orchestrator,
+                "orchestrator": "provider_adapter",
                 "chain_name": "quota_failure",
-                "fallback_used": settings.ai_chat_orchestrator.strip().lower() == "langchain",
+                "fallback_used": False,
                 "provider_error_type": "quota",
             },
             response_json={
                 "provider_error_type": "quota",
-                "orchestrator": settings.ai_chat_orchestrator,
+                "orchestrator": "provider_adapter",
                 "chain_name": "quota_failure",
-                "fallback_used": settings.ai_chat_orchestrator.strip().lower() == "langchain",
+                "fallback_used": False,
             },
             status=AIPromptStatus.FAILED,
             error_message=str(exc),
@@ -204,7 +214,7 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
         model_name=(
             str(workflow_result.reply_result.request_json.get("model") or "guardrail")
             if isinstance(workflow_result.reply_result.request_json, dict)
-            else settings.ai_demo_model_name
+            else settings.ai_default_chat_model
         ),
         input_text=payload.message.strip(),
         output_text=workflow_result.reply_result.reply,
@@ -255,10 +265,14 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
     db.commit()
     db.refresh(session)
 
+    reply_request_json = workflow_result.reply_result.request_json if isinstance(workflow_result.reply_result.request_json, dict) else {}
     return PersistedChatResult(
         session_id=session.session_id,
         user_message_id=user_message.message_id,
         assistant_message_id=assistant_message.message_id,
         reply=workflow_result.reply_result.reply,
         sources=workflow_result.sources,
+        model_id=reply_request_json.get("modelId"),
+        model_name=reply_request_json.get("model"),
+        provider=reply_request_json.get("provider"),
     )

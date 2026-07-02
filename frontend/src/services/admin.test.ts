@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  checkAdminAiProviderCredentialHealth,
+  deleteAdminAiProviderCredential,
   generateEducatorInviteToken,
   getAdminUsers,
   getPendingEducatorApprovals,
+  listAdminAiProviderCredentials,
   listEducatorInviteTokens,
+  saveAdminAiProviderCredential,
   sendEducatorInviteEmail,
+  setAdminAiDefaultModel,
 } from "./admin";
 
 const NOW_MS = 1_800_000_000_000;
@@ -199,5 +204,88 @@ describe("admin service normalization", () => {
     expect(email.emailDelivery.attempted).toBe(true);
     expect(email.emailDelivery.delivered).toBe(false);
     expect(email.emailDelivery.reason).toBe("456");
+  });
+
+  it("manages AI provider credentials and default model settings", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          providers: [
+            {
+              provider: "deepseek",
+              providerLabel: "DeepSeek",
+              backendSupported: true,
+              configured: "true",
+              apiKeyHint: "****1234",
+              healthStatus: "ready",
+              lastCheckedAt: null,
+              updated_at: "2026-07-02T00:00:00Z",
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          provider: "deepseek",
+          configured: true,
+          apiKeyHint: "****5678",
+          healthStatus: "ready",
+        })
+      )
+      .mockResolvedValueOnce(mockJsonResponse({ detail: "deleted" }))
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          provider: "deepseek",
+          ok: "true",
+          status: "ready",
+          checked_at: "2026-07-02T01:00:00Z",
+          message: 123,
+        })
+      )
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          defaultChatModelId: "deepseek:deepseek-v4-flash",
+        })
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const credentials = await listAdminAiProviderCredentials("");
+    const saved = await saveAdminAiProviderCredential("", {
+      provider: "deepseek",
+      apiKey: "test-key",
+      defaultModelId: "deepseek:deepseek-v4-flash",
+    });
+    await deleteAdminAiProviderCredential("", "deepseek");
+    const health = await checkAdminAiProviderCredentialHealth("", "deepseek");
+    const defaultModel = await setAdminAiDefaultModel("", { modelId: "deepseek:deepseek-v4-flash" });
+
+    expect(credentials.credentials[0].configured).toBe(true);
+    expect(credentials.credentials[0].backendSupported).toBe(true);
+    expect(credentials.credentials[0].keyPreview).toBe("****1234");
+    expect(saved.keyPreview).toBe("****5678");
+    expect(health.ok).toBe(true);
+    expect(health.message).toBe("123");
+    expect(defaultModel.modelId).toBe("deepseek:deepseek-v4-flash");
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/ai/admin/ai/providers/deepseek/credential",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          apiKey: "test-key",
+          baseUrl: null,
+          enabled: true,
+        }),
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      "/api/ai/admin/ai/defaults",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ defaultChatModelId: "deepseek:deepseek-v4-flash" }),
+      })
+    );
   });
 });

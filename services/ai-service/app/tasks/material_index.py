@@ -39,7 +39,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
     try:
         content_service = MaterialContentService()
         chunking_service = TextChunkingService()
-        embedding_service = EmbeddingService()
+        embedding_service = EmbeddingService(session)
         indexing_service = KnowledgeIndexingService(session)
 
         # Stage 2: Job Retrieval and Validation
