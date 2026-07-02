@@ -630,7 +630,12 @@ jobs:
             mc alias set local "http://minio:${MINIO_API_PORT}" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" &&
             mc mb --ignore-existing "local/$MINIO_BUCKET" &&
             mc anonymous set private "local/$MINIO_BUCKET" &&
-            mc anonymous get "local/$MINIO_BUCKET" | grep -qi private &&
+            policy="$(mc anonymous get "local/$MINIO_BUCKET")" &&
+            echo "$policy" &&
+            case "$policy" in
+              *private*|*Private*) ;;
+              *) echo "Expected private bucket policy"; exit 1 ;;
+            esac &&
             mc ls "local/$MINIO_BUCKET"
           '
 
@@ -778,7 +783,12 @@ jobs:
             mc alias set local "http://minio:${MINIO_API_PORT}" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" &&
             mc mb --ignore-existing "local/$MINIO_BUCKET" &&
             mc anonymous set private "local/$MINIO_BUCKET" &&
-            mc anonymous get "local/$MINIO_BUCKET" | grep -qi private
+            policy="$(mc anonymous get "local/$MINIO_BUCKET")" &&
+            echo "$policy" &&
+            case "$policy" in
+              *private*|*Private*) ;;
+              *) echo "Expected private bucket policy"; exit 1 ;;
+            esac
           '
 
       - name: Verify redis is healthy
