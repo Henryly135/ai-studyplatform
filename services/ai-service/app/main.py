@@ -3,15 +3,13 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.api.admin_telemetry import router as admin_telemetry_router
 from app.api.chat import router as chat_router
 from app.api.demo import router as demo_router
-from app.api.internal_content_generation import router as internal_content_generation_router
 from app.api.internal_index_jobs import router as internal_index_jobs_router
 from app.api.internal_profiles import router as internal_profiles_router
 from app.api.internal_profile_update import router as internal_profile_update_router
 from app.api.internal_quiz_generation import router as internal_quiz_generation_router
-from app.api.internal_short_answer import router as internal_short_answer_router
-from app.api.internal_study_planner import router as internal_study_planner_router
 from app.api.profiles import router as profiles_router
 from app.api.quiz_generation import router as quiz_generation_router
 from app.api.tasks import router as tasks_router
@@ -30,23 +28,21 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=list(settings.cors_allowed_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(demo_router)
+app.include_router(admin_telemetry_router)
 app.include_router(chat_router)
 app.include_router(profiles_router)
 app.include_router(quiz_generation_router)
-app.include_router(internal_content_generation_router)
 app.include_router(internal_index_jobs_router)
 app.include_router(internal_profiles_router)
 app.include_router(internal_profile_update_router)
 app.include_router(internal_quiz_generation_router)
-app.include_router(internal_short_answer_router)
-app.include_router(internal_study_planner_router)
 app.include_router(tasks_router)
 
 

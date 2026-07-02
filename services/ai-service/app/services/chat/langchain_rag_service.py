@@ -10,7 +10,6 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.core.config import settings
 from app.core.prompts import PromptTemplate
-from app.services.providers.factory import resolve_gemini_chat_api_key
 from app.services.chat.rag_retrieval_service import RetrievalResult
 
 
@@ -23,8 +22,8 @@ class LangChainChatExecutionResult:
 
 def _build_llm() -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
-        model=settings.ai_chat_model,
-        google_api_key=resolve_gemini_chat_api_key(),
+        model=settings.ai_demo_model_name,
+        google_api_key=settings.gemini_api_key,
         temperature=0.5,
         max_output_tokens=settings.ai_chat_max_output_tokens,
     )
@@ -157,7 +156,7 @@ def run_langchain_plain_chat(
     return LangChainChatExecutionResult(
         reply=reply,
         request_json={
-            "model": settings.ai_chat_model,
+            "model": settings.ai_demo_model_name,
             "prompt_template_name": prompt.name,
             "orchestrator": "langchain",
             "chain_name": "plain_chat",
@@ -196,7 +195,7 @@ def run_langchain_rag_chat(
     return LangChainChatExecutionResult(
         reply=reply,
         request_json={
-            "model": settings.ai_chat_model,
+            "model": settings.ai_demo_model_name,
             "prompt_template_name": prompt.name,
             "orchestrator": "langchain",
             "chain_name": "rag_chat",

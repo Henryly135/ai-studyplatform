@@ -12,20 +12,20 @@ const POST_PROFILE_INIT_REDIRECT_STORAGE_KEY = "postProfileInitRedirect";
 
 function getLoginErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) {
-    return "An unknown error occurred.";
+    return "发生未知错误。";
   }
 
   switch (error.message) {
     case "Invalid credentials":
-      return "Incorrect email or password.";
-    case "Email not verified":
-      return "Your email has not been verified yet. Please verify your email before signing in.";
+      return "邮箱或密码错误。";
+    case "邮箱未验证":
+      return "邮箱尚未验证，请先完成邮箱验证后再登录。";
     case "Account pending approval":
-      return "Your account is awaiting admin approval.";
+      return "你的账号正在等待管理员审批。";
     case "Account rejected":
-      return "Your account application was rejected. Please contact an administrator.";
+      return "你的账号申请已被拒绝，请联系管理员。";
     case "Account deactivated":
-      return "Your account has been deactivated. Please contact an administrator.";
+      return "你的账号已被停用，请联系管理员。";
     default:
       return error.message;
   }
@@ -56,12 +56,8 @@ function Login() {
     event.preventDefault();
     setError("");
 
-    console.log("[login] submit", {
-      email: form.email,
-    });
-
     if (!form.email || !form.password) {
-      setError("Please enter email and password.");
+      setError("请输入邮箱和密码。");
       return;
     }
 
@@ -72,8 +68,6 @@ function Login() {
         email: form.email,
         password: form.password,
       });
-
-      console.log("[login] success", response);
 
       localStorage.setItem("accessToken", response.accessToken);
       localStorage.setItem("tokenType", response.tokenType);
@@ -95,7 +89,6 @@ function Login() {
       localStorage.removeItem(POST_PROFILE_INIT_REDIRECT_STORAGE_KEY);
       navigate(postLoginTarget, { replace: true });
     } catch (err) {
-      console.error("[login] failed", err);
       setError(getLoginErrorMessage(err));
     } finally {
       setLoading(false);
@@ -105,8 +98,10 @@ function Login() {
   return (
     <AuthLayout>
       <AuthHeader
-        title="Welcome back"
-        description="Sign in to continue your learning journey." badge={""}      />
+        title="欢迎回来"
+        description="登录后继续你的学习旅程。"
+        badge=""
+      />
       <LoginForm
         form={form}
         error={error}

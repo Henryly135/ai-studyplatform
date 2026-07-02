@@ -58,7 +58,7 @@ function CourseChatSidebar({
   const [activeSessionUuid, setActiveSessionUuid] = useState<string | null>(null);
   const [messages, setMessages] = useState<CourseChatMessage[]>([]);
   const [composerValue, setComposerValue] = useState("");
-  const [status, setStatus] = useState("Open the assistant to start a module conversation.");
+  const [status, setStatus] = useState("打开助手开始模块对话。");
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [isLoadingSessionDetail, setIsLoadingSessionDetail] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -72,7 +72,7 @@ function CourseChatSidebar({
 
     let cancelled = false;
     setIsLoadingSessions(true);
-    setStatus("Loading module sessions...");
+    setStatus("正在加载模块会话...");
 
     void listModuleChatSessions(moduleUuid)
       .then((data) => {
@@ -83,8 +83,8 @@ function CourseChatSidebar({
         setSessions(data);
         setStatus(
           data.length > 0
-            ? "Select a session or send a new message to start another one."
-            : "No sessions for this module yet. Send a message to create one."
+            ? "选择一个会话，或发送新消息开始另一个会话。"
+            : "该模块暂无会话，发送消息即可创建。"
         );
       })
       .catch((error) => {
@@ -93,7 +93,7 @@ function CourseChatSidebar({
         }
 
         setSessions([]);
-        setStatus(error instanceof Error ? error.message : "Failed to load module sessions.");
+        setStatus(error instanceof Error ? error.message : "模块会话加载失败。");
       })
       .finally(() => {
         if (!cancelled) {
@@ -111,7 +111,7 @@ function CourseChatSidebar({
     setMessages([]);
     setComposerValue("");
     if (isOpen) {
-      setStatus("Select a session or send a new message to start another one.");
+      setStatus("选择一个会话，或发送新消息开始另一个会话。");
     }
   }, [moduleUuid, isOpen]);
 
@@ -130,7 +130,7 @@ function CourseChatSidebar({
 
   const loadSession = async (sessionUuid: string) => {
     setIsLoadingSessionDetail(true);
-    setStatus("Loading session...");
+    setStatus("正在加载会话...");
 
     try {
       const detail = await getChatSessionDetail(sessionUuid);
@@ -144,9 +144,9 @@ function CourseChatSidebar({
             text: entry.content_text,
           }))
       );
-      setStatus("Session loaded.");
+      setStatus("会话已加载。");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Failed to load the selected session.");
+      setStatus(error instanceof Error ? error.message : "所选会话加载失败。");
     } finally {
       setIsLoadingSessionDetail(false);
     }
@@ -173,7 +173,7 @@ function CourseChatSidebar({
       setActiveSessionUuid("__pending__");
     }
     setIsSending(true);
-    setStatus(activeSessionUuid ? "Sending to current session..." : "Creating a new session...");
+    setStatus(activeSessionUuid ? "正在发送到当前会话..." : "正在创建新会话...");
 
     try {
       const response = await sendChatMessage({
@@ -193,9 +193,9 @@ function CourseChatSidebar({
           text: response.reply,
         },
       ]);
-      setStatus("Assistant replied.");
+      setStatus("助手已回复。");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Failed to send the message.");
+      setStatus(error instanceof Error ? error.message : "消息发送失败。");
       if (wasViewingSession) {
         setMessages((current) => current.slice(0, -1));
       } else {
@@ -222,7 +222,7 @@ function CourseChatSidebar({
           onMouseDown={onResizeStart}
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize chat sidebar"
+          aria-label="调整聊天侧栏大小"
           tabIndex={-1}
         />
         <div className="course-chat-sidebar-shell">
@@ -234,9 +234,9 @@ function CourseChatSidebar({
                 onClick={() => {
                   setActiveSessionUuid(null);
                   setMessages([]);
-                  setStatus("Select a session or send a new message to start another one.");
+                  setStatus("选择一个会话，或发送新消息开始另一个会话。");
                 }}
-                aria-label="Back to sessions"
+                aria-label="返回会话列表"
               >
                 <LuArrowLeft size={18} aria-hidden="true" />
               </button>
@@ -245,26 +245,26 @@ function CourseChatSidebar({
             )}
 
             <div className="course-chat-header-copy">
-              <span>{isViewingSession ? "Session" : "Module assistant"}</span>
+              <span>{isViewingSession ? "Session" : "模块助手"}</span>
               <strong>{isViewingSession ? activeSession?.title || "Session" : moduleTitle}</strong>
             </div>
 
-            <button type="button" className="course-chat-close" onClick={onClose} aria-label="Close chatbot">
+            <button type="button" className="course-chat-close" onClick={onClose} aria-label="关闭聊天助手">
               <LuX size={18} aria-hidden="true" />
             </button>
           </header>
 
           {!isViewingSession ? (
-            <section className="course-chat-session-list" aria-label="Module chat sessions">
+            <section className="course-chat-session-list" aria-label="模块聊天会话">
               <div className="course-chat-section-heading">
-                <h3>Sessions</h3>
-                <span className="course-chat-status-chip">{sessions.length} total</span>
+                <h3>会话</h3>
+                <span className="course-chat-status-chip">{sessions.length}总计</span>
               </div>
 
               <div className="course-chat-session-items">
-                {isLoadingSessions ? <p className="course-chat-muted">Loading sessions...</p> : null}
+                {isLoadingSessions ? <p className="course-chat-muted">正在加载会话...</p> : null}
                 {!isLoadingSessions && sessions.length === 0 ? (
-                  <p className="course-chat-muted">No sessions under this module yet.</p>
+                  <p className="course-chat-muted">该模块下暂无会话。</p>
                 ) : null}
                 {sessions.map((session) => (
                   <button
@@ -275,7 +275,7 @@ function CourseChatSidebar({
                     disabled={isLoadingSessionDetail}
                   >
                     <div className="course-chat-session-meta">
-                      <strong>{session.title || "Untitled session"}</strong>
+                      <strong>{session.title || "未命名会话"}</strong>
                       <span>{formatRelativeTimestamp(session.last_message_at)}</span>
                     </div>
                   </button>
@@ -285,12 +285,12 @@ function CourseChatSidebar({
           ) : (
             <section className="course-chat-conversation">
               <div className="course-chat-section-heading">
-                <h3>{activeSession ? activeSession.title || "Current session" : "Session"}</h3>
+                <h3>{activeSession ? activeSession.title || "当前会话" : "Session"}</h3>
               </div>
 
               <div ref={messageViewportRef} className="course-chat-message-list" aria-live="polite">
                 {messages.length === 0 ? (
-                  <div className="course-chat-empty-state">No visible messages in this session yet.</div>
+                  <div className="course-chat-empty-state">该会话暂无可见消息。</div>
                 ) : (
                   messages.map((entry) => (
                     <article
@@ -323,14 +323,14 @@ function CourseChatSidebar({
                     void handleSend();
                   }
                 }}
-                placeholder="Ask about this module..."
+                placeholder="询问这个模块..."
                 disabled={isSending}
               />
               <button
                 type="submit"
                 className="course-chat-send"
                 disabled={!composerValue.trim() || isSending}
-                aria-label="Send message"
+                aria-label="发送消息"
               >
                 <LuArrowUp size={18} aria-hidden="true" />
               </button>

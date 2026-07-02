@@ -5,6 +5,10 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import Request
 
 
+class PublicFrontendUrlNotConfiguredError(RuntimeError):
+    pass
+
+
 def _default_public_frontend_port() -> str | None:
     port = (os.getenv("PUBLIC_FRONTEND_PORT") or os.getenv("NGINX_PORT") or "").strip()
     return port or None
@@ -60,6 +64,20 @@ def normalize_public_frontend_base_url(base_url: str | None) -> str | None:
     return urlunsplit(parsed._replace(netloc=netloc)).rstrip("/")
 
 
+def configured_public_frontend_base_url() -> str | None:
+    explicit = (os.getenv("PUBLIC_FRONTEND_URL") or "").strip()
+    if explicit:
+        return normalize_public_frontend_base_url(explicit) or explicit.rstrip("/")
+
+    public_base = (os.getenv("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if public_base:
+        if public_base.endswith("/api"):
+            public_base = public_base[:-4]
+        return normalize_public_frontend_base_url(public_base) or public_base
+
+    return None
+
+
 def resolve_public_frontend_base_url(request: Request) -> str | None:
     explicit = (request.headers.get("x-public-frontend-url") or "").strip()
     if explicit:
@@ -77,3 +95,14 @@ def resolve_public_frontend_base_url(request: Request) -> str | None:
         return normalize_public_frontend_base_url(f"{scheme}://{host}")
 
     return None
+
+
+def resolve_trusted_public_frontend_base_url(request: Request) -> str | None:
+    configured = configured_public_frontend_base_url()
+    if configured:
+        return configured
+
+    if os.getenv("APP_ENV", "").strip().lower() == "production":
+        raise PublicFrontendUrlNotConfiguredError("Public frontend URL is not configured")
+
+    return resolve_public_frontend_base_url(request)

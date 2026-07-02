@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from uuid import uuid4
 
@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.db.session import get_db_session
 from app.services.orchestration.langgraph.checkpointer import build_graph_config, get_langgraph_checkpointer
 from app.services.orchestration.langgraph.generated_quiz_attempt_graph import GeneratedQuizAttemptGraphRunner
+from app.services.orchestration.langgraph.quiz_generation_graph import QuizGenerationGraphRunner
 from app.services.workflows.quiz_generation.services.generation_service import QuizCandidateGenerationService
 from app.services.workflows.quiz_generation.services.generation_run_store import QuizGenerationRunStore
 from app.services.workflows.quiz_generation.services.learning_quiz_generation_client import LearningQuizGenerationClient
@@ -23,18 +24,21 @@ from app.services.workflows.quiz_generation.services.publishing_service import Q
 from app.services.workflows.quiz_generation.services.retrieval_service import QuizGenerationRetrievalService
 from app.services.workflows.quiz_generation.services.validation_service import QuizGenerationValidationService
 from app.services.workflows.quiz_generation.schemas import (
+    QuizGenerationAuthoringRequest,
     QuizGeneratedAttemptStartResponse,
     QuizGenerationAutoStartRequest,
     QuizGenerationAutoStartRunRequest,
     QuizGenerationRequest,
     QuizGenerationRunStartResponse,
+    QuizGenerationRunResponse,
     QuizGenerationRunStatusResponse,
 )
-from platform_common.permissions.codes import QUIZ_ATTEMPT
+from platform_common.permissions.codes import MODULE_UPDATE, QUIZ_ATTEMPT
 
 
 router = APIRouter(tags=["quiz-generation"])
 require_quiz_attempt_permission = require_identity_permission(QUIZ_ATTEMPT)
+require_quiz_authoring_permission = require_identity_permission(MODULE_UPDATE)
 
 
 def _ensure_run_owner(run: dict, *, current_user: dict, course_uuid: str | None = None, module_uuid: str | None = None) -> None:
@@ -57,10 +61,46 @@ def _stream_event(
         "event": event,
         "message": message,
         "step": step,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "data": data or {},
     }
     return (json.dumps(payload, ensure_ascii=True) + "\n").encode("utf-8")
+
+
+@router.post(
+    "/courses/{course_uuid}/modules/{module_uuid}/quiz/authoring/generate",
+    response_model=QuizGenerationRunResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def generate_authoring_quiz_questions(
+    course_uuid: str,
+    module_uuid: str,
+    payload: QuizGenerationAuthoringRequest = Body(default_factory=QuizGenerationAuthoringRequest),
+    current_user: dict = Depends(require_quiz_authoring_permission),
+    session: Session = Depends(get_db_session),
+) -> QuizGenerationRunResponse:
+    actor_id = current_user.get("id")
+    if not isinstance(actor_id, int):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authenticated user.")
+    actor_identity = str(current_user.get("identity") or "")
+    LearningQuizGenerationClient().ensure_authoring_quiz_access(
+        course_uuid=course_uuid,
+        module_uuid=module_uuid,
+        actor_id=actor_id,
+        actor_identity=actor_identity,
+    )
+    request = QuizGenerationRequest(
+        courseUuid=course_uuid,
+        moduleUuid=module_uuid,
+        educatorId=actor_id,
+        additionalInstructions=payload.additionalInstructions,
+    )
+    thread_id = f"quiz-generation:{actor_id}:{course_uuid}:{module_uuid}:authoring:{uuid4().hex}"
+    config = build_graph_config(thread_id=thread_id, checkpoint_ns="quiz_generation")
+    return QuizGenerationGraphRunner(
+        session,
+        checkpointer=get_langgraph_checkpointer(),
+    ).run(payload=request, config=config)
 
 
 @router.post(
@@ -318,6 +358,7 @@ def stream_auto_generated_quiz_attempt(
                 course_uuid=generation_request.courseUuid,
                 module_uuid=generation_request.moduleUuid,
                 candidate_set=validated_candidate_set,
+                purpose="attempt",
             )
             yield _stream_event(
                 event="step_completed",

@@ -5,6 +5,8 @@ from app.core.deps import require_internal_request
 from app.db.session import get_db_session
 from app.schemas.quiz_generation import (
     GeneratedQuizAttemptInternalStartRequest,
+    QuizGenerationAuthoringAccessRequest,
+    QuizGenerationAuthoringAccessResponse,
     GeneratedQuizQuestionsCreateRequest,
     GeneratedQuizQuestionsCreateResponse,
     QuizGenerationLearnerAccessRequest,
@@ -33,6 +35,21 @@ def check_quiz_generation_learner_access(
     return QuizGenerationLearnerAccessResponse(allowed=True)
 
 
+@router.post("/authoring-access", response_model=QuizGenerationAuthoringAccessResponse)
+def check_quiz_generation_authoring_access(
+    payload: QuizGenerationAuthoringAccessRequest,
+    _: None = Depends(require_internal_request),
+    session: Session = Depends(get_db_session),
+) -> QuizGenerationAuthoringAccessResponse:
+    QuizService(session).ensure_authoring_quiz_access(
+        course_uuid=payload.courseUuid,
+        module_uuid=payload.moduleUuid,
+        actor_id=payload.actorId,
+        actor_identity=payload.actorIdentity,
+    )
+    return QuizGenerationAuthoringAccessResponse(allowed=True)
+
+
 @router.post("/context", response_model=QuizGenerationContextResponse)
 def get_quiz_generation_context(
     payload: QuizGenerationContextRequest,
@@ -54,6 +71,7 @@ def batch_create_generated_questions(
     return QuizService(session).batch_create_generated_questions(
         course_uuid=payload.courseUuid,
         module_uuid=payload.moduleUuid,
+        purpose=payload.purpose,
         questions=payload.questions,
     )
 

@@ -4,24 +4,26 @@ import type {
   CourseModule,
   CourseRecord,
   EducatorAnalytics,
+  EducatorCourseAnalyticsItem,
+  EducatorMaterialBriefItem,
+  EducatorMaterialBriefs,
   EducatorQuizAnalytics,
   EducatorTeachingInsights,
+  LearnerProgressActivityItem,
+  LearnerProgressCourseItem,
+  LearnerProgressOverview,
+  LearnerProgressQuizSummary,
+  QuizAuthoringGenerationResult,
   QuizGenerationProgressEvent,
   QuizGenerationRun,
+  QuizModuleStatsItem,
   QuizRecord,
-  EducatorQuizDraftPayload,
-  EducatorQuizDraftPreview,
   QuizQuestionDraft,
   QuizQuestionPage,
   QuizAttemptSession,
   QuizAttemptResult,
   QuizAttemptHistory,
-  ShortAnswerAssessmentRecord,
-  EducatorContentDraftGrounding,
-  EducatorContentDraftRecord,
-  EducatorContentDraftType,
-  ShortAnswerLearnerAssessment,
-  ShortAnswerSubmissionRecord,
+  TeachingInsightItem,
 } from "../types/course";
 import type {
   CourseInviteLinkResponse,
@@ -125,10 +127,6 @@ type ApiModule = {
   quizTitle?: string | null;
   quiz_time_limit_seconds?: number | null;
   quizTimeLimitSeconds?: number | null;
-  has_published_short_answer?: boolean;
-  hasPublishedShortAnswer?: boolean;
-  short_answer_title?: string | null;
-  shortAnswerTitle?: string | null;
   progress_status?: string | null;
   progressStatus?: string | null;
   is_completed?: boolean;
@@ -287,8 +285,6 @@ function normalizeModule(courseUuid: string, module: ApiModule, index: number): 
     hasPublishedQuiz: Boolean(module.hasPublishedQuiz ?? module.has_published_quiz ?? false),
     quizTitle: (module.quizTitle ?? module.quiz_title ?? null) as string | null,
     quizTimeLimitSeconds: (module.quizTimeLimitSeconds ?? module.quiz_time_limit_seconds ?? null) as number | null,
-    hasPublishedShortAnswer: Boolean(module.hasPublishedShortAnswer ?? module.has_published_short_answer ?? false),
-    shortAnswerTitle: (module.shortAnswerTitle ?? module.short_answer_title ?? null) as string | null,
     progressStatus: (module.progressStatus ?? module.progress_status ?? null) as string | null,
     isCompleted: Boolean(module.isCompleted ?? module.is_completed ?? false),
     completedAt: (module.completedAt ?? module.completed_at ?? null) as string | null,
@@ -422,13 +418,14 @@ function normalizePaginatedCoursePayload(payload: unknown): PaginatedCourseListR
   };
 
   const items = extractCourseArray(payload).map((course, index) => normalizeCourse(course, index));
-  const total = typeof data.total === "number" ? data.total : items.length;
-  const pageSize = typeof data.pageSize === "number" ? data.pageSize : defaultResult.pageSize;
-  const totalPages =
-    typeof data.totalPages === "number"
-      ? data.totalPages
-      : Math.max(1, Math.ceil(total / Math.max(1, pageSize)));
-  const page = typeof data.page === "number" ? data.page : 1;
+  const total = toNonNegativeNumber(data.total, items.length);
+  const pageSize = toFiniteNumber(data.pageSize, defaultResult.pageSize, 1);
+  const totalPages = toFiniteNumber(
+    data.totalPages,
+    Math.max(1, Math.ceil(total / pageSize)),
+    1
+  );
+  const page = toFiniteNumber(data.page, 1, 1);
 
   return {
     items,
@@ -466,7 +463,7 @@ export async function getCourses(options?: {
   handleAuthenticationFailureFromResponse(response.status, null);
 
   if (!response.ok) {
-    throw new Error("Failed to fetch courses.");
+    throw new Error("获取课程失败。");
   }
 
   const text = await response.text();
@@ -495,7 +492,7 @@ export async function searchCourses(query: string): Promise<CourseRecord[]> {
   handleAuthenticationFailureFromResponse(response.status, payload);
 
   if (!response.ok) {
-    throw new Error("Failed to search courses.");
+    throw new Error("搜索课程失败。");
   }
 
   return extractCourseArray(payload)
@@ -538,7 +535,7 @@ export async function enrollInCourse(courseUuid: string): Promise<void> {
   handleAuthenticationFailureFromResponse(response.status, payload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to enroll in course."));
+    throw new Error(extractErrorMessage(payload, "报名课程失败。"));
   }
 }
 
@@ -555,7 +552,7 @@ export async function dropMyEnrollment(courseUuid: string): Promise<void> {
   handleAuthenticationFailureFromResponse(response.status, payload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to cancel enrollment."));
+    throw new Error(extractErrorMessage(payload, "取消报名失败。"));
   }
 }
 
@@ -572,7 +569,7 @@ export async function getMyEnrolledCourseUuids(): Promise<Set<string>> {
   handleAuthenticationFailureFromResponse(response.status, payload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to load enrolled courses."));
+    throw new Error(extractErrorMessage(payload, "加载已加入课程失败。"));
   }
 
   return new Set(
@@ -602,10 +599,405 @@ export async function getMyEnrolledCourses(search = ""): Promise<CourseRecord[]>
   handleAuthenticationFailureFromResponse(response.status, payload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to load enrolled courses."));
+    throw new Error(extractErrorMessage(payload, "加载已加入课程失败。"));
   }
 
   return extractCourseArray(payload).map((course, index) => normalizeCourse(course, index));
+}
+
+function pickProgress(obj: Record<string, unknown>, ...keys: string[]): unknown {
+  for (const key of keys) {
+    if (obj[key] !== undefined) return obj[key];
+  }
+  return undefined;
+}
+
+function progressRecord(payload: unknown): Record<string, unknown> {
+  return payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+}
+
+function toFiniteNumber(value: unknown, fallback: number, minimum?: number, maximum?: number) {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : fallback;
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const withMinimum = minimum === undefined ? parsed : Math.max(minimum, parsed);
+  return maximum === undefined ? withMinimum : Math.min(maximum, withMinimum);
+}
+
+function toNonNegativeNumber(value: unknown, fallback = 0) {
+  return toFiniteNumber(value, fallback, 0);
+}
+
+function toPercentNumber(value: unknown, fallback = 0) {
+  return toFiniteNumber(value, fallback, 0, 100);
+}
+
+function toNullablePercentNumber(value: unknown) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const parsed = toFiniteNumber(value, Number.NaN, 0, 100);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toScorePercentString(value: unknown) {
+  return String(toPercentNumber(value));
+}
+
+function toNullableNonNegativeNumber(value: unknown) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function toBooleanValue(value: unknown, fallback = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
+function asNullableString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function asNullableDisplayString(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const normalized = String(value);
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeString(value: unknown, fallback = "") {
+  return value === null || value === undefined ? fallback : String(value);
+}
+
+function normalizeCourseInviteLink(payload: unknown): CourseInviteLinkResponse {
+  const data = progressRecord(payload);
+  const inviteUrl = pickProgress(data, "inviteUrl", "invite_url");
+
+  return {
+    inviteUuid: normalizeString(pickProgress(data, "inviteUuid", "invite_uuid")),
+    courseUuid: normalizeString(pickProgress(data, "courseUuid", "course_uuid")),
+    ...(inviteUrl === null || inviteUrl === undefined ? {} : { inviteUrl: String(inviteUrl) }),
+    isActive: toBooleanValue(pickProgress(data, "isActive", "is_active")),
+    createdAt: normalizeString(pickProgress(data, "createdAt", "created_at")),
+    expiresAt: asNullableString(pickProgress(data, "expiresAt", "expires_at")),
+  };
+}
+
+function isUsableCourseInviteLink(link: CourseInviteLinkResponse) {
+  return Boolean(link.inviteUuid && link.courseUuid);
+}
+
+function normalizeCourseInviteLinkList(payload: unknown): CourseInviteLinkResponse[] {
+  return Array.isArray(payload)
+    ? payload.map(normalizeCourseInviteLink).filter(isUsableCourseInviteLink)
+    : [];
+}
+
+function normalizeCourseInviteValidation(payload: unknown): CourseInviteValidateResponse {
+  const data = progressRecord(payload);
+  const result = {
+    valid: toBooleanValue(pickProgress(data, "valid")),
+    courseUuid: normalizeString(pickProgress(data, "courseUuid", "course_uuid")),
+    courseTitle: normalizeString(pickProgress(data, "courseTitle", "course_title")),
+    inviteUuid: normalizeString(pickProgress(data, "inviteUuid", "invite_uuid")),
+  };
+
+  if (!result.valid || !result.courseUuid || !result.courseTitle || !result.inviteUuid) {
+    throw new Error("Invalid or expired invite link.");
+  }
+
+  return result;
+}
+
+function normalizeCourseInviteEnrolment(payload: unknown): CourseInviteEnrolResponse {
+  const data = progressRecord(payload);
+  const courseUuid = normalizeString(pickProgress(data, "courseUuid", "course_uuid"));
+
+  if (!courseUuid) {
+    throw new Error("Course invite enrolment response was invalid. Please try again.");
+  }
+
+  return {
+    detail: normalizeString(pickProgress(data, "detail"), "Enrolled successfully."),
+    courseUuid,
+    courseTitle: normalizeString(pickProgress(data, "courseTitle", "course_title"), "Course"),
+  };
+}
+
+function normalizeProgressQuizSummary(payload: unknown): LearnerProgressQuizSummary {
+  const data = progressRecord(payload);
+  const averageBestScore = pickProgress(data, "averageBestScorePercent", "average_best_score_percent");
+  const latestScore = pickProgress(data, "latestScorePercent", "latest_score_percent");
+
+  return {
+    totalQuizzes: toNonNegativeNumber(pickProgress(data, "totalQuizzes", "total_quizzes")),
+    attemptedQuizzes: toNonNegativeNumber(pickProgress(data, "attemptedQuizzes", "attempted_quizzes")),
+    passedQuizzes: toNonNegativeNumber(pickProgress(data, "passedQuizzes", "passed_quizzes")),
+    totalAttempts: toNonNegativeNumber(pickProgress(data, "totalAttempts", "total_attempts")),
+    averageBestScorePercent: toNullablePercentNumber(averageBestScore),
+    latestScorePercent: toNullablePercentNumber(latestScore),
+    latestSubmittedAt: asNullableString(pickProgress(data, "latestSubmittedAt", "latest_submitted_at")),
+  };
+}
+
+function normalizeProgressCourse(payload: unknown): LearnerProgressCourseItem {
+  const data = progressRecord(payload);
+  const nextModule = progressRecord(pickProgress(data, "nextModule", "next_module"));
+
+  return {
+    courseId: toNonNegativeNumber(pickProgress(data, "courseId", "course_id")),
+    courseUuid: String(pickProgress(data, "courseUuid", "course_uuid") ?? ""),
+    title: String(pickProgress(data, "title") ?? "Course"),
+    courseCode: asNullableString(pickProgress(data, "courseCode", "course_code")),
+    category: asNullableString(pickProgress(data, "category")),
+    enrollmentStatus: String(pickProgress(data, "enrollmentStatus", "enrollment_status") ?? "active"),
+    progressPercent: toPercentNumber(pickProgress(data, "progressPercent", "progress_percent")),
+    completedModuleCount: toNonNegativeNumber(
+      pickProgress(data, "completedModuleCount", "completed_module_count")
+    ),
+    totalModuleCount: toNonNegativeNumber(pickProgress(data, "totalModuleCount", "total_module_count")),
+    lastAccessedAt: asNullableString(pickProgress(data, "lastAccessedAt", "last_accessed_at")),
+    completedAt: asNullableString(pickProgress(data, "completedAt", "completed_at")),
+    nextModule: Object.keys(nextModule).length > 0
+      ? {
+          moduleId: toNonNegativeNumber(pickProgress(nextModule, "moduleId", "module_id")),
+          moduleUuid: String(pickProgress(nextModule, "moduleUuid", "module_uuid") ?? ""),
+          title: String(pickProgress(nextModule, "title") ?? "Module"),
+        }
+      : null,
+    quiz: normalizeProgressQuizSummary(pickProgress(data, "quiz")),
+  };
+}
+
+function normalizeProgressActivity(payload: unknown): LearnerProgressActivityItem {
+  const data = progressRecord(payload);
+  const isPassed = pickProgress(data, "isPassed", "is_passed");
+  const score = pickProgress(data, "scorePercent", "score_percent");
+  const moduleId = pickProgress(data, "moduleId", "module_id");
+
+  return {
+    activityType: String(pickProgress(data, "activityType", "activity_type") ?? "activity"),
+    occurredAt: String(pickProgress(data, "occurredAt", "occurred_at") ?? ""),
+    courseId: toNonNegativeNumber(pickProgress(data, "courseId", "course_id")),
+    courseUuid: String(pickProgress(data, "courseUuid", "course_uuid") ?? ""),
+    courseTitle: String(pickProgress(data, "courseTitle", "course_title") ?? "Course"),
+    moduleId:
+      moduleId === null || moduleId === undefined ? null : toNonNegativeNumber(moduleId),
+    moduleUuid: asNullableString(pickProgress(data, "moduleUuid", "module_uuid")),
+    moduleTitle: asNullableString(pickProgress(data, "moduleTitle", "module_title")),
+    title: String(pickProgress(data, "title") ?? "Activity"),
+    detail: asNullableString(pickProgress(data, "detail")),
+    scorePercent: toNullablePercentNumber(score),
+    isPassed: typeof isPassed === "boolean" ? isPassed : null,
+  };
+}
+
+function normalizeProgressOverview(payload: unknown): LearnerProgressOverview {
+  const data = progressRecord(payload);
+  const courses = Array.isArray(pickProgress(data, "courses"))
+    ? (pickProgress(data, "courses") as unknown[])
+    : [];
+  const recentActivity = Array.isArray(pickProgress(data, "recentActivity", "recent_activity"))
+    ? (pickProgress(data, "recentActivity", "recent_activity") as unknown[])
+    : [];
+  return {
+    totalCourses: toNonNegativeNumber(pickProgress(data, "totalCourses", "total_courses")),
+    totalModules: toNonNegativeNumber(pickProgress(data, "totalModules", "total_modules")),
+    completedModules: toNonNegativeNumber(pickProgress(data, "completedModules", "completed_modules")),
+    averageProgressPercent: toPercentNumber(
+      pickProgress(data, "averageProgressPercent", "average_progress_percent")
+    ),
+    quiz: normalizeProgressQuizSummary(pickProgress(data, "quiz")),
+    courses: courses.map(normalizeProgressCourse),
+    recentActivity: recentActivity.map(normalizeProgressActivity),
+  };
+}
+
+function normalizeEducatorAnalyticsCourse(payload: unknown, index: number): EducatorCourseAnalyticsItem {
+  const data = progressRecord(payload);
+
+  return {
+    courseUuid: normalizeString(pickProgress(data, "courseUuid", "course_uuid"), `course-${index + 1}`),
+    courseTitle: normalizeString(pickProgress(data, "courseTitle", "course_title"), `Course ${index + 1}`),
+    status: normalizeString(pickProgress(data, "status"), "unknown"),
+    totalEnrollments: toNonNegativeNumber(pickProgress(data, "totalEnrollments", "total_enrollments")),
+    activeEnrollments: toNonNegativeNumber(pickProgress(data, "activeEnrollments", "active_enrollments")),
+    completedEnrollments: toNonNegativeNumber(pickProgress(data, "completedEnrollments", "completed_enrollments")),
+    avgProgressPercent: toNullablePercentNumber(pickProgress(data, "avgProgressPercent", "avg_progress_percent")),
+  };
+}
+
+function normalizeEducatorAnalytics(payload: unknown): EducatorAnalytics {
+  const data = progressRecord(payload);
+  const courses = Array.isArray(pickProgress(data, "courses"))
+    ? (pickProgress(data, "courses") as unknown[]).map(normalizeEducatorAnalyticsCourse)
+    : [];
+
+  return {
+    courses,
+    totalCourses: toNonNegativeNumber(pickProgress(data, "totalCourses", "total_courses"), courses.length),
+    totalEnrollments: toNonNegativeNumber(pickProgress(data, "totalEnrollments", "total_enrollments")),
+    totalActiveEnrollments: toNonNegativeNumber(
+      pickProgress(data, "totalActiveEnrollments", "total_active_enrollments")
+    ),
+    totalCompletedEnrollments: toNonNegativeNumber(
+      pickProgress(data, "totalCompletedEnrollments", "total_completed_enrollments")
+    ),
+  };
+}
+
+function normalizeQuizModuleStats(payload: unknown, index: number): QuizModuleStatsItem {
+  const data = progressRecord(payload);
+
+  return {
+    courseUuid: normalizeString(pickProgress(data, "courseUuid", "course_uuid"), `course-${index + 1}`),
+    courseTitle: normalizeString(pickProgress(data, "courseTitle", "course_title"), `Course ${index + 1}`),
+    moduleUuid: normalizeString(pickProgress(data, "moduleUuid", "module_uuid"), `module-${index + 1}`),
+    moduleTitle: normalizeString(pickProgress(data, "moduleTitle", "module_title"), `Module ${index + 1}`),
+    quizTitle: normalizeString(pickProgress(data, "quizTitle", "quiz_title"), "Quiz"),
+    totalAttempts: toNonNegativeNumber(pickProgress(data, "totalAttempts", "total_attempts")),
+    uniqueLearners: toNonNegativeNumber(pickProgress(data, "uniqueLearners", "unique_learners")),
+    avgScorePercent: toNullablePercentNumber(pickProgress(data, "avgScorePercent", "avg_score_percent")),
+    passRate: toNullablePercentNumber(pickProgress(data, "passRate", "pass_rate")),
+    avgDurationSeconds: toNullableNonNegativeNumber(
+      pickProgress(data, "avgDurationSeconds", "avg_duration_seconds")
+    ),
+  };
+}
+
+function normalizeEducatorQuizAnalytics(payload: unknown): EducatorQuizAnalytics {
+  const data = progressRecord(payload);
+  const items = Array.isArray(pickProgress(data, "items"))
+    ? (pickProgress(data, "items") as unknown[]).map(normalizeQuizModuleStats)
+    : [];
+
+  return { items };
+}
+
+function normalizeTeachingInsight(payload: unknown, index: number): TeachingInsightItem {
+  const data = progressRecord(payload);
+
+  return {
+    insightId: normalizeString(pickProgress(data, "insightId", "insight_id"), `insight-${index + 1}`),
+    priority: normalizeString(pickProgress(data, "priority"), "low"),
+    category: normalizeString(pickProgress(data, "category"), "general"),
+    title: normalizeString(pickProgress(data, "title"), `Insight ${index + 1}`),
+    detail: normalizeString(pickProgress(data, "detail")),
+    actionLabel: normalizeString(pickProgress(data, "actionLabel", "action_label"), "Review"),
+    courseUuid: asNullableString(pickProgress(data, "courseUuid", "course_uuid")),
+    courseTitle: asNullableString(pickProgress(data, "courseTitle", "course_title")),
+    moduleUuid: asNullableString(pickProgress(data, "moduleUuid", "module_uuid")),
+    moduleTitle: asNullableString(pickProgress(data, "moduleTitle", "module_title")),
+    metricLabel: asNullableDisplayString(pickProgress(data, "metricLabel", "metric_label")),
+    metricValue: asNullableDisplayString(pickProgress(data, "metricValue", "metric_value")),
+  };
+}
+
+function normalizeEducatorTeachingInsights(payload: unknown): EducatorTeachingInsights {
+  const data = progressRecord(payload);
+  const items = Array.isArray(pickProgress(data, "items"))
+    ? (pickProgress(data, "items") as unknown[]).map(normalizeTeachingInsight)
+    : [];
+
+  return {
+    generatedAt: normalizeString(pickProgress(data, "generatedAt", "generated_at")),
+    totalInsights: toNonNegativeNumber(pickProgress(data, "totalInsights", "total_insights"), items.length),
+    highPriorityCount: toNonNegativeNumber(pickProgress(data, "highPriorityCount", "high_priority_count")),
+    items,
+  };
+}
+
+function normalizeMaterialBrief(payload: unknown, index: number): EducatorMaterialBriefItem {
+  const data = progressRecord(payload);
+  const rawMaterialTypes = pickProgress(data, "materialTypes", "material_types");
+
+  return {
+    briefId: normalizeString(pickProgress(data, "briefId", "brief_id"), `brief-${index + 1}`),
+    priority: normalizeString(pickProgress(data, "priority"), "low"),
+    courseUuid: normalizeString(pickProgress(data, "courseUuid", "course_uuid"), `course-${index + 1}`),
+    courseTitle: normalizeString(pickProgress(data, "courseTitle", "course_title"), `Course ${index + 1}`),
+    moduleUuid: normalizeString(pickProgress(data, "moduleUuid", "module_uuid"), `module-${index + 1}`),
+    moduleTitle: normalizeString(pickProgress(data, "moduleTitle", "module_title"), `Module ${index + 1}`),
+    moduleStatus: normalizeString(pickProgress(data, "moduleStatus", "module_status"), "unknown"),
+    materialCount: toNonNegativeNumber(pickProgress(data, "materialCount", "material_count")),
+    materialTypes: Array.isArray(rawMaterialTypes)
+      ? rawMaterialTypes.map((item) => String(item)).filter(Boolean)
+      : [],
+    quizTitle: asNullableString(pickProgress(data, "quizTitle", "quiz_title")),
+    passRate: toNullablePercentNumber(pickProgress(data, "passRate", "pass_rate")),
+    averageScorePercent: toNullablePercentNumber(
+      pickProgress(data, "averageScorePercent", "average_score_percent")
+    ),
+    summary: normalizeString(pickProgress(data, "summary")),
+    difficultySignal: normalizeString(pickProgress(data, "difficultySignal", "difficulty_signal")),
+    recommendedAction: normalizeString(pickProgress(data, "recommendedAction", "recommended_action"), "Review"),
+  };
+}
+
+function normalizeEducatorMaterialBriefs(payload: unknown): EducatorMaterialBriefs {
+  const data = progressRecord(payload);
+  const items = Array.isArray(pickProgress(data, "items"))
+    ? (pickProgress(data, "items") as unknown[]).map(normalizeMaterialBrief)
+    : [];
+
+  return {
+    generatedAt: normalizeString(pickProgress(data, "generatedAt", "generated_at")),
+    totalBriefs: toNonNegativeNumber(pickProgress(data, "totalBriefs", "total_briefs"), items.length),
+    highPriorityCount: toNonNegativeNumber(pickProgress(data, "highPriorityCount", "high_priority_count")),
+    items,
+  };
+}
+
+export async function getMyProgressOverview(): Promise<LearnerProgressOverview> {
+  const response = await fetch(`${COURSE_API_BASE_URL}/courses/me/progress-overview`, {
+    method: "GET",
+    headers: buildAuthHeaders({
+      "Content-Type": "application/json",
+    }),
+  });
+
+  const text = await response.text();
+  const payload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, payload);
+
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(payload, "加载进度概览失败。"));
+  }
+
+  return normalizeProgressOverview(payload);
 }
 
 export async function getEducatorAnalytics(): Promise<EducatorAnalytics> {
@@ -621,10 +1013,10 @@ export async function getEducatorAnalytics(): Promise<EducatorAnalytics> {
   handleAuthenticationFailureFromResponse(response.status, payload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to load educator analytics."));
+    throw new Error(extractErrorMessage(payload, "加载教师分析失败。"));
   }
 
-  return payload as EducatorAnalytics;
+  return normalizeEducatorAnalytics(payload);
 }
 
 export async function getEducatorQuizAnalytics(): Promise<EducatorQuizAnalytics> {
@@ -640,10 +1032,10 @@ export async function getEducatorQuizAnalytics(): Promise<EducatorQuizAnalytics>
   handleAuthenticationFailureFromResponse(response.status, payload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to load educator quiz analytics."));
+    throw new Error(extractErrorMessage(payload, "加载教师测验分析失败。"));
   }
 
-  return payload as EducatorQuizAnalytics;
+  return normalizeEducatorQuizAnalytics(payload);
 }
 
 export async function getEducatorTeachingInsights(): Promise<EducatorTeachingInsights> {
@@ -659,10 +1051,29 @@ export async function getEducatorTeachingInsights(): Promise<EducatorTeachingIns
   handleAuthenticationFailureFromResponse(response.status, payload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to load teaching insights."));
+    throw new Error(extractErrorMessage(payload, "加载教学洞察失败。"));
   }
 
-  return payload as EducatorTeachingInsights;
+  return normalizeEducatorTeachingInsights(payload);
+}
+
+export async function getEducatorMaterialBriefs(): Promise<EducatorMaterialBriefs> {
+  const response = await fetch(`${COURSE_API_BASE_URL}/courses/me/analytics/material-briefs`, {
+    method: "GET",
+    headers: buildAuthHeaders({
+      "Content-Type": "application/json",
+    }),
+  });
+
+  const text = await response.text();
+  const payload = parseJsonText(text);
+  handleAuthenticationFailureFromResponse(response.status, payload);
+
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(payload, "加载资料摘要失败。"));
+  }
+
+  return normalizeEducatorMaterialBriefs(payload);
 }
 
 export async function getManagedCourseEnrollments(
@@ -680,7 +1091,7 @@ export async function getManagedCourseEnrollments(
   handleAuthenticationFailureFromResponse(response.status, payload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to load course enrollments."));
+    throw new Error(extractErrorMessage(payload, "加载课程报名失败。"));
   }
 
   if (!Array.isArray(payload)) {
@@ -725,7 +1136,7 @@ export async function getManagedCourses(options?: {
   handleAuthenticationFailureFromResponse(response.status, payload);
 
   if (!response.ok) {
-    throw new Error("Failed to fetch managed courses.");
+    throw new Error("获取管理课程失败。");
   }
 
   return normalizePaginatedCoursePayload(payload);
@@ -769,7 +1180,7 @@ export async function reorderCourseModules(
   handleAuthenticationFailureFromResponse(response.status, null);
 
   if (!response.ok) {
-    throw new Error("Failed to reorder modules.");
+    throw new Error("调整模块顺序失败。");
   }
 }
 
@@ -804,7 +1215,7 @@ export async function updateManagedCourse(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to update course."));
+    throw new Error(extractErrorMessage(parsedPayload, "更新课程失败。"));
   }
 
   if (!parsedPayload || typeof parsedPayload !== "object") {
@@ -827,7 +1238,7 @@ export async function deleteManagedCourse(courseUuid: string): Promise<void> {
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to delete course."));
+    throw new Error(extractErrorMessage(parsedPayload, "删除课程失败。"));
   }
 }
 
@@ -846,7 +1257,7 @@ export async function uploadManagedCourseCover(courseUuid: string, coverImage: F
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to update course cover."));
+    throw new Error(extractErrorMessage(parsedPayload, "更新课程封面失败。"));
   }
 
   if (!parsedPayload || typeof parsedPayload !== "object") {
@@ -914,7 +1325,7 @@ export async function createManagedCourse(payload: CreateCoursePayload): Promise
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to create course."));
+    throw new Error(extractErrorMessage(parsedPayload, "创建课程失败。"));
   }
 
   if (!parsedPayload || typeof parsedPayload !== "object") {
@@ -968,7 +1379,7 @@ export async function createManagedModule(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to create module."));
+    throw new Error(extractErrorMessage(parsedPayload, "创建模块失败。"));
   }
 
   return {
@@ -995,7 +1406,7 @@ export async function updateManagedModule(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to update module."));
+    throw new Error(extractErrorMessage(parsedPayload, "更新模块失败。"));
   }
 }
 
@@ -1018,7 +1429,7 @@ export async function setModulePrerequisite(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to set module prerequisite."));
+    throw new Error(extractErrorMessage(parsedPayload, "设置模块前置条件失败。"));
   }
 }
 
@@ -1036,7 +1447,7 @@ export async function removeModulePrerequisite(courseUuid: string, moduleUuid: s
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to remove module prerequisite."));
+    throw new Error(extractErrorMessage(parsedPayload, "移除模块前置条件失败。"));
   }
 }
 
@@ -1053,7 +1464,7 @@ export async function deleteManagedModule(courseUuid: string, moduleUuid: string
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to delete module."));
+    throw new Error(extractErrorMessage(parsedPayload, "删除模块失败。"));
   }
 }
 
@@ -1073,7 +1484,7 @@ export async function publishManagedModule(courseUuid: string, moduleUuid: strin
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to publish module."));
+    throw new Error(extractErrorMessage(parsedPayload, "发布模块失败。"));
   }
 }
 
@@ -1093,7 +1504,7 @@ export async function publishManagedCourse(courseUuid: string, moduleUuids: stri
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok || !parsedPayload || typeof parsedPayload !== "object") {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to publish course."));
+    throw new Error(extractErrorMessage(parsedPayload, "发布课程失败。"));
   }
 
   return normalizeCourse(parsedPayload as ApiCourse, 0);
@@ -1137,6 +1548,109 @@ export type MultipartModuleMaterialUploadCompletedPart = {
   etag: string;
 };
 
+function readRequiredMultipartString(
+  data: Record<string, unknown>,
+  errorMessage: string,
+  ...keys: string[]
+) {
+  const value = pickProgress(data, ...keys);
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(errorMessage);
+  }
+
+  return value.trim();
+}
+
+function readOptionalMultipartString(data: Record<string, unknown>, ...keys: string[]) {
+  const value = pickProgress(data, ...keys);
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function readPositiveMultipartInteger(data: Record<string, unknown>, errorMessage: string, ...keys: string[]) {
+  const value = pickProgress(data, ...keys);
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : Number.NaN;
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(errorMessage);
+  }
+
+  return parsed;
+}
+
+function assertUsableMultipartUploadUrl(uploadUrl: string, errorMessage: string) {
+  if (uploadUrl.startsWith("/")) {
+    return;
+  }
+
+  try {
+    const parsedUrl = new URL(uploadUrl);
+    if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
+      return;
+    }
+  } catch {
+    // Fall through to the shared invalid-response error.
+  }
+
+  throw new Error(errorMessage);
+}
+
+function normalizeMultipartUploadInitResponse(payload: unknown): MultipartModuleMaterialUploadInitResponse {
+  const data = progressRecord(payload);
+  const errorMessage = "Multipart upload initialization response was invalid. Please try again.";
+
+  return {
+    uploadSessionUuid: readRequiredMultipartString(data, errorMessage, "uploadSessionUuid", "upload_session_uuid"),
+    uploadId: readRequiredMultipartString(data, errorMessage, "uploadId", "upload_id"),
+    bucket: readOptionalMultipartString(data, "bucket"),
+    objectKey: readRequiredMultipartString(data, errorMessage, "objectKey", "object_key"),
+    storageProvider: readRequiredMultipartString(data, errorMessage, "storageProvider", "storage_provider"),
+    partUrlExpiresSeconds: readPositiveMultipartInteger(
+      data,
+      errorMessage,
+      "partUrlExpiresSeconds",
+      "part_url_expires_seconds"
+    ),
+  };
+}
+
+function normalizeMultipartUploadPartUrlResponse(
+  payload: unknown,
+  expectedUploadSessionUuid: string,
+  expectedPartNumber: number
+): MultipartModuleMaterialUploadPartUrlResponse {
+  const data = progressRecord(payload);
+  const errorMessage = "Multipart upload URL response was invalid. Please try again.";
+  const uploadSessionUuid = readRequiredMultipartString(
+    data,
+    errorMessage,
+    "uploadSessionUuid",
+    "upload_session_uuid"
+  );
+  const partNumber = readPositiveMultipartInteger(data, errorMessage, "partNumber", "part_number");
+  const method = readRequiredMultipartString(data, errorMessage, "method").toUpperCase();
+  const uploadUrl = readRequiredMultipartString(data, errorMessage, "uploadUrl", "upload_url");
+  const expiresSeconds = readPositiveMultipartInteger(data, errorMessage, "expiresSeconds", "expires_seconds");
+
+  if (uploadSessionUuid !== expectedUploadSessionUuid || partNumber !== expectedPartNumber || method !== "PUT") {
+    throw new Error(errorMessage);
+  }
+
+  assertUsableMultipartUploadUrl(uploadUrl, errorMessage);
+
+  return {
+    uploadSessionUuid,
+    partNumber,
+    method,
+    uploadUrl,
+    expiresSeconds,
+  };
+}
+
 export async function uploadManagedModuleMaterial(
   courseUuid: string,
   moduleUuid: string,
@@ -1165,7 +1679,7 @@ export async function uploadManagedModuleMaterial(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to upload module material."));
+    throw new Error(extractErrorMessage(parsedPayload, "上传模块资料失败。"));
   }
 }
 
@@ -1194,10 +1708,10 @@ export async function initMultipartManagedModuleMaterialUpload(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok || !parsedPayload || typeof parsedPayload !== "object") {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to initialize multipart upload."));
+    throw new Error(extractErrorMessage(parsedPayload, "初始化分片上传失败。"));
   }
 
-  return parsedPayload as MultipartModuleMaterialUploadInitResponse;
+  return normalizeMultipartUploadInitResponse(parsedPayload);
 }
 
 export async function getMultipartManagedModuleMaterialPartUploadUrl(
@@ -1221,10 +1735,10 @@ export async function getMultipartManagedModuleMaterialPartUploadUrl(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok || !parsedPayload || typeof parsedPayload !== "object") {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to get multipart upload URL."));
+    throw new Error(extractErrorMessage(parsedPayload, "获取分片上传地址失败。"));
   }
 
-  return parsedPayload as MultipartModuleMaterialUploadPartUrlResponse;
+  return normalizeMultipartUploadPartUrlResponse(parsedPayload, uploadSessionUuid, partNumber);
 }
 
 export async function completeMultipartManagedModuleMaterialUpload(
@@ -1249,7 +1763,7 @@ export async function completeMultipartManagedModuleMaterialUpload(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to complete multipart upload."));
+    throw new Error(extractErrorMessage(parsedPayload, "完成分片上传失败。"));
   }
 }
 
@@ -1273,7 +1787,7 @@ export async function abortMultipartManagedModuleMaterialUpload(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to abort multipart upload."));
+    throw new Error(extractErrorMessage(parsedPayload, "取消分片上传失败。"));
   }
 }
 
@@ -1297,7 +1811,7 @@ export async function deleteManagedModuleMaterial(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to delete module material."));
+    throw new Error(extractErrorMessage(parsedPayload, "删除模块资料失败。"));
   }
 }
 
@@ -1375,7 +1889,6 @@ function normalizeQuizQuestion(q: Record<string, unknown>, qi: number): QuizQues
     questionUuid: String(q.questionUuid ?? q.question_uuid ?? ""),
     questionText: String(q.questionText ?? q.question_text ?? ""),
     explanationText: String(q.explanationText ?? q.explanation_text ?? ""),
-    sourceGrounding: String(q.sourceGrounding ?? q.source_grounding ?? ""),
     sortOrder: typeof q.sortOrder === "number" ? q.sortOrder : typeof q.sort_order === "number" ? q.sort_order : qi + 1,
     isActive: (q.isActive ?? q.is_active ?? true) as boolean,
     options: rawOptions.map((o, oi) => ({
@@ -1388,93 +1901,22 @@ function normalizeQuizQuestion(q: Record<string, unknown>, qi: number): QuizQues
   };
 }
 
-function normalizeEducatorQuizDraftPreview(payload: unknown): EducatorQuizDraftPreview {
-  const data = (payload ?? {}) as Record<string, unknown>;
-  const rawCandidateSet = (data.candidateSet ?? data.candidate_set ?? {}) as Record<string, unknown>;
-  const rawQuestions = Array.isArray(rawCandidateSet.questions)
-    ? (rawCandidateSet.questions as Record<string, unknown>[])
-    : [];
-  const questions = rawQuestions.map((q, index) => normalizeQuizQuestion(q, index));
-  const candidateQuestionCount =
-    typeof rawCandidateSet.questionCount === "number"
-      ? rawCandidateSet.questionCount
-      : typeof rawCandidateSet.question_count === "number"
-        ? rawCandidateSet.question_count
-        : questions.length;
-
-  return {
-    title: String(data.title ?? ""),
-    questionCount:
-      typeof data.questionCount === "number"
-        ? data.questionCount
-        : typeof data.question_count === "number"
-          ? data.question_count
-          : candidateQuestionCount,
-    difficulty: (data.difficulty as EducatorQuizDraftPreview["difficulty"]) ?? "mixed",
-    questionTypes: Array.isArray(data.questionTypes)
-      ? (data.questionTypes as EducatorQuizDraftPreview["questionTypes"])
-      : Array.isArray(data.question_types)
-        ? (data.question_types as EducatorQuizDraftPreview["questionTypes"])
-        : ["multiple_choice"],
-    replaceExistingQuestions:
-      typeof data.replaceExistingQuestions === "boolean"
-        ? data.replaceExistingQuestions
-        : typeof data.replace_existing_questions === "boolean"
-          ? data.replace_existing_questions
-          : true,
-    timeLimitSeconds:
-      typeof data.timeLimitSeconds === "number"
-        ? data.timeLimitSeconds
-        : typeof data.time_limit_seconds === "number"
-          ? data.time_limit_seconds
-          : null,
-    shuffleQuestions:
-      typeof data.shuffleQuestions === "boolean"
-        ? data.shuffleQuestions
-        : typeof data.shuffle_questions === "boolean"
-          ? data.shuffle_questions
-          : true,
-    shuffleOptions:
-      typeof data.shuffleOptions === "boolean"
-        ? data.shuffleOptions
-        : typeof data.shuffle_options === "boolean"
-          ? data.shuffle_options
-          : false,
-    retrievalUsed:
-      typeof data.retrievalUsed === "boolean"
-        ? data.retrievalUsed
-        : typeof data.retrieval_used === "boolean"
-          ? data.retrieval_used
-          : false,
-    sourceChunkCount:
-      typeof data.sourceChunkCount === "number"
-        ? data.sourceChunkCount
-        : typeof data.source_chunk_count === "number"
-          ? data.source_chunk_count
-          : 0,
-    candidateSet: {
-      questionCount: candidateQuestionCount,
-      questions,
-    },
-  };
-}
-
 function normalizeQuizQuestionPage(payload: unknown): QuizQuestionPage {
   const data = (payload ?? {}) as Record<string, unknown>;
   const rawItems = Array.isArray(data.items) ? (data.items as Record<string, unknown>[]) : [];
-  const pageSize = typeof data.pageSize === "number" ? data.pageSize : typeof data.page_size === "number" ? data.page_size : 20;
-  const total = typeof data.total === "number" ? data.total : rawItems.length;
+  const pageSize = toFiniteNumber(pick(data, "pageSize", "page_size"), 20, 1);
+  const total = toNonNegativeNumber(data.total, rawItems.length);
   return {
     items: rawItems.map((item, index) => normalizeQuizQuestion(item, index)),
-    page: typeof data.page === "number" ? data.page : 1,
+    page: toFiniteNumber(data.page, 1, 1),
     pageSize,
     total,
     totalPages:
-      typeof data.totalPages === "number"
-        ? data.totalPages
-        : typeof data.total_pages === "number"
-          ? data.total_pages
-          : Math.max(1, Math.ceil(total / Math.max(1, pageSize))),
+      toFiniteNumber(
+        pick(data, "totalPages", "total_pages"),
+        Math.max(1, Math.ceil(total / pageSize)),
+        1
+      ),
   };
 }
 
@@ -1500,7 +1942,7 @@ export async function getQuizAuthoring(
   handleAuthenticationFailureFromResponse(response.status, payload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to load quiz."));
+    throw new Error(extractErrorMessage(payload, "加载测验失败。"));
   }
 
   return normalizeQuiz(payload);
@@ -1528,7 +1970,7 @@ export async function listQuizAuthoringQuestions(
   handleAuthenticationFailureFromResponse(response.status, payload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to load quiz questions."));
+    throw new Error(extractErrorMessage(payload, "加载测验题目失败。"));
   }
 
   return normalizeQuizQuestionPage(payload);
@@ -1571,7 +2013,6 @@ export async function upsertQuiz(
           questionUuid: q.questionUuid || null,
           questionText: q.questionText.trim(),
           explanationText: q.explanationText.trim() || null,
-          sourceGrounding: q.sourceGrounding.trim() || null,
           sortOrder: q.sortOrder,
           isActive: q.isActive,
           options: q.options.map((o) => ({
@@ -1591,7 +2032,7 @@ export async function upsertQuiz(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to save quiz."));
+    throw new Error(extractErrorMessage(parsedPayload, "保存测验失败。"));
   }
 
   return normalizeQuiz(parsedPayload);
@@ -1622,188 +2063,56 @@ export async function publishQuiz(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to update quiz status."));
+    throw new Error(extractErrorMessage(parsedPayload, "更新测验状态失败。"));
   }
 
   return normalizeQuiz(parsedPayload);
 }
 
-export async function generateEducatorQuizDraftPreview(
-  courseUuid: string,
-  moduleUuid: string,
-  payload: EducatorQuizDraftPayload
-): Promise<EducatorQuizDraftPreview> {
-  const response = await fetch(
-    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/quiz/management/ai-draft`,
-    {
-      method: "POST",
-      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        title: payload.title?.trim() || null,
-        questionCount: payload.questionCount,
-        difficulty: payload.difficulty,
-        questionTypes: payload.questionTypes,
-        learningObjectives: payload.learningObjectives.map((objective) => objective.trim()).filter(Boolean),
-        materialScope: payload.materialScope?.trim() || null,
-        additionalInstructions: payload.additionalInstructions?.trim() || null,
-        replaceExistingQuestions: payload.replaceExistingQuestions,
-        timeLimitSeconds: payload.timeLimitSeconds || null,
-        shuffleQuestions: payload.shuffleQuestions,
-        shuffleOptions: payload.shuffleOptions,
-      }),
-    }
-  );
-
-  const text = await response.text();
-  const parsedPayload = parseJsonText(text);
-  handleAuthenticationFailureFromResponse(response.status, parsedPayload);
-
-  if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to generate quiz draft."));
-  }
-
-  return normalizeEducatorQuizDraftPreview(parsedPayload);
-}
-
-export async function acceptEducatorQuizDraft(
-  courseUuid: string,
-  moduleUuid: string,
-  preview: EducatorQuizDraftPreview,
-  options?: { includeQuestions?: boolean }
-): Promise<QuizRecord> {
-  const params = new URLSearchParams();
-  if (options?.includeQuestions === false) {
-    params.set("include_questions", "false");
-  }
-  const queryString = params.toString();
-  const response = await fetch(
-    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/quiz/management/ai-draft/accept${queryString ? `?${queryString}` : ""}`,
-    {
-      method: "POST",
-      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        title: preview.title.trim() || null,
-        replaceExistingQuestions: preview.replaceExistingQuestions,
-        timeLimitSeconds: preview.timeLimitSeconds || null,
-        shuffleQuestions: preview.shuffleQuestions,
-        shuffleOptions: preview.shuffleOptions,
-        candidateSet: {
-          questionCount: preview.candidateSet.questionCount,
-          questions: preview.candidateSet.questions.map((q, questionIndex) => ({
-            questionText: q.questionText.trim(),
-            explanationText: q.explanationText.trim() || null,
-            sourceGrounding: q.sourceGrounding.trim(),
-            sortOrder: questionIndex + 1,
-            isActive: true,
-            options: q.options.map((o, optionIndex) => ({
-              optionLabel: o.optionLabel.trim() || null,
-              optionText: o.optionText.trim(),
-              sortOrder: optionIndex + 1,
-              isCorrect: o.isCorrect,
-            })),
-          })),
-        },
-      }),
-    }
-  );
-
-  const text = await response.text();
-  const parsedPayload = parseJsonText(text);
-  handleAuthenticationFailureFromResponse(response.status, parsedPayload);
-
-  if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to accept quiz draft."));
-  }
-
-  return normalizeQuiz(parsedPayload);
-}
-
-// ---------------------------------------------------------------------------
-// Educator AI content drafts
-// ---------------------------------------------------------------------------
-
-function normalizeContentDraftGrounding(payload: unknown): EducatorContentDraftGrounding {
+function normalizeQuizAuthoringGenerationResult(payload: unknown): QuizAuthoringGenerationResult {
   const data = (payload ?? {}) as Record<string, unknown>;
+  const rawCreatedQuestions = Array.isArray(data.createdQuestions)
+    ? (data.createdQuestions as Record<string, unknown>[])
+    : [];
+  const plan = (data.plan && typeof data.plan === "object" ? data.plan : {}) as Record<string, unknown>;
+  const retrieval = (data.retrievalContext && typeof data.retrievalContext === "object"
+    ? data.retrievalContext
+    : {}) as Record<string, unknown>;
+
   return {
-    sourceTitle: String(pick(data, "sourceTitle", "source_title") ?? ""),
-    sourceType: String(pick(data, "sourceType", "source_type") ?? ""),
-    reference: String(pick(data, "reference") ?? ""),
-    rationale: String(pick(data, "rationale") ?? ""),
+    createdQuestionCount: rawCreatedQuestions.length,
+    createdQuestionUuids: rawCreatedQuestions
+      .map((question) => question.questionUuid ?? question.question_uuid)
+      .filter((value): value is string => typeof value === "string" && value.length > 0),
+    plannedQuestionCount:
+      typeof plan.plannedQuestionCount === "number"
+        ? plan.plannedQuestionCount
+        : typeof plan.planned_question_count === "number"
+          ? plan.planned_question_count
+          : rawCreatedQuestions.length,
+    usedRetrieval: Boolean(retrieval.usedRetrieval ?? retrieval.used_retrieval ?? false),
+    retrievalChunkCount:
+      typeof retrieval.chunkCount === "number"
+        ? retrieval.chunkCount
+        : typeof retrieval.chunk_count === "number"
+          ? retrieval.chunk_count
+          : 0,
+    planOverview: String(plan.overview ?? ""),
   };
 }
 
-function normalizeEducatorContentDraft(payload: unknown): EducatorContentDraftRecord {
-  const data = (payload ?? {}) as Record<string, unknown>;
-  const structuredContent = pick(data, "structuredContent", "structured_content");
-  const grounding = pick(data, "grounding");
-  const confidenceScore = pick(data, "confidenceScore", "confidence_score");
-  return {
-    draftUuid: String(pick(data, "draftUuid", "draft_uuid") ?? ""),
-    moduleUuid: String(pick(data, "moduleUuid", "module_uuid") ?? ""),
-    contentType: (pick(data, "contentType", "content_type") as EducatorContentDraftType) ?? "summary",
-    title: String(pick(data, "title") ?? ""),
-    teacherPrompt: (pick(data, "teacherPrompt", "teacher_prompt") ?? null) as string | null,
-    materialScope: (pick(data, "materialScope", "material_scope") ?? null) as string | null,
-    structuredContent:
-      structuredContent && typeof structuredContent === "object" && !Array.isArray(structuredContent)
-        ? (structuredContent as Record<string, unknown>)
-        : {},
-    grounding: Array.isArray(grounding) ? grounding.map(normalizeContentDraftGrounding) : [],
-    confidenceScore: typeof confidenceScore === "number" ? confidenceScore : Number(confidenceScore ?? 0),
-    isFallback: Boolean(pick(data, "isFallback", "is_fallback") ?? false),
-    fallbackReason: (pick(data, "fallbackReason", "fallback_reason") ?? null) as string | null,
-    provider: (pick(data, "provider") ?? null) as string | null,
-    model: (pick(data, "model") ?? null) as string | null,
-    createdAt: String(pick(data, "createdAt", "created_at") ?? ""),
-    updatedAt: String(pick(data, "updatedAt", "updated_at") ?? ""),
-  };
-}
-
-export type EducatorContentDraftGeneratePayload = {
-  contentType: EducatorContentDraftType;
-  title?: string | null;
-  teacherPrompt?: string | null;
-  materialScope?: string | null;
-};
-
-export type EducatorContentDraftUpdatePayload = {
-  title?: string;
-  structuredContent?: Record<string, unknown>;
-  grounding?: EducatorContentDraftGrounding[];
-};
-
-export async function listEducatorContentDrafts(courseUuid: string, moduleUuid: string): Promise<EducatorContentDraftRecord[]> {
-  const response = await fetch(
-    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/content-drafts/management`,
-    { method: "GET", headers: buildAuthHeaders({ "Content-Type": "application/json" }) }
-  );
-
-  const text = await response.text();
-  const payload = parseJsonText(text);
-  handleAuthenticationFailureFromResponse(response.status, payload);
-
-  if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to load content drafts."));
-  }
-
-  return Array.isArray(payload) ? payload.map(normalizeEducatorContentDraft) : [];
-}
-
-export async function generateEducatorContentDraft(
+export async function generateQuizAuthoringQuestions(
   courseUuid: string,
   moduleUuid: string,
-  payload: EducatorContentDraftGeneratePayload
-): Promise<EducatorContentDraftRecord> {
+  payload?: { additionalInstructions?: string | null }
+): Promise<QuizAuthoringGenerationResult> {
   const response = await fetch(
-    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/content-drafts/management/generate`,
+    `${AI_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/quiz/authoring/generate`,
     {
       method: "POST",
       headers: buildAuthHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
-        contentType: payload.contentType,
-        title: payload.title?.trim() || null,
-        teacherPrompt: payload.teacherPrompt?.trim() || null,
-        materialScope: payload.materialScope?.trim() || null,
+        additionalInstructions: payload?.additionalInstructions?.trim() || null,
       }),
     }
   );
@@ -1813,227 +2122,10 @@ export async function generateEducatorContentDraft(
   handleAuthenticationFailureFromResponse(response.status, parsedPayload);
 
   if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to generate content draft."));
+    throw new Error(extractErrorMessage(parsedPayload, "生成测验草稿题目失败。"));
   }
 
-  return normalizeEducatorContentDraft(parsedPayload);
-}
-
-export async function updateEducatorContentDraft(
-  courseUuid: string,
-  moduleUuid: string,
-  draftUuid: string,
-  payload: EducatorContentDraftUpdatePayload
-): Promise<EducatorContentDraftRecord> {
-  const response = await fetch(
-    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/content-drafts/management/${draftUuid}`,
-    {
-      method: "PATCH",
-      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        title: payload.title?.trim(),
-        structuredContent: payload.structuredContent,
-        grounding: payload.grounding,
-      }),
-    }
-  );
-
-  const text = await response.text();
-  const parsedPayload = parseJsonText(text);
-  handleAuthenticationFailureFromResponse(response.status, parsedPayload);
-
-  if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to save content draft."));
-  }
-
-  return normalizeEducatorContentDraft(parsedPayload);
-}
-
-// ---------------------------------------------------------------------------
-// Short-answer assessments
-// ---------------------------------------------------------------------------
-
-function toNullableNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function normalizeShortAnswerAssessment(payload: unknown): ShortAnswerAssessmentRecord {
-  const d = (payload ?? {}) as Record<string, unknown>;
-  return {
-    assessmentUuid: String(pick(d, "assessmentUuid", "assessment_uuid") ?? ""),
-    moduleUuid: String(pick(d, "moduleUuid", "module_uuid") ?? ""),
-    title: String(pick(d, "title") ?? ""),
-    promptText: String(pick(d, "promptText", "prompt_text") ?? ""),
-    rubricText: String(pick(d, "rubricText", "rubric_text") ?? ""),
-    maxScore: toNullableNumber(pick(d, "maxScore", "max_score")) ?? 10,
-    status: (pick(d, "status") as ShortAnswerAssessmentRecord["status"]) ?? "draft",
-    publishedAt: (pick(d, "publishedAt", "published_at") as string | null) ?? null,
-    createdAt: String(pick(d, "createdAt", "created_at") ?? ""),
-    updatedAt: String(pick(d, "updatedAt", "updated_at") ?? ""),
-  };
-}
-
-function normalizeShortAnswerSubmission(payload: unknown): ShortAnswerSubmissionRecord {
-  const d = (payload ?? {}) as Record<string, unknown>;
-  const rawSuggestion = (pick(d, "aiSuggestion", "ai_suggestion") ?? {}) as Record<string, unknown>;
-  return {
-    submissionUuid: String(pick(d, "submissionUuid", "submission_uuid") ?? ""),
-    assessmentUuid: String(pick(d, "assessmentUuid", "assessment_uuid") ?? ""),
-    learnerId: Number(pick(d, "learnerId", "learner_id") ?? 0),
-    answerText: String(pick(d, "answerText", "answer_text") ?? ""),
-    status: (pick(d, "status") as ShortAnswerSubmissionRecord["status"]) ?? "submitted",
-    aiSuggestion: {
-      scoreSuggestion: toNullableNumber(pick(rawSuggestion, "scoreSuggestion", "score_suggestion")),
-      feedbackText: (pick(rawSuggestion, "feedbackText", "feedback_text") as string | null) ?? null,
-      strengths: Array.isArray(rawSuggestion.strengths) ? rawSuggestion.strengths.map(String) : [],
-      improvements: Array.isArray(rawSuggestion.improvements) ? rawSuggestion.improvements.map(String) : [],
-      provider: (rawSuggestion.provider as string | null) ?? null,
-      model: (rawSuggestion.model as string | null) ?? null,
-    },
-    finalScore: toNullableNumber(pick(d, "finalScore", "final_score")),
-    finalFeedbackText: (pick(d, "finalFeedbackText", "final_feedback_text") as string | null) ?? null,
-    reviewNotes: (pick(d, "reviewNotes", "review_notes") as string | null) ?? null,
-    reviewerId: typeof pick(d, "reviewerId", "reviewer_id") === "number" ? (pick(d, "reviewerId", "reviewer_id") as number) : null,
-    reviewedAt: (pick(d, "reviewedAt", "reviewed_at") as string | null) ?? null,
-    createdAt: String(pick(d, "createdAt", "created_at") ?? ""),
-    updatedAt: String(pick(d, "updatedAt", "updated_at") ?? ""),
-  };
-}
-
-export type UpsertShortAnswerAssessmentPayload = {
-  title: string;
-  promptText: string;
-  rubricText: string;
-  maxScore: number;
-  status: ShortAnswerAssessmentRecord["status"];
-};
-
-export async function getManagedShortAnswerAssessment(courseUuid: string, moduleUuid: string): Promise<ShortAnswerAssessmentRecord | null> {
-  const response = await fetch(
-    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/short-answer/management`,
-    { method: "GET", headers: buildAuthHeaders({ "Content-Type": "application/json" }) }
-  );
-  if (response.status === 404) return null;
-  const text = await response.text();
-  const payload = parseJsonText(text);
-  handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to load short-answer assessment."));
-  }
-  return normalizeShortAnswerAssessment(payload);
-}
-
-export async function upsertManagedShortAnswerAssessment(
-  courseUuid: string,
-  moduleUuid: string,
-  payload: UpsertShortAnswerAssessmentPayload
-): Promise<ShortAnswerAssessmentRecord> {
-  const response = await fetch(
-    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/short-answer/management`,
-    {
-      method: "PUT",
-      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        title: payload.title.trim(),
-        promptText: payload.promptText.trim(),
-        rubricText: payload.rubricText.trim(),
-        maxScore: payload.maxScore,
-        status: payload.status,
-      }),
-    }
-  );
-  const text = await response.text();
-  const parsedPayload = parseJsonText(text);
-  handleAuthenticationFailureFromResponse(response.status, parsedPayload);
-  if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to save short-answer assessment."));
-  }
-  return normalizeShortAnswerAssessment(parsedPayload);
-}
-
-export async function listManagedShortAnswerSubmissions(courseUuid: string, moduleUuid: string): Promise<ShortAnswerSubmissionRecord[]> {
-  const response = await fetch(
-    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/short-answer/management/submissions`,
-    { method: "GET", headers: buildAuthHeaders({ "Content-Type": "application/json" }) }
-  );
-  if (response.status === 404) return [];
-  const text = await response.text();
-  const payload = parseJsonText(text);
-  handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to load short-answer submissions."));
-  }
-  return Array.isArray(payload) ? payload.map(normalizeShortAnswerSubmission) : [];
-}
-
-export async function reviewShortAnswerSubmission(
-  courseUuid: string,
-  moduleUuid: string,
-  submissionUuid: string,
-  payload: { finalScore: number; finalFeedbackText: string; reviewNotes?: string | null }
-): Promise<ShortAnswerSubmissionRecord> {
-  const response = await fetch(
-    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/short-answer/management/submissions/${submissionUuid}/review`,
-    {
-      method: "PATCH",
-      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        finalScore: payload.finalScore,
-        finalFeedbackText: payload.finalFeedbackText.trim(),
-        reviewNotes: payload.reviewNotes?.trim() || null,
-      }),
-    }
-  );
-  const text = await response.text();
-  const parsedPayload = parseJsonText(text);
-  handleAuthenticationFailureFromResponse(response.status, parsedPayload);
-  if (!response.ok) {
-    throw new Error(extractErrorMessage(parsedPayload, "Failed to review short-answer submission."));
-  }
-  return normalizeShortAnswerSubmission(parsedPayload);
-}
-
-export async function getLearnerShortAnswerAssessment(courseUuid: string, moduleUuid: string): Promise<ShortAnswerLearnerAssessment | null> {
-  const response = await fetch(
-    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/short-answer`,
-    { method: "GET", headers: buildAuthHeaders({ "Content-Type": "application/json" }) }
-  );
-  if (response.status === 404) return null;
-  const text = await response.text();
-  const payload = parseJsonText(text);
-  handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to load short-answer assessment."));
-  }
-  const data = (payload ?? {}) as Record<string, unknown>;
-  const latestSubmission = pick(data, "latestSubmission", "latest_submission");
-  return {
-    assessment: normalizeShortAnswerAssessment(pick(data, "assessment")),
-    latestSubmission: latestSubmission ? normalizeShortAnswerSubmission(latestSubmission) : null,
-  };
-}
-
-export async function submitShortAnswer(courseUuid: string, moduleUuid: string, answerText: string): Promise<ShortAnswerSubmissionRecord> {
-  const response = await fetch(
-    `${COURSE_API_BASE_URL}/courses/${courseUuid}/modules/${moduleUuid}/short-answer/submissions`,
-    {
-      method: "POST",
-      headers: buildAuthHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ answerText: answerText.trim() }),
-    }
-  );
-  const text = await response.text();
-  const payload = parseJsonText(text);
-  handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) {
-    throw new Error(extractErrorMessage(payload, "Failed to submit short-answer response."));
-  }
-  return normalizeShortAnswerSubmission(payload);
+  return normalizeQuizAuthoringGenerationResult(parsedPayload);
 }
 
 // ---------------------------------------------------------------------------
@@ -2048,31 +2140,31 @@ function pick(obj: Record<string, unknown>, ...keys: string[]): unknown {
 }
 
 function normalizeAttemptSession(payload: unknown): QuizAttemptSession {
-  const d = (payload ?? {}) as Record<string, unknown>;
+  const d = progressRecord(payload);
   const rawQs = Array.isArray(d.questions) ? (d.questions as Record<string, unknown>[]) : [];
   return {
     quizUuid: String(pick(d, "quizUuid", "quiz_uuid") ?? ""),
     moduleUuid: String(pick(d, "moduleUuid", "module_uuid") ?? ""),
     attemptSessionToken: String(pick(d, "attemptSessionToken", "attempt_session_token") ?? ""),
-    attemptNumber: Number(pick(d, "attemptNumber", "attempt_number") ?? 1),
-    questionCount: Number(pick(d, "questionCount", "question_count") ?? rawQs.length),
-    timeLimitSeconds: (pick(d, "timeLimitSeconds", "time_limit_seconds") as number | null) ?? null,
+    attemptNumber: toFiniteNumber(pick(d, "attemptNumber", "attempt_number"), 1, 1),
+    questionCount: toNonNegativeNumber(pick(d, "questionCount", "question_count"), rawQs.length),
+    timeLimitSeconds: toNullableNonNegativeNumber(pick(d, "timeLimitSeconds", "time_limit_seconds")),
     startedAt: String(pick(d, "startedAt", "started_at") ?? ""),
     expiresAt: (pick(d, "expiresAt", "expires_at") as string | null) ?? null,
     questions: rawQs.map((q) => {
       const rawOpts = Array.isArray(q.options) ? (q.options as Record<string, unknown>[]) : [];
       return {
-        questionId: Number(pick(q, "questionId", "question_id") ?? 0),
+        questionId: toNonNegativeNumber(pick(q, "questionId", "question_id")),
         questionUuid: String(pick(q, "questionUuid", "question_uuid") ?? ""),
         questionText: String(pick(q, "questionText", "question_text") ?? ""),
         explanationText: (pick(q, "explanationText", "explanation_text") as string | null) ?? null,
-        questionOrder: Number(pick(q, "questionOrder", "question_order") ?? 1),
+        questionOrder: toFiniteNumber(pick(q, "questionOrder", "question_order"), 1, 1),
         options: rawOpts.map((o) => ({
-          optionId: Number(pick(o, "optionId", "option_id") ?? 0),
+          optionId: toNonNegativeNumber(pick(o, "optionId", "option_id")),
           optionUuid: String(pick(o, "optionUuid", "option_uuid") ?? ""),
           optionLabel: (pick(o, "optionLabel", "option_label") as string | null) ?? null,
           optionText: String(pick(o, "optionText", "option_text") ?? ""),
-          sortOrder: Number(pick(o, "sortOrder", "sort_order") ?? 0),
+          sortOrder: toNonNegativeNumber(pick(o, "sortOrder", "sort_order")),
         })),
       };
     }),
@@ -2080,33 +2172,33 @@ function normalizeAttemptSession(payload: unknown): QuizAttemptSession {
 }
 
 function normalizeAttemptResult(payload: unknown): QuizAttemptResult {
-  const d = (payload ?? {}) as Record<string, unknown>;
+  const d = progressRecord(payload);
   const rawAnswers = Array.isArray(d.answers) ? (d.answers as Record<string, unknown>[]) : [];
   return {
     quizAttemptUuid: String(pick(d, "quizAttemptUuid", "quiz_attempt_uuid") ?? ""),
     quizUuid: String(pick(d, "quizUuid", "quiz_uuid") ?? ""),
     moduleUuid: String(pick(d, "moduleUuid", "module_uuid") ?? ""),
-    attemptNumber: Number(pick(d, "attemptNumber", "attempt_number") ?? 1),
-    questionCount: Number(pick(d, "questionCount", "question_count") ?? 0),
-    correctCount: Number(pick(d, "correctCount", "correct_count") ?? 0),
-    scorePercent: String(pick(d, "scorePercent", "score_percent") ?? "0"),
-    isPassed: Boolean(pick(d, "isPassed", "is_passed") ?? false),
-    isTimedOut: Boolean(pick(d, "isTimedOut", "is_timed_out") ?? false),
-    moduleCompleted: Boolean(pick(d, "moduleCompleted", "module_completed") ?? false),
-    timeLimitSeconds: (pick(d, "timeLimitSeconds", "time_limit_seconds") as number | null) ?? null,
+    attemptNumber: toFiniteNumber(pick(d, "attemptNumber", "attempt_number"), 1, 1),
+    questionCount: toNonNegativeNumber(pick(d, "questionCount", "question_count")),
+    correctCount: toNonNegativeNumber(pick(d, "correctCount", "correct_count")),
+    scorePercent: toScorePercentString(pick(d, "scorePercent", "score_percent")),
+    isPassed: toBooleanValue(pick(d, "isPassed", "is_passed")),
+    isTimedOut: toBooleanValue(pick(d, "isTimedOut", "is_timed_out")),
+    moduleCompleted: toBooleanValue(pick(d, "moduleCompleted", "module_completed")),
+    timeLimitSeconds: toNullableNonNegativeNumber(pick(d, "timeLimitSeconds", "time_limit_seconds")),
     startedAt: String(pick(d, "startedAt", "started_at") ?? ""),
     submittedAt: String(pick(d, "submittedAt", "submitted_at") ?? ""),
-    durationSeconds: (pick(d, "durationSeconds", "duration_seconds") as number | null) ?? null,
+    durationSeconds: toNullableNonNegativeNumber(pick(d, "durationSeconds", "duration_seconds")),
     answers: rawAnswers.map((a) => ({
       questionUuid: String(pick(a, "questionUuid", "question_uuid") ?? ""),
-      questionOrder: Number(pick(a, "questionOrder", "question_order") ?? 0),
+      questionOrder: toNonNegativeNumber(pick(a, "questionOrder", "question_order")),
       questionText: String(pick(a, "questionText", "question_text") ?? ""),
       explanationText: (pick(a, "explanationText", "explanation_text") as string | null) ?? null,
       selectedOptionUuid: (pick(a, "selectedOptionUuid", "selected_option_uuid") as string | null) ?? null,
       selectedOptionText: (pick(a, "selectedOptionText", "selected_option_text") as string | null) ?? null,
       correctOptionUuid: String(pick(a, "correctOptionUuid", "correct_option_uuid") ?? ""),
       correctOptionText: String(pick(a, "correctOptionText", "correct_option_text") ?? ""),
-      isCorrect: Boolean(pick(a, "isCorrect", "is_correct") ?? false),
+      isCorrect: toBooleanValue(pick(a, "isCorrect", "is_correct")),
     })),
   };
 }
@@ -2118,10 +2210,12 @@ export async function getActiveQuizSession(courseUuid: string, moduleUuid: strin
   );
   if (response.status === 404 || response.status === 204) return null;
   const text = await response.text();
-  if (!text) return null;
-  const payload = parseJsonText(text);
+  const payload = text ? parseJsonText(text) : null;
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) return null;
+  if (!response.ok) {
+    throw new Error(extractErrorMessage(payload, "加载活动测验会话失败。"));
+  }
+  if (!text) return null;
   return normalizeAttemptSession(payload);
 }
 
@@ -2133,7 +2227,7 @@ export async function startQuizAttempt(courseUuid: string, moduleUuid: string): 
   const text = await response.text();
   const payload = parseJsonText(text);
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) throw new Error(extractErrorMessage(payload, "Failed to start quiz."));
+  if (!response.ok) throw new Error(extractErrorMessage(payload, "开始测验失败。"));
   return normalizeAttemptSession(payload);
 }
 
@@ -2163,11 +2257,11 @@ export async function startAutoGeneratedQuizAttemptWithProgress(
     const text = await response.text();
     const payload = parseJsonText(text);
     handleAuthenticationFailureFromResponse(response.status, payload);
-    throw new Error(extractErrorMessage(payload, "Failed to generate quiz."));
+    throw new Error(extractErrorMessage(payload, "生成测验失败。"));
   }
 
   if (!response.body) {
-    throw new Error("Quiz generation stream is unavailable.");
+    throw new Error("测验生成流不可用。");
   }
 
   const reader = response.body.getReader();
@@ -2193,7 +2287,7 @@ export async function startAutoGeneratedQuizAttemptWithProgress(
     }
 
     if (parsed.event === "error") {
-      streamErrorMessage = parsed.message || "Quiz generation failed.";
+      streamErrorMessage = parsed.message || "测验生成失败。";
     }
   };
 
@@ -2220,7 +2314,7 @@ export async function startAutoGeneratedQuizAttemptWithProgress(
   }
 
   if (!resultSession) {
-    throw new Error("Quiz generation finished without starting a quiz session.");
+    throw new Error("测验生成结束，但未开始测验会话。");
   }
 
   return resultSession;
@@ -2265,7 +2359,7 @@ export async function createAutoGeneratedQuizAttemptRun(
   const text = await response.text();
   const payload = parseJsonText(text);
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) throw new Error(extractErrorMessage(payload, "Failed to start quiz generation."));
+  if (!response.ok) throw new Error(extractErrorMessage(payload, "启动测验生成失败。"));
   const data = (payload ?? {}) as Record<string, unknown>;
   return {
     runId: String(pick(data, "runId", "run_id") ?? ""),
@@ -2285,7 +2379,7 @@ export async function getAutoGeneratedQuizAttemptRun(
   const text = await response.text();
   const payload = parseJsonText(text);
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) throw new Error(extractErrorMessage(payload, "Failed to load quiz generation status."));
+  if (!response.ok) throw new Error(extractErrorMessage(payload, "加载测验生成状态失败。"));
   return normalizeQuizGenerationRun(payload);
 }
 
@@ -2301,7 +2395,7 @@ export async function getActiveAutoGeneratedQuizAttemptRun(
   const text = await response.text();
   const payload = parseJsonText(text);
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) throw new Error(extractErrorMessage(payload, "Failed to load active quiz generation."));
+  if (!response.ok) throw new Error(extractErrorMessage(payload, "加载活动测验生成任务失败。"));
   return normalizeQuizGenerationRun(payload);
 }
 
@@ -2323,7 +2417,7 @@ export async function submitQuizAttempt(
   const text = await response.text();
   const payload = parseJsonText(text);
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) throw new Error(extractErrorMessage(payload, "Failed to submit quiz."));
+  if (!response.ok) throw new Error(extractErrorMessage(payload, "提交测验失败。"));
   return normalizeAttemptResult(payload);
 }
 
@@ -2336,26 +2430,26 @@ export async function getQuizAttemptHistory(courseUuid: string, moduleUuid: stri
   const text = await response.text();
   const payload = parseJsonText(text);
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) throw new Error(extractErrorMessage(payload, "Failed to load quiz history."));
-  const d = (payload ?? {}) as Record<string, unknown>;
+  if (!response.ok) throw new Error(extractErrorMessage(payload, "加载测验历史失败。"));
+  const d = progressRecord(payload);
   const rawAttempts = Array.isArray(d.attempts) ? (d.attempts as Record<string, unknown>[]) : [];
   return {
     quizUuid: String(pick(d, "quizUuid", "quiz_uuid") ?? ""),
     moduleUuid: String(pick(d, "moduleUuid", "module_uuid") ?? ""),
     title: String(pick(d, "title") ?? "Quiz"),
-    timeLimitSeconds: (pick(d, "timeLimitSeconds", "time_limit_seconds") as number | null) ?? null,
-    passedOnce: Boolean(pick(d, "passedOnce", "passed_once") ?? false),
+    timeLimitSeconds: toNullableNonNegativeNumber(pick(d, "timeLimitSeconds", "time_limit_seconds")),
+    passedOnce: toBooleanValue(pick(d, "passedOnce", "passed_once")),
     attempts: rawAttempts.map((a) => ({
       quizAttemptUuid: String(pick(a, "quizAttemptUuid", "quiz_attempt_uuid") ?? ""),
-      attemptNumber: Number(pick(a, "attemptNumber", "attempt_number") ?? 0),
-      questionCount: Number(pick(a, "questionCount", "question_count") ?? 0),
-      correctCount: Number(pick(a, "correctCount", "correct_count") ?? 0),
-      scorePercent: String(pick(a, "scorePercent", "score_percent") ?? "0"),
-      isPassed: Boolean(pick(a, "isPassed", "is_passed") ?? false),
-      isTimedOut: Boolean(pick(a, "isTimedOut", "is_timed_out") ?? false),
+      attemptNumber: toNonNegativeNumber(pick(a, "attemptNumber", "attempt_number")),
+      questionCount: toNonNegativeNumber(pick(a, "questionCount", "question_count")),
+      correctCount: toNonNegativeNumber(pick(a, "correctCount", "correct_count")),
+      scorePercent: toScorePercentString(pick(a, "scorePercent", "score_percent")),
+      isPassed: toBooleanValue(pick(a, "isPassed", "is_passed")),
+      isTimedOut: toBooleanValue(pick(a, "isTimedOut", "is_timed_out")),
       startedAt: String(pick(a, "startedAt", "started_at") ?? ""),
       submittedAt: String(pick(a, "submittedAt", "submitted_at") ?? ""),
-      durationSeconds: (pick(a, "durationSeconds", "duration_seconds") as number | null) ?? null,
+      durationSeconds: toNullableNonNegativeNumber(pick(a, "durationSeconds", "duration_seconds")),
     })),
   };
 }
@@ -2372,7 +2466,7 @@ export async function getQuizAttemptDetail(
   const text = await response.text();
   const payload = parseJsonText(text);
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) throw new Error(extractErrorMessage(payload, "Failed to load quiz attempt detail."));
+  if (!response.ok) throw new Error(extractErrorMessage(payload, "加载测验尝试详情失败。"));
   return normalizeAttemptResult(payload);
 }
 
@@ -2384,8 +2478,12 @@ export async function generateCourseInviteLink(courseUuid: string): Promise<Cour
   const text = await response.text();
   const payload = parseJsonText(text);
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) throw new Error(extractErrorMessage(payload, "Failed to generate invite link."));
-  return payload as CourseInviteLinkResponse;
+  if (!response.ok) throw new Error(extractErrorMessage(payload, "生成邀请链接失败。"));
+  const inviteLink = normalizeCourseInviteLink(payload);
+  if (!isUsableCourseInviteLink(inviteLink)) {
+    throw new Error("Invite link response was invalid. Please try again.");
+  }
+  return inviteLink;
 }
 
 export async function listCourseInviteLinks(courseUuid: string): Promise<CourseInviteLinkResponse[]> {
@@ -2396,8 +2494,8 @@ export async function listCourseInviteLinks(courseUuid: string): Promise<CourseI
   const text = await response.text();
   const payload = parseJsonText(text);
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) throw new Error(extractErrorMessage(payload, "Failed to fetch invite links."));
-  return (payload as CourseInviteLinkResponse[]) ?? [];
+  if (!response.ok) throw new Error(extractErrorMessage(payload, "获取邀请链接失败。"));
+  return normalizeCourseInviteLinkList(payload);
 }
 
 export async function deactivateCourseInviteLink(inviteUuid: string): Promise<{ detail: string }> {
@@ -2408,8 +2506,8 @@ export async function deactivateCourseInviteLink(inviteUuid: string): Promise<{ 
   const text = await response.text();
   const payload = parseJsonText(text);
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) throw new Error(extractErrorMessage(payload, "Failed to deactivate invite link."));
-  return payload as { detail: string };
+  if (!response.ok) throw new Error(extractErrorMessage(payload, "停用邀请链接失败。"));
+  return { detail: normalizeString(progressRecord(payload).detail, "Invite link deactivated") };
 }
 
 export async function validateCourseInviteToken(token: string): Promise<CourseInviteValidateResponse> {
@@ -2420,7 +2518,7 @@ export async function validateCourseInviteToken(token: string): Promise<CourseIn
   const text = await response.text();
   const payload = parseJsonText(text);
   if (!response.ok) throw new Error(extractErrorMessage(payload, "Invalid or expired invite link."));
-  return payload as CourseInviteValidateResponse;
+  return normalizeCourseInviteValidation(payload);
 }
 
 export async function enrolViaCourseInvite(token: string): Promise<CourseInviteEnrolResponse> {
@@ -2431,8 +2529,8 @@ export async function enrolViaCourseInvite(token: string): Promise<CourseInviteE
   const text = await response.text();
   const payload = parseJsonText(text);
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) throw new Error(extractErrorMessage(payload, "Failed to enrol via invite link."));
-  return payload as CourseInviteEnrolResponse;
+  if (!response.ok) throw new Error(extractErrorMessage(payload, "通过邀请链接加入课程失败。"));
+  return normalizeCourseInviteEnrolment(payload);
 }
 
 export async function updateModuleProgress(
@@ -2451,5 +2549,5 @@ export async function updateModuleProgress(
   const text = await response.text();
   const payload = parseJsonText(text);
   handleAuthenticationFailureFromResponse(response.status, payload);
-  if (!response.ok) throw new Error(extractErrorMessage(payload, "Failed to update module progress."));
+  if (!response.ok) throw new Error(extractErrorMessage(payload, "更新模块进度失败。"));
 }

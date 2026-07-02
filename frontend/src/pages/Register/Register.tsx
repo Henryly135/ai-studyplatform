@@ -12,12 +12,12 @@ const POST_AUTH_REDIRECT_STORAGE_KEY = "postAuthRedirect";
 
 function getRegisterErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) {
-    return "An unknown error occurred.";
+    return "发生未知错误。";
   }
 
   switch (error.message) {
     case "Account pending approval":
-      return "Your account is already pending admin approval and cannot be registered again.";
+      return "你的账号已经在等待管理员审批，不能重复注册。";
     default:
       return error.message;
   }
@@ -34,12 +34,12 @@ function Register() {
   }, [role]);
 
   const title =
-    identity === "Educator" ? "Create educator account" : "Create learner account";
+    identity === "Educator" ? "创建教师账号" : "创建学生账号";
 
   const description =
     identity === "Educator"
-      ? "Set up your educator profile to create courses and support learners."
-      : "Create your learner account to join classes and track your progress.";
+      ? "设置教师资料，用于创建课程并支持学生学习。"
+      : "创建学生账号，加入课程并追踪学习进度。";
 
   const [form, setForm] = useState({
     usrName: "",
@@ -67,12 +67,12 @@ function Register() {
     setError("");
 
     if (!form.usrName || !form.email || !form.password || !form.confirmPassword) {
-      setError("Please fill in all fields.");
+      setError("请填写所有字段。");
       return;
     }
 
     if (!agreedToTerms) {
-      setError("Please agree to the Terms of Service to continue.");
+      setError("请先同意服务条款。");
       return;
     }
 
@@ -83,7 +83,7 @@ function Register() {
     }
 
     if (form.password !== form.confirmPassword) {
-      setError("Passwords do not match.");
+      setError("两次输入的密码不一致。");
       return;
     }
 
@@ -111,9 +111,9 @@ function Register() {
     setResendLoading(true);
     try {
       await resendVerification(registeredEmail);
-      setResendMessage("Verification email resent. Please check your inbox.");
+      setResendMessage("验证邮件已重新发送，请检查收件箱。");
     } catch (err) {
-      setResendMessage(err instanceof Error ? err.message : "Failed to resend email.");
+      setResendMessage(err instanceof Error ? err.message : "邮件重新发送失败。");
     } finally {
       setResendLoading(false);
     }
@@ -123,32 +123,32 @@ function Register() {
     return (
       <AuthLayout>
         <AuthHeader
-          title="Check your email"
-          description={`We've sent a verification link to ${registeredEmail}. Click the link to activate your account.`}
+          title="请检查邮箱"
+          description={`我们已向 ${registeredEmail} 发送验证链接。请点击链接激活账号。`}
         />
         <div style={{ textAlign: "center", padding: "0.5rem 0" }}>
           {resendMessage && (
             <AuthMessage
-              tone={resendMessage.startsWith("Verification email resent") ? "success" : "error"}
+              tone={resendMessage.startsWith("验证邮件已重新发送") ? "success" : "error"}
               message={resendMessage}
             />
           )}
           <p style={{ marginBottom: "1rem", color: "var(--color-text-muted, #6b7280)", fontSize: "0.9rem" }}>
-            Didn't receive it?
+            没有收到邮件？
           </p>
           <button
             className="primary-btn auth-submit-btn"
             onClick={handleResend}
             disabled={resendLoading}
           >
-            {resendLoading ? "Resending..." : "Resend verification email"}
+            {resendLoading ? "发送中..." : "重新发送验证邮件"}
           </button>
           <div className="auth-footer-links" style={{ marginTop: "1rem" }}>
             <Link
               to={redirectPath ? `/login?redirect=${encodeURIComponent(redirectPath)}` : "/login"}
               className="text-link"
             >
-              Back to Login
+              返回登录
             </Link>
           </div>
         </div>

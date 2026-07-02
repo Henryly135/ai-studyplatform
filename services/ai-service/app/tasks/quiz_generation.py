@@ -126,6 +126,7 @@ def generate_quiz_attempt_run_task(run_id: str) -> dict[str, object]:
             course_uuid=generation_request.courseUuid,
             module_uuid=generation_request.moduleUuid,
             candidate_set=validated_candidate_set,
+            purpose="attempt",
         )
         store.mark_step_completed(
             run_id,

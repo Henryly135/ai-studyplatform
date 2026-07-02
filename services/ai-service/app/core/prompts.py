@@ -140,13 +140,11 @@ Rules:
 - Every question must include:
   - questionText
   - explanationText
-  - sourceGrounding
   - sortOrder
   - isActive
   - options
 - Every question must have exactly one correct option.
 - Keep explanations concise, accurate, and grounded in the provided learning context.
-- Keep sourceGrounding to one concise sentence that identifies the material, heading, or retrieved chunk supporting the question.
 """.strip(),
     description="Structured candidate generation prompt for AI-generated module quizzes.",
 )

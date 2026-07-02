@@ -32,12 +32,12 @@ function ResetPassword() {
     setSuccess("");
 
     if (!token) {
-      setError("Invalid or missing reset token. Please request a new reset link.");
+      setError("重置令牌无效或缺失，请重新申请重置链接。");
       return;
     }
 
     if (!form.newPassword || !form.confirmPassword) {
-      setError("Please fill in all fields.");
+      setError("请填写所有字段。");
       return;
     }
 
@@ -48,7 +48,7 @@ function ResetPassword() {
     }
 
     if (form.newPassword !== form.confirmPassword) {
-      setError("Passwords do not match.");
+      setError("两次输入的密码不一致。");
       return;
     }
 
@@ -61,7 +61,7 @@ function ResetPassword() {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError("An unknown error occurred.");
+        setError("发生未知错误。");
       }
     } finally {
       setLoading(false);
@@ -71,13 +71,13 @@ function ResetPassword() {
   return (
     <AuthLayout>
       <AuthHeader
-        badge="Account"
-        title="Reset Password"
-        description="Enter your new password below."
+        badge="账号"
+        title="重置密码"
+        description="请在下方输入新密码。"
       />
       <form className="auth-form" onSubmit={handleSubmit}>
         <AuthField
-          label="New Password"
+          label="新密码"
           type="password"
           name="newPassword"
           placeholder={PASSWORD_HINT}
@@ -85,10 +85,10 @@ function ResetPassword() {
           onChange={handleChange}
         />
         <AuthField
-          label="Confirm New Password"
+          label="确认新密码"
           type="password"
           name="confirmPassword"
-          placeholder="Re-enter your new password"
+          placeholder="请再次输入新密码"
           value={form.confirmPassword}
           onChange={handleChange}
         />
@@ -97,13 +97,13 @@ function ResetPassword() {
         {success && <AuthMessage tone="success" message={success} />}
 
         <button className="primary-btn auth-submit-btn" type="submit" disabled={loading}>
-          {loading ? "Resetting..." : "Reset Password"}
+          {loading ? "重置中..." : "重置密码"}
         </button>
       </form>
 
       <div className="auth-footer-links">
         <Link to="/login" className="text-link">
-          Back to Log in
+          返回登录
         </Link>
       </div>
     </AuthLayout>

@@ -30,18 +30,18 @@ function getFileInformation(material: CourseMaterial) {
   const metadata = material.metadataJson ?? {};
   const items = [
     {
-      label: "Original filename",
+      label: "原始文件名",
       value:
         typeof metadata.originalFilename === "string" && metadata.originalFilename.trim()
           ? metadata.originalFilename.trim()
           : null,
     },
     {
-      label: "File size",
+      label: "文件大小",
       value: formatFileSize(metadata.sizeBytes),
     },
     {
-      label: "Content type",
+      label: "内容类型",
       value:
         typeof metadata.contentType === "string" && metadata.contentType.trim()
           ? metadata.contentType.trim()
@@ -136,7 +136,7 @@ function FileInformation({ material }: { material: CourseMaterial }) {
   const items = getFileInformation(material);
 
   if (items.length === 0) {
-    return <p>No additional file information available.</p>;
+    return <p>暂无更多文件信息。</p>;
   }
 
   return (
@@ -161,19 +161,23 @@ function CourseMaterialPage() {
 
   const source = new URLSearchParams(location.search).get("from");
   const isLearnerView = source === "my-courses";
+  const moduleIsCompleteable =
+    module ? !module.isLocked && !module.isCompleted && !module.hasPublishedQuiz : false;
+  const activeModuleUuid = module?.moduleUuid ?? null;
 
   useEffect(() => {
-    if (!module || module.isLocked || module.isCompleted || module.hasPublishedQuiz || !isLearnerView) {
+    if (!activeModuleUuid || !moduleIsCompleteable || !isLearnerView) {
       return;
     }
-    updateModuleProgress(course.courseUuid, module.moduleUuid, "completed")
+    void updateModuleProgress(course.courseUuid, activeModuleUuid, "completed")
       .then(() => {
-        markModuleCompleted(module.moduleUuid);
+        markModuleCompleted(activeModuleUuid);
         return refreshCourse();
       })
-      .catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [module?.moduleUuid, isLearnerView]);
+      .catch(() => {
+        // Progress updates are opportunistic; the learner can continue reading the material.
+      });
+  }, [activeModuleUuid, course.courseUuid, isLearnerView, markModuleCompleted, moduleIsCompleteable, refreshCourse]);
 
   if (!module || !material) {
     return <Navigate to={`/course/${course.courseUuid}`} replace />;
@@ -201,8 +205,7 @@ function CourseMaterialPage() {
                   preload="metadata"
                   playsInline
                   src={material.resourceUrl}
-                >
-                  Your browser does not support embedded video playback. Please use the open material link instead.
+                >你的浏览器不支持内嵌视频播放，请使用打开资料链接。
                 </video>
               </div>
             ) : imageMaterial ? (
@@ -211,8 +214,7 @@ function CourseMaterialPage() {
               </div>
             ) : audioMaterial ? (
               <div className="course-audio-stage">
-                <audio className="course-audio-player" controls preload="metadata" src={material.resourceUrl}>
-                  Your browser does not support embedded audio playback. Please use the open material link instead.
+                <audio className="course-audio-player" controls preload="metadata" src={material.resourceUrl}>你的浏览器不支持内嵌音频播放，请使用打开资料链接。
                 </audio>
               </div>
             ) : previewableDocumentMaterial ? (
@@ -225,14 +227,14 @@ function CourseMaterialPage() {
               </div>
             ) : (
               <div className="course-empty-state">
-                <strong>Preview unavailable</strong>
-                <p>This file type is available to open in a new tab or download to your device.</p>
+                <strong>无法预览</strong>
+                <p>该文件类型可以在新标签页打开或下载到设备。</p>
               </div>
             )
           ) : (
             <div className="course-empty-state">
-              <strong>{videoMaterial ? "Video unavailable" : "Preview unavailable"}</strong>
-              <p>This material does not currently have a viewable resource URL.</p>
+              <strong>{videoMaterial ? "Video unavailable" : "无法预览"}</strong>
+              <p>该资料当前没有可查看的资源链接。</p>
             </div>
           )}
         </article>
@@ -241,21 +243,20 @@ function CourseMaterialPage() {
           <div className="course-material-sidebar">
             <article className="course-panel">
               <div className="course-panel-heading">
-                <h3>Material details</h3>
+                <h3>资料详情</h3>
               </div>
               <div className="course-material-detail-list">
-                <p>Course: {course.title}</p>
-                <p>Module: {module.title}</p>
-                {material.materialType ? <p>Material type: {material.materialType}</p> : null}
-                <p>Order: {material.sortOrder}</p>
+                <p>课程： {course.title}</p>
+                <p>模块： {module.title}</p>
+                {material.materialType ? <p>资料类型： {material.materialType}</p> : null}
+                <p>顺序： {material.sortOrder}</p>
               </div>
               {material.resourceUrl ? (
                 <div className="course-material-actions">
-                  <a className="course-primary-link" href={material.resourceUrl} target="_blank" rel="noreferrer">
-                    Open material
+                  <a className="course-primary-link" href={material.resourceUrl} target="_blank" rel="noreferrer">打开资料
                   </a>
                   <a className="course-secondary-link" href={material.resourceUrl} download>
-                    {videoMaterial ? "Download video" : "Download file"}
+                    {videoMaterial ? "Download video" : "下载文件"}
                   </a>
                 </div>
               ) : null}
@@ -263,7 +264,7 @@ function CourseMaterialPage() {
 
             <article className="course-panel">
               <div className="course-panel-heading">
-                <h3>File information</h3>
+                <h3>文件信息</h3>
               </div>
               <FileInformation material={material} />
             </article>

@@ -42,7 +42,7 @@ function CourseManagementModuleCreatePage() {
     setDidAttemptSubmit(true);
 
     if (!title.trim() || !content.trim()) {
-      setCreateError("Please complete the required fields before creating the module.");
+      setCreateError("请先完成必填字段，再创建模块。");
       return;
     }
 
@@ -59,7 +59,7 @@ function CourseManagementModuleCreatePage() {
       await refreshCourse();
       navigate(`/course/${course.courseUuid}/management/modules/${createdModule.moduleUuid}${managementSearchSuffix}`, { replace: true });
     } catch (error) {
-      setCreateError(error instanceof Error ? error.message : "Failed to create module.");
+      setCreateError(error instanceof Error ? error.message : "创建模块失败。");
     } finally {
       setIsCreatingModule(false);
     }
@@ -79,14 +79,14 @@ function CourseManagementModuleCreatePage() {
         >
           <div className="course-management-modal-header">
             <div>
-              <span className="course-surface-badge">Create Module</span>
-              <h3 id="create-module-title">Create a new module</h3>
+              <span className="course-surface-badge">创建模块</span>
+              <h3 id="create-module-title">创建新模块</h3>
             </div>
             <button
               type="button"
               className="course-management-modal-close"
               onClick={closeCreateModal}
-              aria-label="Close create module dialog"
+              aria-label="关闭创建模块窗口"
             >
               <LuX size={18} aria-hidden="true" />
             </button>
@@ -94,8 +94,7 @@ function CourseManagementModuleCreatePage() {
 
           <form className="course-management-form" onSubmit={handleCreateModule}>
             <label className="course-management-field course-management-field-full">
-              <span>
-                Title <em className="course-management-required-indicator">*</em>
+              <span>标题 <em className="course-management-required-indicator">*</em>
               </span>
               <input
                 value={title}
@@ -104,17 +103,16 @@ function CourseManagementModuleCreatePage() {
                 aria-invalid={isTitleInvalid}
                 required
               />
-              {isTitleInvalid ? <small className="course-management-field-error">Title is required.</small> : null}
+              {isTitleInvalid ? <small className="course-management-field-error">标题为必填项。</small> : null}
             </label>
 
             <label className="course-management-field course-management-field-full">
-              <span>Description</span>
+              <span>描述</span>
               <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={4} />
             </label>
 
             <label className="course-management-field course-management-field-full">
-              <span>
-                Content <em className="course-management-required-indicator">*</em>
+              <span>内容 <em className="course-management-required-indicator">*</em>
               </span>
               <textarea
                 value={content}
@@ -124,11 +122,11 @@ function CourseManagementModuleCreatePage() {
                 aria-invalid={isContentInvalid}
                 required
               />
-              {isContentInvalid ? <small className="course-management-field-error">Content is required.</small> : null}
+              {isContentInvalid ? <small className="course-management-field-error">内容为必填项。</small> : null}
             </label>
 
             <label className="course-management-field">
-              <span>Estimated minutes</span>
+              <span>预计分钟数</span>
               <input
                 type="number"
                 min="1"
@@ -139,7 +137,7 @@ function CourseManagementModuleCreatePage() {
 
             {createError ? (
               <div className="course-management-inline-alert course-management-field-full">
-                <strong>Unable to create module.</strong>
+                <strong>无法创建模块。</strong>
                 <span>{createError}</span>
               </div>
             ) : null}
@@ -150,7 +148,7 @@ function CourseManagementModuleCreatePage() {
                 className="course-management-action-button course-management-action-button-primary"
                 disabled={isCreatingModule}
               >
-                {isCreatingModule ? "Creating..." : "Create module"}
+                {isCreatingModule ? "创建中..." : "创建模块"}
               </button>
             </div>
           </form>

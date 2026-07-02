@@ -27,7 +27,7 @@ function UserManagementFilters({
       <input
         className="user-management-search"
         type="text"
-        placeholder="Search by name or email"
+        placeholder="按姓名或邮箱搜索"
         value={search}
         onChange={handleSearchChange}
       />
@@ -37,9 +37,9 @@ function UserManagementFilters({
         value={roleFilter}
         onChange={handleRoleFilterChange}
       >
-        <option value="All">All Roles</option>
-        <option value="Educator">Educator</option>
-        <option value="Learner">Learner</option>
+        <option value="All">全部角色</option>
+        <option value="Educator">教师</option>
+        <option value="Learner">学生</option>
       </select>
     </div>
   );

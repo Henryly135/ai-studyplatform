@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.quiz import QuizQuestionWriteRequest
@@ -17,6 +19,17 @@ class QuizGenerationLearnerAccessRequest(BaseModel):
 
 
 class QuizGenerationLearnerAccessResponse(BaseModel):
+    allowed: bool
+
+
+class QuizGenerationAuthoringAccessRequest(BaseModel):
+    courseUuid: str = Field(..., min_length=1)
+    moduleUuid: str = Field(..., min_length=1)
+    actorId: int = Field(..., ge=1)
+    actorIdentity: str = Field(..., min_length=1)
+
+
+class QuizGenerationAuthoringAccessResponse(BaseModel):
     allowed: bool
 
 
@@ -42,6 +55,7 @@ class QuizGenerationContextResponse(BaseModel):
 class GeneratedQuizQuestionsCreateRequest(BaseModel):
     courseUuid: str = Field(..., min_length=1)
     moduleUuid: str = Field(..., min_length=1)
+    purpose: Literal["authoring", "attempt"] = "authoring"
     questions: list[QuizQuestionWriteRequest] = Field(..., min_length=1)
 
 

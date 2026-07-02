@@ -30,7 +30,7 @@ function CourseModulePage() {
         <div className="course-module-locked-banner">
           <LuLock size={20} aria-hidden="true" />
           <div>
-            <strong>Module locked</strong>
+            <strong>模块已锁定</strong>
             <p>{module.lockMessage ?? `Complete "${module.prerequisiteModuleTitle}" to unlock this module.`}</p>
           </div>
         </div>
@@ -39,20 +39,20 @@ function CourseModulePage() {
       <div className="course-detail-grid">
         <article className="course-panel">
           <div className="course-panel-heading">
-            <h3>Module snapshot</h3>
+            <h3>模块概览</h3>
           </div>
-          {module.durationLabel ? <p>Estimated time: {module.durationLabel}</p> : null}
-          <p>Status: {module.status}</p>
-          {module.classId ? <p>Class: {module.classId}</p> : null}
+          {module.durationLabel ? <p>预计时间： {module.durationLabel}</p> : null}
+          <p>状态： {module.status}</p>
+          {module.classId ? <p>班级： {module.classId}</p> : null}
           {module.prerequisiteModuleTitle ? (
-            <p>Prerequisite: {module.prerequisiteModuleTitle}</p>
+            <p>前置条件： {module.prerequisiteModuleTitle}</p>
           ) : null}
         </article>
 
         {!isLocked ? (
           <article className="course-panel">
             <div className="course-panel-heading">
-              <h3>Learning focus</h3>
+              <h3>学习重点</h3>
             </div>
             <p>{module.content || module.summary}</p>
             <div className="course-material-list">
@@ -67,17 +67,8 @@ function CourseModulePage() {
                   to={`/course/${course.courseUuid}/modules/${module.moduleUuid}/quiz`}
                   className="course-material-card course-material-card-link course-material-card-quiz"
                 >
-                  <strong>{module.quizTitle ?? "Quiz"}</strong>
-                  <span>quiz</span>
-                </Link>
-              )}
-              {module.hasPublishedShortAnswer && (
-                <Link
-                  to={`/course/${course.courseUuid}/modules/${module.moduleUuid}/short-answer`}
-                  className="course-material-card course-material-card-link"
-                >
-                  <strong>{module.shortAnswerTitle ?? "Short-answer assessment"}</strong>
-                  <span>assessment</span>
+                  <strong>{module.quizTitle ?? "测验"}</strong>
+                  <span>测验</span>
                 </Link>
               )}
             </div>

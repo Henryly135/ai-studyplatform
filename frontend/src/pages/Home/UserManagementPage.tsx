@@ -42,7 +42,7 @@ function UserManagementPage() {
 
       if (!accessToken) {
         if (!cancelled) {
-          setErrorMessage("Missing access token. Please log in again.");
+          setErrorMessage("缺少访问令牌，请重新登录。");
           setLoading(false);
         }
         return;
@@ -101,7 +101,7 @@ function UserManagementPage() {
     const accessToken = localStorage.getItem("accessToken");
 
     if (!accessToken) {
-      setErrorMessage("Missing access token. Please log in again.");
+      setErrorMessage("缺少访问令牌，请重新登录。");
       return;
     }
 
@@ -118,7 +118,7 @@ function UserManagementPage() {
       );
       setErrorMessage("");
       emitAppRefresh({ scope: "admin:users" });
-      setSuccessMessage("User identity updated successfully.");
+      setSuccessMessage("用户身份更新成功。");
     } catch (error) {
       setSuccessMessage("");
       setErrorMessage(
@@ -136,7 +136,7 @@ function UserManagementPage() {
     const accessToken = localStorage.getItem("accessToken");
 
     if (!accessToken) {
-      setErrorMessage("Missing access token. Please log in again.");
+      setErrorMessage("缺少访问令牌，请重新登录。");
       return;
     }
 
@@ -153,7 +153,7 @@ function UserManagementPage() {
       );
       setErrorMessage("");
       emitAppRefresh({ scope: "admin:users" });
-      setSuccessMessage("User status updated successfully.");
+      setSuccessMessage("用户状态更新成功。");
     } catch (error) {
       setSuccessMessage("");
       setErrorMessage(
@@ -168,7 +168,7 @@ function UserManagementPage() {
     <section className="user-management-page">
       {successMessage ? (
         <div className="user-management-toast user-management-toast-success" role="status" aria-live="polite">
-          <strong>Success</strong>
+          <strong>成功</strong>
           <span>{successMessage}</span>
         </div>
       ) : null}
@@ -182,7 +182,7 @@ function UserManagementPage() {
         />
 
         {loading ? (
-          <p className="user-management-feedback">Loading users...</p>
+          <p className="user-management-feedback">正在加载用户...</p>
         ) : null}
 
         {!loading && errorMessage ? (

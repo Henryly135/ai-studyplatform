@@ -37,21 +37,50 @@ function extractErrorMessage(payload: unknown, fallbackMessage: string) {
   return fallbackMessage;
 }
 
+function toFiniteNumber(value: unknown, fallback: number, minimum?: number) {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : fallback;
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return minimum === undefined ? parsed : Math.max(minimum, parsed);
+}
+
+function toNullableFiniteNumber(value: unknown) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 function normalizeForumComment(payload: Record<string, unknown>): ForumComment {
   return {
-    commentId: Number(payload.commentId ?? 0),
+    commentId: toFiniteNumber(payload.commentId, 0, 0),
     commentUuid: String(payload.commentUuid ?? ""),
-    postId: Number(payload.postId ?? 0),
+    postId: toFiniteNumber(payload.postId, 0, 0),
     postUuid: String(payload.postUuid ?? ""),
-    courseId: Number(payload.courseId ?? 0),
+    courseId: toFiniteNumber(payload.courseId, 0, 0),
     courseUuid: String(payload.courseUuid ?? ""),
-    authorUserId: Number(payload.authorUserId ?? 0),
+    authorUserId: toFiniteNumber(payload.authorUserId, 0, 0),
     authorUserUuid: String(payload.authorUserUuid ?? ""),
     authorEmail: String(payload.authorEmail ?? ""),
     authorName: String(payload.authorName ?? "Unknown author"),
-    rootCommentId: payload.rootCommentId == null ? null : Number(payload.rootCommentId),
+    rootCommentId: toNullableFiniteNumber(payload.rootCommentId),
     rootCommentUuid: payload.rootCommentUuid == null ? null : String(payload.rootCommentUuid),
-    replyToCommentId: payload.replyToCommentId == null ? null : Number(payload.replyToCommentId),
+    replyToCommentId: toNullableFiniteNumber(payload.replyToCommentId),
     replyToCommentUuid:
       payload.replyToCommentUuid == null ? null : String(payload.replyToCommentUuid),
     replyToAuthorName: payload.replyToAuthorName == null ? null : String(payload.replyToAuthorName),
@@ -63,7 +92,7 @@ function normalizeForumComment(payload: Record<string, unknown>): ForumComment {
         : null,
     isDeleted: Boolean(payload.isDeleted),
     deletedAt: payload.deletedAt == null ? null : String(payload.deletedAt),
-    replyCount: Number(payload.replyCount ?? 0),
+    replyCount: toFiniteNumber(payload.replyCount, 0, 0),
     createdAt: String(payload.createdAt ?? ""),
     updatedAt: String(payload.updatedAt ?? ""),
   };
@@ -77,11 +106,11 @@ function normalizeForumPost(payload: Record<string, unknown>): ForumPost {
     : [];
 
   return {
-    postId: Number(payload.postId ?? 0),
+    postId: toFiniteNumber(payload.postId, 0, 0),
     postUuid: String(payload.postUuid ?? ""),
-    courseId: Number(payload.courseId ?? 0),
+    courseId: toFiniteNumber(payload.courseId, 0, 0),
     courseUuid: String(payload.courseUuid ?? ""),
-    authorUserId: Number(payload.authorUserId ?? 0),
+    authorUserId: toFiniteNumber(payload.authorUserId, 0, 0),
     authorUserUuid: String(payload.authorUserUuid ?? ""),
     authorEmail: String(payload.authorEmail ?? ""),
     authorName: String(payload.authorName ?? "Unknown author"),
@@ -94,7 +123,7 @@ function normalizeForumPost(payload: Record<string, unknown>): ForumPost {
         : null,
     isPinned: Boolean(payload.isPinned),
     pinnedAt: payload.pinnedAt == null ? null : String(payload.pinnedAt),
-    commentCount: Number(payload.commentCount ?? 0),
+    commentCount: toFiniteNumber(payload.commentCount, 0, 0),
     previewComments,
     createdAt: String(payload.createdAt ?? ""),
     updatedAt: String(payload.updatedAt ?? ""),
@@ -115,10 +144,10 @@ function normalizePaginatedPosts(payload: unknown): PaginatedForumPostResponse {
 
   return {
     items,
-    page: Number(data.page ?? 1),
-    pageSize: Number(data.pageSize ?? 20),
-    total: Number(data.total ?? items.length),
-    totalPages: Number(data.totalPages ?? 1),
+    page: toFiniteNumber(data.page, 1, 1),
+    pageSize: toFiniteNumber(data.pageSize, 20, 1),
+    total: toFiniteNumber(data.total, items.length, 0),
+    totalPages: toFiniteNumber(data.totalPages, 1, 1),
   };
 }
 
@@ -136,10 +165,10 @@ function normalizePaginatedComments(payload: unknown): PaginatedForumCommentResp
 
   return {
     items,
-    page: Number(data.page ?? 1),
-    pageSize: Number(data.pageSize ?? 20),
-    total: Number(data.total ?? items.length),
-    totalPages: Number(data.totalPages ?? 1),
+    page: toFiniteNumber(data.page, 1, 1),
+    pageSize: toFiniteNumber(data.pageSize, 20, 1),
+    total: toFiniteNumber(data.total, items.length, 0),
+    totalPages: toFiniteNumber(data.totalPages, 1, 1),
   };
 }
 
@@ -174,7 +203,7 @@ export async function listCourseForumPosts(
     }
   );
 
-  return normalizePaginatedPosts(await parseResponse(response, "Failed to load forum posts."));
+  return normalizePaginatedPosts(await parseResponse(response, "加载论坛帖子失败。"));
 }
 
 export async function createCourseForumPost(
@@ -193,7 +222,7 @@ export async function createCourseForumPost(
   });
 
   return normalizeForumPost(
-    (await parseResponse(response, "Failed to create forum post.")) as Record<string, unknown>
+    (await parseResponse(response, "创建论坛帖子失败。")) as Record<string, unknown>
   );
 }
 
@@ -204,7 +233,7 @@ export async function getCourseForumPost(postUuid: string): Promise<ForumPost> {
   });
 
   return normalizeForumPost(
-    (await parseResponse(response, "Failed to load forum post.")) as Record<string, unknown>
+    (await parseResponse(response, "加载论坛帖子失败。")) as Record<string, unknown>
   );
 }
 
@@ -223,7 +252,7 @@ export async function updateCourseForumPost(
   });
 
   return normalizeForumPost(
-    (await parseResponse(response, "Failed to update forum post.")) as Record<string, unknown>
+    (await parseResponse(response, "更新论坛帖子失败。")) as Record<string, unknown>
   );
 }
 
@@ -233,7 +262,7 @@ export async function deleteCourseForumPost(postUuid: string): Promise<void> {
     headers: buildAuthHeaders({ "Content-Type": "application/json" }),
   });
 
-  await parseResponse(response, "Failed to delete forum post.");
+  await parseResponse(response, "删除论坛帖子失败。");
 }
 
 export async function pinCourseForumPost(postUuid: string): Promise<ForumPost> {
@@ -243,7 +272,7 @@ export async function pinCourseForumPost(postUuid: string): Promise<ForumPost> {
   });
 
   return normalizeForumPost(
-    (await parseResponse(response, "Failed to pin forum post.")) as Record<string, unknown>
+    (await parseResponse(response, "置顶论坛帖子失败。")) as Record<string, unknown>
   );
 }
 
@@ -254,7 +283,7 @@ export async function unpinCourseForumPost(postUuid: string): Promise<ForumPost>
   });
 
   return normalizeForumPost(
-    (await parseResponse(response, "Failed to unpin forum post.")) as Record<string, unknown>
+    (await parseResponse(response, "取消置顶论坛帖子失败。")) as Record<string, unknown>
   );
 }
 
@@ -272,7 +301,7 @@ export async function listForumComments(
     }
   );
 
-  return normalizePaginatedComments(await parseResponse(response, "Failed to load comments."));
+  return normalizePaginatedComments(await parseResponse(response, "加载评论失败。"));
 }
 
 export async function createForumComment(
@@ -291,7 +320,7 @@ export async function createForumComment(
   });
 
   return normalizeForumComment(
-    (await parseResponse(response, "Failed to create comment.")) as Record<string, unknown>
+    (await parseResponse(response, "创建评论失败。")) as Record<string, unknown>
   );
 }
 
@@ -309,7 +338,7 @@ export async function listForumReplies(
     }
   );
 
-  return normalizePaginatedComments(await parseResponse(response, "Failed to load replies."));
+  return normalizePaginatedComments(await parseResponse(response, "加载回复失败。"));
 }
 
 export async function updateForumComment(
@@ -326,7 +355,7 @@ export async function updateForumComment(
   });
 
   return normalizeForumComment(
-    (await parseResponse(response, "Failed to update comment.")) as Record<string, unknown>
+    (await parseResponse(response, "更新评论失败。")) as Record<string, unknown>
   );
 }
 
@@ -337,6 +366,6 @@ export async function deleteForumComment(commentUuid: string): Promise<ForumComm
   });
 
   return normalizeForumComment(
-    (await parseResponse(response, "Failed to delete comment.")) as Record<string, unknown>
+    (await parseResponse(response, "删除评论失败。")) as Record<string, unknown>
   );
 }

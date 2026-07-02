@@ -1,15 +1,17 @@
-import { useMemo } from "react";
+import { lazy, Suspense, useMemo } from "react";
+import type { ReactNode } from "react";
 import { Navigate, useOutletContext } from "react-router-dom";
 
-import CourseCenterPage from "../Course/CourseCenterPage";
-import ManagedCoursesPage from "../Course/ManagedCoursesPage";
-import MyCoursesPage from "../Course/MyCoursesPage";
-import AnalyticsPage from "./AnalyticsPage";
-import EducatorRequestsPage from "./EducatorRequestsPage";
-import NotificationsPage from "./NotificationsPage";
-import UserManagementPage from "./UserManagementPage";
 import type { CurrentUserResponse } from "../../types/auth";
 import type { HomeSection } from "./homeConfig";
+
+const CourseCenterPage = lazy(() => import("../Course/CourseCenterPage"));
+const ManagedCoursesPage = lazy(() => import("../Course/ManagedCoursesPage"));
+const MyCoursesPage = lazy(() => import("../Course/MyCoursesPage"));
+const AnalyticsPage = lazy(() => import("./AnalyticsPage"));
+const HomeProgressPage = lazy(() => import("./HomeProgressPage"));
+const NotificationsPage = lazy(() => import("./NotificationsPage"));
+const UserManagementPage = lazy(() => import("./UserManagementPage"));
 
 export type HomeOutletContext = {
   currentUser: CurrentUserResponse;
@@ -21,16 +23,14 @@ type HomeSectionPageProps = {
 };
 
 const SECTION_MESSAGE: Record<string, string> = {
-  "course-center": "All available courses.",
-  "my-courses": "Courses you enrolled in.",
-  "managed-courses": "Courses linked to you.",
-  communication: "Course-related notifications.",
-  progress: "Your course progress.",
-  analytics: "Course progress and analysis.",
-  "course-management": "Manage all course information.",
-  "user-management": "User roles and permissions.",
-  "educator-requests": "Educator registration requests.",
-  "communication-management": "Manage all notification content.",
+  "course-center": "所有可用课程。",
+  "my-courses": "你已加入的课程。",
+  "managed-courses": "与你关联的课程。",
+  communication: "课程相关通知。",
+  progress: "你的课程进度。",
+  analytics: "课程进度和分析。",
+  "course-management": "管理全部课程信息。",
+  "user-management": "用户角色和权限。",
 };
 
 function HomeSectionPage({ sectionId }: HomeSectionPageProps) {
@@ -43,7 +43,7 @@ function HomeSectionPage({ sectionId }: HomeSectionPageProps) {
     ) {
       return {
         id: "communication",
-        title: "Notifications",
+        title: "通知",
         path: "communication",
       };
     }
@@ -55,48 +55,38 @@ function HomeSectionPage({ sectionId }: HomeSectionPageProps) {
     return <Navigate to="/home" replace />;
   }
 
-  if (section.id === "course-center") {
-    return <CourseCenterPage currentUser={currentUser} />;
-  }
+  let content: ReactNode;
 
   if (section.id === "managed-courses") {
-    return <ManagedCoursesPage />;
-  }
-
-  if (section.id === "course-management") {
-    return <ManagedCoursesPage variant="admin" />;
-  }
-
-  if (section.id === "my-courses") {
-    return <MyCoursesPage />;
-  }
-
-  if (section.id === "user-management") {
-    return <UserManagementPage />;
-  }
-
-  if (section.id === "communication") {
-    return <NotificationsPage mode="recipient" currentUser={currentUser} />;
-  }
-
-  if (section.id === "communication-management") {
-    return <NotificationsPage mode="admin" currentUser={currentUser} />;
-  }
-
-  if (section.id === "educator-requests") {
-    return <EducatorRequestsPage />;
-  }
-
-  if (section.id === "analytics") {
-    return <AnalyticsPage />;
+    content = <ManagedCoursesPage />;
+  } else if (section.id === "course-management") {
+    content = <ManagedCoursesPage variant="admin" />;
+  } else if (section.id === "my-courses") {
+    content = <MyCoursesPage />;
+  } else if (section.id === "progress") {
+    content = <HomeProgressPage />;
+  } else if (section.id === "user-management") {
+    content = <UserManagementPage />;
+  } else if (section.id === "communication") {
+    content = <NotificationsPage mode="recipient" currentUser={currentUser} />;
+  } else if (section.id === "analytics") {
+    content = <AnalyticsPage />;
+  } else if (section.id === "course-center") {
+    content = <CourseCenterPage currentUser={currentUser} />;
+  } else {
+    content = (
+      <section className="home-content-card">
+        <span className="home-content-badge">{currentUser.identity}</span>
+        <h1>{section.title}</h1>
+        <p>{SECTION_MESSAGE[section.id] ?? currentUser.userName}</p>
+      </section>
+    );
   }
 
   return (
-    <section className="home-content-card">
-      <span className="home-content-badge">{currentUser.identity}</span>
-      <h1>{section.title}</h1>
-      <p>{SECTION_MESSAGE[section.id] ?? currentUser.userName}</p>
-    </section>
+    <Suspense fallback={<section className="home-content-card">加载中...</section>}>
+      {content}
+    </Suspense>
   );
 }
 

@@ -1,12 +1,17 @@
+import os
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
-from app.core.public_url import normalize_public_frontend_base_url
+from app.core.public_url import (
+    PublicFrontendUrlNotConfiguredError,
+    configured_public_frontend_base_url,
+    normalize_public_frontend_base_url,
+)
 from app.core.uuid_codec import decode_course_uuid, encode_course_uuid
+from app.models.courses import CourseStatus
 from app.models.course_invite_token import CourseInviteToken
 from app.repositories.course_enrollment_repository import CourseEnrollmentRepository
 from app.repositories.course_invite_token_repository import CourseInviteTokenRepository
@@ -15,6 +20,7 @@ from app.services.course_enrollment_aggregate_service import CourseEnrollmentAgg
 from app.models.course_enrollments import EnrollmentStatus
 from app.models.course_enrollment_audit_logs import EnrollmentAuditActionType, EnrollmentAuditActorRole
 from app.repositories.course_enrollment_audit_log_repository import CourseEnrollmentAuditLogRepository
+from app.services.module_profile_trigger_service import ModuleProfileTriggerService
 from platform_common.errors import AppServiceError, invalid_identity_response_error
 
 
@@ -27,16 +33,11 @@ def _build_course_invite_url(token: str, public_frontend_base_url: str | None = 
     if public_frontend_base_url:
         base = normalize_public_frontend_base_url(public_frontend_base_url) or public_frontend_base_url.rstrip("/")
     else:
-        explicit = settings.public_frontend_url
-        public_base = settings.public_base_url
-        if explicit:
-            base = normalize_public_frontend_base_url(explicit) or explicit.rstrip("/")
-        elif public_base:
-            if public_base.endswith("/api"):
-                base = public_base[:-4]
-            else:
-                base = public_base.rstrip("/")
-            base = normalize_public_frontend_base_url(base) or base
+        configured = configured_public_frontend_base_url()
+        if configured:
+            base = configured
+        elif os.getenv("APP_ENV", "").strip().lower() == "production":
+            raise PublicFrontendUrlNotConfiguredError("Public frontend URL is not configured")
         else:
             base = "http://localhost:8080"
     base = normalize_public_frontend_base_url(base) or base
@@ -56,6 +57,7 @@ class CourseInviteService:
         self.enrollments = CourseEnrollmentRepository(session)
         self.audit_logs = CourseEnrollmentAuditLogRepository(session)
         self.aggregates = CourseEnrollmentAggregateService(session)
+        self.profile_triggers = ModuleProfileTriggerService(session)
 
     def generate_invite_link(
         self,
@@ -173,6 +175,8 @@ class CourseInviteService:
         course = self.courses.get_by_id(invite.course_id)
         if course is None:
             raise HTTPException(status_code=404, detail="Course not found")
+        if course.status != CourseStatus.PUBLISHED:
+            raise HTTPException(status_code=404, detail="Course is not available")
 
         return {
             "valid": True,
@@ -200,6 +204,8 @@ class CourseInviteService:
         course = self.courses.get_by_id(invite.course_id)
         if course is None:
             raise HTTPException(status_code=404, detail="Course not found")
+        if course.status != CourseStatus.PUBLISHED:
+            raise HTTPException(status_code=404, detail="Course is not available")
 
         course_id = invite.course_id
         total_module_count, progress_percent = self.aggregates.build_initial_aggregate(course_id=course_id)
@@ -227,6 +233,10 @@ class CourseInviteService:
                     reason="Learner re-enrolled via invite link",
                 )
                 self.session.commit()
+                self.profile_triggers.initialize_currently_unlocked_for_enrollment(
+                    course_id=course_id,
+                    learner_id=learner_id,
+                )
                 return {
                     "detail": "Enrolled successfully",
                     "courseUuid": encode_course_uuid(course_id),
@@ -258,6 +268,10 @@ class CourseInviteService:
             reason="Learner enrolled via invite link",
         )
         self.session.commit()
+        self.profile_triggers.initialize_currently_unlocked_for_enrollment(
+            course_id=course_id,
+            learner_id=learner_id,
+        )
         return {
             "detail": "Enrolled successfully",
             "courseUuid": encode_course_uuid(course_id),

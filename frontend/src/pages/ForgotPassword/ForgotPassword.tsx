@@ -19,7 +19,7 @@ function ForgotPassword() {
     setSuccess("");
 
     if (!email) {
-      setError("Please enter your email address.");
+      setError("请输入邮箱地址。");
       return;
     }
 
@@ -31,7 +31,7 @@ function ForgotPassword() {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError("An unknown error occurred.");
+        setError("发生未知错误。");
       }
     } finally {
       setLoading(false);
@@ -41,15 +41,15 @@ function ForgotPassword() {
   return (
     <AuthLayout>
       <AuthHeader
-        title="Forgot Password"
-        description="Enter your email and we'll send you a reset link."
+        title="忘记密码"
+        description="输入邮箱后，我们会向你发送重置链接。"
       />
       <form className="auth-form" onSubmit={handleSubmit}>
         <AuthField
-          label="Email"
+          label="邮箱"
           type="email"
           name="email"
-          placeholder="Enter your email"
+          placeholder="请输入邮箱"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
@@ -58,13 +58,13 @@ function ForgotPassword() {
         {success && <AuthMessage tone="success" message={success} />}
 
         <button className="primary-btn auth-submit-btn" type="submit" disabled={loading}>
-          {loading ? "Sending..." : "Send Reset Link"}
+          {loading ? "发送中..." : "发送重置链接"}
         </button>
       </form>
 
       <div className="auth-footer-links">
         <Link to="/login" className="text-link">
-          Back to Log in
+          返回登录
         </Link>
       </div>
     </AuthLayout>

@@ -1,7 +1,9 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { clearStoredSession } from "../../services/api";
 import { enrolViaCourseInvite, validateCourseInviteToken } from "../../services/course";
 import type { CourseInviteValidateResponse } from "../../types/admin";
+import { isUsableAccessToken } from "../../utils/accessToken";
 import { emitAppRefresh } from "../../utils/refreshEvents";
 
 const POST_AUTH_REDIRECT_STORAGE_KEY = "postAuthRedirect";
@@ -21,8 +23,12 @@ function CourseJoinPage() {
   const [enrollError, setEnrollError] = useState("");
 
   const accessToken = localStorage.getItem("accessToken");
-  const isLoggedIn = Boolean(accessToken);
+  const isLoggedIn = isUsableAccessToken(accessToken);
   const redirectPath = `/courses/join?token=${encodeURIComponent(token)}`;
+  const courseCenterRedirectPath = "/home/course-center";
+  const courseCenterPath = isLoggedIn
+    ? courseCenterRedirectPath
+    : `/login?redirect=${encodeURIComponent(courseCenterRedirectPath)}`;
 
   useEffect(() => {
     if (!token) {
@@ -36,7 +42,7 @@ function CourseJoinPage() {
         const info = await validateCourseInviteToken(token);
         setCourseInfo(info);
       } catch (err) {
-        setTokenError(err instanceof Error ? err.message : "Invalid or expired invite link.");
+        setTokenError(err instanceof Error ? err.message : "邀请链接无效或已过期。");
       } finally {
         setValidating(false);
       }
@@ -44,6 +50,12 @@ function CourseJoinPage() {
 
     void validate();
   }, [token]);
+
+  useEffect(() => {
+    if (accessToken && !isLoggedIn) {
+      clearStoredSession();
+    }
+  }, [accessToken, isLoggedIn]);
 
   const runEnrol = async () => {
     if (!token) return;
@@ -104,7 +116,7 @@ function CourseJoinPage() {
   if (validating) {
     return (
       <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh" }}>
-        <p>Validating invite link...</p>
+        <p>正在验证邀请链接...</p>
       </div>
     );
   }
@@ -112,9 +124,15 @@ function CourseJoinPage() {
   if (tokenError) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minHeight: "60vh", padding: "2rem" }}>
-        <h2>Invalid invite link</h2>
+        <h2>{token ? "Invite link unavailable" : "Invite link missing"}</h2>
         <p style={{ color: "#ef4444", marginBottom: "1rem" }}>{tokenError}</p>
-        <Link to="/" className="text-link">Go to home</Link>
+        <p style={{ color: "var(--color-text-muted, #6b7280)", maxWidth: "32rem", textAlign: "center", marginBottom: "1rem" }}>请向教师索要新的邀请链接，或前往课程大厅浏览可加入课程。
+        </p>
+        <div style={{ display: "flex", gap: "1rem", justifyContent: "center", flexWrap: "wrap" }}>
+          <Link to={courseCenterPath} className="primary-btn" style={{ textDecoration: "none", display: "inline-block" }}>前往课程大厅
+          </Link>
+          <Link to="/" className="text-link">返回首页</Link>
+        </div>
       </div>
     );
   }
@@ -132,12 +150,10 @@ function CourseJoinPage() {
           fontWeight: 600,
           marginBottom: "1rem",
           letterSpacing: "0.05em",
-        }}>
-          COURSE INVITE
+        }}>课程邀请
         </span>
 
-        <h1 style={{ marginBottom: "0.5rem" }}>
-          You've been invited to join
+        <h1 style={{ marginBottom: "0.5rem" }}>你已受邀加入
         </h1>
         <h2 style={{ color: "var(--color-accent, #3b82f6)", marginBottom: "1.5rem" }}>
           {courseInfo?.courseTitle}
@@ -146,15 +162,13 @@ function CourseJoinPage() {
         {enrollSuccess ? (
           <div>
             <p style={{ color: "#22c55e", fontWeight: 600, marginBottom: "0.5rem" }}>{enrollSuccess}</p>
-            <p style={{ color: "var(--color-text-muted, #6b7280)", fontSize: "0.9rem" }}>
-              Redirecting you to the course...
+            <p style={{ color: "var(--color-text-muted, #6b7280)", fontSize: "0.9rem" }}>正在跳转到课程...
             </p>
           </div>
         ) : isLoggedIn ? (
           <div>
             {!enrollError && (
-              <p style={{ marginBottom: "1rem", color: "var(--color-text-muted, #6b7280)" }}>
-                Signing you up for this course now...
+              <p style={{ marginBottom: "1rem", color: "var(--color-text-muted, #6b7280)" }}>正在为你加入该课程...
               </p>
             )}
             {enrollError && (
@@ -167,33 +181,30 @@ function CourseJoinPage() {
                 onClick={handleEnrol}
                 disabled={enrolling}
               >
-                {enrolling ? "Enrolling..." : "Try joining again"}
+                {enrolling ? "报名中..." : "Try joining again"}
               </button>
             )}
             <div style={{ marginTop: "1rem" }}>
-              <Link to="/home" className="text-link">Go to my courses instead</Link>
+              <Link to="/home" className="text-link">改去我的课程</Link>
             </div>
           </div>
         ) : (
           <div>
-            <p style={{ marginBottom: "1.5rem", color: "var(--color-text-muted, #6b7280)" }}>
-              You need to log in or create an account to join this course.
+            <p style={{ marginBottom: "1.5rem", color: "var(--color-text-muted, #6b7280)" }}>你需要登录或创建账号后才能加入这门课程。
             </p>
             <div style={{ display: "flex", gap: "1rem", justifyContent: "center", flexWrap: "wrap" }}>
               <button
                 className="primary-btn"
                 style={{ padding: "0.75rem 2rem" }}
                 onClick={handleLoginRedirect}
-              >
-                Log in to join
+              >登录并加入
               </button>
               <Link
                 to={`/register/learner?redirect=${encodeURIComponent(redirectPath)}`}
                 className="primary-btn"
                 style={{ padding: "0.75rem 2rem", textDecoration: "none", display: "inline-block" }}
                 onClick={persistInviteContinuation}
-              >
-                Create account
+              >创建账号
               </Link>
             </div>
           </div>
