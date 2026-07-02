@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  getAiModelCatalog,
   getAdminAiGovernance,
   getAdminAiProviderConfig,
   getAdminAiProviderHealth,
@@ -8,6 +9,7 @@ import {
   getAdminAiTelemetrySummary,
   getAdminAiTelemetryTrends,
   searchAdminAiTelemetryFailures,
+  sendChatMessage,
 } from "./chat";
 
 const NOW_MS = 1_800_000_000_000;
@@ -374,5 +376,106 @@ describe("admin AI provider health normalization", () => {
     expect(result.items[0].totalTokens).toBe(99);
     expect(result.items[0].attemptCount).toBeNull();
     expect(result.items[0].errorSummary).toBe("456");
+  });
+
+  it("normalizes model catalog providers and flat model responses", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          generated_at: "2026-07-02T00:00:00Z",
+          default_model_id: "deepseek:deepseek-v4-flash",
+          user_selected_chat_model_id: "glm:glm-4.5-air",
+          providers: [
+            {
+              provider: "deepseek",
+              label: "DeepSeek",
+              backend_supported: true,
+              has_credential: "true",
+              models: [
+                {
+                  model_id: "deepseek:deepseek-v4-flash",
+                  display_name: "DeepSeek V4 Flash",
+                  available: true,
+                  is_default: true,
+                  backend_supported: true,
+                  capabilities: ["chat", 123],
+                },
+                {
+                  model_id: "deepseek:embedding",
+                  display_name: "DeepSeek Embedding",
+                  unavailable_reason: "Missing key",
+                  capabilities: { embedding: true, chat: false },
+                },
+              ],
+            },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(
+        mockJsonResponse({
+          models: [
+            {
+              id: "gemini:flash",
+              provider: "gemini",
+              name: "Gemini Flash",
+              available: true,
+            },
+          ],
+        })
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const catalog = await getAiModelCatalog();
+    const flatCatalog = await getAiModelCatalog();
+
+    expect(catalog.defaultModelId).toBe("deepseek:deepseek-v4-flash");
+    expect(catalog.userSelectedModelId).toBe("glm:glm-4.5-air");
+    expect(catalog.providers[0].backendSupported).toBe(true);
+    expect(catalog.providers[0].configured).toBe(true);
+    expect(catalog.providers[0].models[0].name).toBe("DeepSeek V4 Flash");
+    expect(catalog.providers[0].models[0].capabilities).toEqual(["chat", "123"]);
+    expect(catalog.providers[0].models[1].available).toBe(false);
+    expect(catalog.providers[0].models[1].unavailableReason).toBe("Missing key");
+    expect(catalog.providers[0].models[1].capabilities).toEqual(["embedding"]);
+    expect(flatCatalog.providers[0].provider).toBe("gemini");
+    expect(flatCatalog.providers[0].models[0].modelId).toBe("gemini:flash");
+  });
+
+  it("sends optional model_id with chat messages", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({
+        success: true,
+        data: {
+          session_uuid: "session-1",
+          user_message_id: 1,
+          assistant_message_id: 2,
+          reply: "Hello",
+        },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await sendChatMessage({
+      courseUuid: "course-1",
+      moduleUuid: "module-1",
+      message: "Hi",
+      modelId: "deepseek:deepseek-v4-flash",
+    });
+
+    expect(result.reply).toBe("Hello");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/ai/chat",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          session_uuid: null,
+          course_uuid: "course-1",
+          module_uuid: "module-1",
+          message: "Hi",
+          model_id: "deepseek:deepseek-v4-flash",
+        }),
+      })
+    );
   });
 });

@@ -7,9 +7,13 @@ from uuid import uuid4
 
 from google import genai
 from google.genai import types
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.ai_prompt_logs import AIPromptStatus
+from app.services.providers.credentials import ProviderCredentialService, redact_secret_text
+from app.services.providers.model_service import AIModelCatalogService
+from app.services.providers.types import ProviderConfigurationError
 from app.services.indexing.langchain_embedding_service import LangChainEmbeddingService
 from app.services.provider_error_messages import (
     AI_EMBEDDING_PROVIDER_UNAVAILABLE,
@@ -42,13 +46,18 @@ class TokenCountResult:
 
 
 class EmbeddingService:
-    def __init__(self) -> None:
+    def __init__(self, session: Session | None = None) -> None:
         if settings.ai_embedding_provider.strip().lower() != "gemini":
             raise invalid_request_error(AI_EMBEDDING_PROVIDER_UNSUPPORTED)
-        if not settings.gemini_api_key:
+        if session is None:
             raise invalid_request_error(AI_EMBEDDING_PROVIDER_UNAVAILABLE)
-        self.client = genai.Client(api_key=settings.gemini_api_key)
-        self.langchain_embeddings = LangChainEmbeddingService()
+        AIModelCatalogService(session).ensure_seeded()
+        try:
+            credentials = ProviderCredentialService(session).get_credentials_for_provider("gemini")
+        except ProviderConfigurationError as exc:
+            raise invalid_request_error(AI_EMBEDDING_PROVIDER_UNAVAILABLE) from exc
+        self.client = genai.Client(api_key=credentials.api_key)
+        self.langchain_embeddings = LangChainEmbeddingService(credentials.api_key)
 
     def count_document_tokens(self, *, text: str) -> TokenCountResult:
         normalized_text = text.strip()
@@ -77,7 +86,7 @@ class EmbeddingService:
         except Exception as exc:
             response_json = {
                 "provider_count_tokens_supported": False,
-                "provider_error": f"{type(exc).__name__}: {exc}",
+                "provider_error": redact_secret_text(f"{type(exc).__name__}: {exc}"),
             }
 
         return TokenCountResult(

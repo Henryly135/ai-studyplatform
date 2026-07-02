@@ -853,7 +853,7 @@ def test_demo_chat_rejects_blank_message() -> None:
         (demo_api.AIChatConfigurationError("GEMINI_API_KEY is not configured"), 503, "AI provider is temporarily unavailable."),
         (demo_api.AIChatQuotaError("quota api_key=abc123"), 429, "AI provider quota is temporarily unavailable. Please retry later."),
         (demo_api.AIChatSessionError("bad session private detail"), 400, "Chat session is invalid."),
-        (RuntimeError("boom"), 500, "Gemini API call failed."),
+        (RuntimeError("boom"), 500, "AI provider call failed."),
     ],
 )
 def test_demo_chat_maps_service_errors_to_http(monkeypatch, exc, status_code, detail) -> None:

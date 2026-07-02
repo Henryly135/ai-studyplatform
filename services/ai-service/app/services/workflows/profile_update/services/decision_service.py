@@ -3,12 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from google import genai
-from google.genai import errors as genai_errors, types
-
-from app.core.config import settings
 from app.core.prompts import get_prompt_template
 from app.services.provider_error_messages import MODULE_PROFILE_UPDATE_UNAVAILABLE
+from app.services.providers.model_service import AIModelInvocationService
+from app.services.providers.types import ProviderConfigurationError, ProviderInvocationError, ProviderQuotaError
 from app.services.workflows.profile_update.schemas import ModuleProfileUpdateCheckDecision
 from platform_common.errors import invalid_request_error
 
@@ -22,39 +20,19 @@ class ModuleProfileUpdateDecisionService:
         context: dict[str, Any],
         validation_feedback: list[str],
     ) -> ModuleProfileUpdateCheckDecision:
-        if not settings.gemini_api_key:
-            raise invalid_request_error(MODULE_PROFILE_UPDATE_UNAVAILABLE)
-
         prompt_template = get_prompt_template(self.PROMPT_TEMPLATE_NAME)
         prompt = self._build_prompt(context=context, validation_feedback=validation_feedback)
-        client = genai.Client(api_key=settings.gemini_api_key)
         try:
-            response = client.models.generate_content(
-                model=settings.ai_demo_model_name,
-                config=types.GenerateContentConfig(
-                    system_instruction=prompt_template.system_instruction,
-                    temperature=0.2,
-                    max_output_tokens=1200,
-                    response_mime_type="application/json",
-                ),
-                contents=prompt,
+            decision = AIModelInvocationService().generate_json(
+                prompt=prompt,
+                system_instruction=prompt_template.system_instruction,
+                temperature=0.2,
+                max_output_tokens=1200,
+                validator=ModuleProfileUpdateCheckDecision.model_validate,
             )
-        except genai_errors.ClientError as exc:
+        except (ProviderQuotaError, ProviderConfigurationError, ProviderInvocationError) as exc:
             raise invalid_request_error(MODULE_PROFILE_UPDATE_UNAVAILABLE) from exc
 
-        content = (response.text or "").strip()
-        if not content:
-            raise invalid_request_error("Module profile update check returned empty content")
-
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise invalid_request_error("Module profile update check returned invalid JSON") from exc
-
-        if not isinstance(parsed, dict):
-            raise invalid_request_error("Module profile update check returned an unexpected payload")
-
-        decision = ModuleProfileUpdateCheckDecision.model_validate(parsed)
         if not decision.should_update:
             return ModuleProfileUpdateCheckDecision(
                 should_update=False,

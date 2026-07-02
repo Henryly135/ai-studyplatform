@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.api.admin_telemetry import router as admin_telemetry_router
+from app.api.admin_ai_models import router as admin_ai_models_router
+from app.api.ai_models import router as ai_models_router
 from app.api.chat import router as chat_router
 from app.api.demo import router as demo_router
 from app.api.internal_index_jobs import router as internal_index_jobs_router
@@ -35,6 +37,8 @@ app.add_middleware(
 )
 
 app.include_router(demo_router)
+app.include_router(ai_models_router)
+app.include_router(admin_ai_models_router)
 app.include_router(admin_telemetry_router)
 app.include_router(chat_router)
 app.include_router(profiles_router)

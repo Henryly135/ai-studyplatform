@@ -3,12 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from google import genai
-from google.genai import errors as genai_errors, types
-
-from app.core.config import settings
 from app.core.prompts import get_prompt_template
 from app.services.provider_error_messages import GLOBAL_PROFILE_GENERATION_UNAVAILABLE
+from app.services.providers.model_service import AIModelInvocationService
+from app.services.providers.types import ProviderConfigurationError, ProviderInvocationError, ProviderQuotaError
 from platform_common.errors import invalid_request_error
 
 _REQUIRED_SECTIONS = (
@@ -112,30 +110,23 @@ class GlobalProfileGenerationService:
         default_template: str,
         validation_issues: list[str],
     ) -> str:
-        if not settings.gemini_api_key:
-            raise invalid_request_error(GLOBAL_PROFILE_GENERATION_UNAVAILABLE)
-
         prompt = self._build_user_prompt(
             preferences=preferences,
             default_template=default_template,
             validation_issues=validation_issues,
         )
-        client = genai.Client(api_key=settings.gemini_api_key)
         try:
             prompt_template = get_prompt_template(self.PROMPT_TEMPLATE_NAME)
-            response = client.models.generate_content(
-                model=settings.ai_demo_model_name,
-                config=types.GenerateContentConfig(
-                    system_instruction=prompt_template.system_instruction,
-                    temperature=0.2,
-                    max_output_tokens=800,
-                ),
-                contents=prompt,
+            response = AIModelInvocationService().generate_text(
+                prompt=prompt,
+                system_instruction=prompt_template.system_instruction,
+                temperature=0.2,
+                max_output_tokens=800,
             )
-        except genai_errors.ClientError as exc:
+        except (ProviderQuotaError, ProviderConfigurationError, ProviderInvocationError) as exc:
             raise invalid_request_error(GLOBAL_PROFILE_GENERATION_UNAVAILABLE) from exc
 
-        content = (response.text or "").strip()
+        content = response.text.strip()
         if not content:
             raise invalid_request_error("Global profile generation returned empty content")
         return content

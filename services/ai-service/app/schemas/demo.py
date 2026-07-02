@@ -7,6 +7,7 @@ class ChatServiceRequest(BaseModel):
     course_id: int | None = Field(default=None, ge=1)
     module_id: int | None = Field(default=None, ge=1)
     message: str = Field(..., min_length=1, max_length=4000)
+    model_id: str | None = Field(default=None, max_length=120)
 
 
 class ChatRequest(BaseModel):
@@ -14,6 +15,7 @@ class ChatRequest(BaseModel):
     course_uuid: str | None = None
     module_uuid: str | None = None
     message: str = Field(..., min_length=1, max_length=4000)
+    model_id: str | None = Field(default=None, max_length=120)
 
 
 class ChatResponse(BaseModel):
@@ -22,6 +24,9 @@ class ChatResponse(BaseModel):
     assistant_message_id: int
     reply: str
     sources: list[dict[str, object]] = Field(default_factory=list)
+    model_id: str | None = None
+    model_name: str | None = None
+    provider: str | None = None
 
 
 class APIErrorDetail(BaseModel):
