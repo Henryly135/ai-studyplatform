@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -26,12 +26,26 @@ from app.repositories.module_material_upload_session_repository import ModuleMat
 from app.repositories.module_repository import ModuleRepository
 from app.services.ai_index_job_client import AIIndexJobClient
 from app.services.storage_service import StorageService, StoredFile
+from app.services.upload_scan_service import UploadScanFailure, UploadScanResult, UploadScanService
 from platform_common.errors import http_error, invalid_identity_response_error, invalid_request_error
 
 _MATERIAL_TYPE_BY_CONTENT_TYPE = {
+    "text/plain": MaterialType.TEXT,
+    "text/markdown": MaterialType.TEXT,
+    "text/csv": MaterialType.TEXT,
+    "application/json": MaterialType.TEXT,
     "application/pdf": MaterialType.PDF,
+    "application/msword": MaterialType.FILE,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": MaterialType.FILE,
+    "application/vnd.ms-powerpoint": MaterialType.FILE,
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": MaterialType.FILE,
+    "application/vnd.ms-excel": MaterialType.FILE,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": MaterialType.FILE,
+    "application/zip": MaterialType.FILE,
+    "application/x-zip-compressed": MaterialType.FILE,
 }
 _VIDEO_PREFIX = "video/"
+_ALLOWED_MATERIAL_TYPE_PREFIXES = ("video/", "audio/", "image/")
 
 
 class ModuleMaterialService:
@@ -44,6 +58,7 @@ class ModuleMaterialService:
         self.upload_sessions = ModuleMaterialUploadSessionRepository(session)
         self.ai_index_jobs = AIIndexJobClient()
         self.storage = StorageService()
+        self.upload_scanner = UploadScanService()
 
     def delete_material(
         self,
@@ -92,14 +107,20 @@ class ModuleMaterialService:
         module = self._get_manageable_module(course=course, module_uuid=module_uuid)
 
         normalized_title = self._normalize_title(title=title, upload=file)
+        self._validate_upload_file(file)
+        scan_result = self._scan_upload_file(file)
         parsed_material_type = self._parse_material_type(material_type=material_type, upload=file)
         target_sort_order = self._resolve_target_sort_order(module.module_id, requested_sort_order=sort_order)
 
-        stored_file = self.storage.store_module_material(
-            course_uuid=encode_course_uuid(course.course_id),
-            module_uuid=encode_module_uuid(module.module_id),
-            upload=file,
-        )
+        stored_file: StoredFile | None = None
+        try:
+            stored_file = self.storage.store_module_material(
+                course_uuid=encode_course_uuid(course.course_id),
+                module_uuid=encode_module_uuid(module.module_id),
+                upload=file,
+            )
+        except ValueError as exc:
+            raise invalid_request_error(str(exc)) from exc
 
         metadata = {
             "storageProvider": stored_file.provider,
@@ -109,6 +130,7 @@ class ModuleMaterialService:
             "storedRelativePath": stored_file.object_key,
             "contentType": stored_file.content_type,
             "sizeBytes": stored_file.size_bytes,
+            "securityScan": scan_result.as_metadata(),
         }
         try:
             material = self.materials.create(
@@ -130,6 +152,7 @@ class ModuleMaterialService:
             self.session.refresh(material)
         except Exception:
             self.session.rollback()
+            self._delete_stored_file_quietly(stored_file)
             raise
 
         return material
@@ -151,6 +174,7 @@ class ModuleMaterialService:
         actor_id = self._get_actor_id(current_user)
         course = self._get_manageable_course(course_uuid=course_uuid, current_user=current_user)
         module = self._get_manageable_module(course=course, module_uuid=module_uuid)
+        self._validate_multipart_upload_request(filename=file_name, content_type=content_type, size_bytes=size_bytes)
 
         normalized_title = self._normalize_title_from_filename(title=title, filename=file_name)
         parsed_material_type = self._parse_material_type_from_name(
@@ -246,6 +270,7 @@ class ModuleMaterialService:
         )
         self._validate_completed_parts(completed_parts)
 
+        stored_file: StoredFile | None = None
         try:
             stored_file = self.storage.complete_multipart_material_upload(
                 bucket=upload_session.bucket,
@@ -255,13 +280,14 @@ class ModuleMaterialService:
                 content_type=upload_session.content_type,
                 size_bytes=upload_session.size_bytes,
             )
+            scan_result = self._scan_stored_file(stored_file)
             material = self.materials.create(
                 module_id=module.module_id,
                 title=upload_session.title,
                 material_type=upload_session.material_type,
                 resource_url=stored_file.public_url,
                 sort_order=upload_session.sort_order,
-                metadata_json=self._build_material_metadata_from_session(upload_session, stored_file),
+                metadata_json=self._build_material_metadata_from_session(upload_session, stored_file, scan_result),
             )
             self._register_ai_index_job(
                 course=course,
@@ -285,6 +311,7 @@ class ModuleMaterialService:
             return material
         except Exception as exc:
             self.session.rollback()
+            self._delete_stored_file_quietly(stored_file)
             stored_session = self.upload_sessions.get_by_session_uuid(upload_session_uuid)
             if stored_session is not None:
                 self.upload_sessions.update(
@@ -391,6 +418,69 @@ class ModuleMaterialService:
         if fallback:
             return fallback
         raise invalid_request_error("Material title is required")
+
+    def _validate_upload_file(self, upload: UploadFile) -> None:
+        self._validate_material_content_type(filename=upload.filename or "", content_type=upload.content_type)
+        size_bytes = self._get_upload_size(upload)
+        if size_bytes is not None and size_bytes > settings.max_material_upload_bytes:
+            raise invalid_request_error(
+                f"File is too large for standard upload. Maximum is {settings.max_material_upload_bytes} bytes; use multipart upload for larger files."
+            )
+
+    def _validate_multipart_upload_request(self, *, filename: str, content_type: str | None, size_bytes: int) -> None:
+        self._validate_material_content_type(filename=filename, content_type=content_type)
+        if size_bytes > settings.max_multipart_material_upload_bytes:
+            raise invalid_request_error(
+                f"File is too large. Maximum multipart material upload size is {settings.max_multipart_material_upload_bytes} bytes."
+            )
+
+    def _validate_material_content_type(self, *, filename: str, content_type: str | None) -> None:
+        normalized_content_type = (content_type or "").strip().lower()
+        if normalized_content_type in _MATERIAL_TYPE_BY_CONTENT_TYPE:
+            return
+        if normalized_content_type.startswith(_ALLOWED_MATERIAL_TYPE_PREFIXES):
+            return
+        if not normalized_content_type and Path(filename or "").suffix.lower() in {".txt", ".md", ".csv", ".pdf"}:
+            return
+        raise invalid_request_error("Unsupported material file type")
+
+    def _scan_upload_file(self, upload: UploadFile) -> UploadScanResult:
+        try:
+            return self.upload_scanner.scan_upload(upload, label=Path(upload.filename or "material").name)
+        except UploadScanFailure as exc:
+            raise invalid_request_error(str(exc)) from exc
+
+    def _scan_stored_file(self, stored_file: StoredFile) -> UploadScanResult:
+        try:
+            return self.storage.scan_stored_file(stored_file=stored_file, scanner=self.upload_scanner)
+        except UploadScanFailure as exc:
+            raise invalid_request_error(str(exc)) from exc
+
+    def _delete_stored_file_quietly(self, stored_file: StoredFile | None) -> None:
+        if stored_file is None:
+            return
+        try:
+            self.storage.delete_module_material(
+                storage_provider=stored_file.provider,
+                bucket=stored_file.bucket,
+                object_key=stored_file.object_key,
+            )
+        except Exception:
+            pass
+
+    def _get_upload_size(self, upload: UploadFile) -> int | None:
+        size = getattr(upload, "size", None)
+        if isinstance(size, int) and size >= 0:
+            return size
+
+        try:
+            current_position = upload.file.tell()
+            upload.file.seek(0, 2)
+            size_bytes = upload.file.tell()
+            upload.file.seek(current_position)
+            return size_bytes
+        except (AttributeError, OSError):
+            return None
 
     def _parse_material_type(self, *, material_type: str | None, upload: UploadFile) -> MaterialType:
         normalized = (material_type or "").strip().lower()
@@ -536,7 +626,7 @@ class ModuleMaterialService:
         return reference_time <= self._utcnow() - timedelta(seconds=settings.multipart_upload_session_ttl_seconds)
 
     def _utcnow(self) -> datetime:
-        return datetime.utcnow()
+        return datetime.now(timezone.utc).replace(tzinfo=None)
 
     def _validate_completed_parts(self, completed_parts: list[tuple[int, str]]) -> None:
         if not completed_parts:
@@ -556,6 +646,7 @@ class ModuleMaterialService:
         self,
         upload_session: ModuleMaterialUploadSession,
         stored_file: StoredFile,
+        scan_result: UploadScanResult,
     ) -> dict:
         return {
             "storageProvider": stored_file.provider,
@@ -567,6 +658,7 @@ class ModuleMaterialService:
             "sizeBytes": stored_file.size_bytes,
             "uploadSessionUuid": upload_session.session_uuid,
             "multipartUploadId": upload_session.multipart_upload_id,
+            "securityScan": scan_result.as_metadata(),
         }
 
     def _read_material_storage_provider(self, *, metadata: dict[str, object]) -> str | None:

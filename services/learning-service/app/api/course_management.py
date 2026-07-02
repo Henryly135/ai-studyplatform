@@ -10,6 +10,7 @@ from app.schemas.course import (
     CoursePublishRequest,
     CourseUpdateRequest,
     EducatorAnalyticsResponse,
+    EducatorMaterialBriefsResponse,
     EducatorQuizAnalyticsResponse,
     EducatorTeachingInsightsResponse,
     PaginatedCourseSummaryResponse,
@@ -173,7 +174,7 @@ def get_my_quiz_analytics(
 @router.get(
     "/me/analytics/teaching-insights",
     summary="Get My Teaching Insights [Educator]",
-    description="Returns module bottlenecks, at-risk learners, completion trends, and assessment signals for courses owned by the current educator.",
+    description="Returns aggregate teaching recommendations derived from the educator's course progress and quiz analytics.",
     response_model=EducatorTeachingInsightsResponse,
     response_model_exclude_none=True,
 )
@@ -182,6 +183,19 @@ def get_my_teaching_insights(
     session: Session = Depends(get_db_session),
 ) -> EducatorTeachingInsightsResponse:
     return CourseManagementService(session).get_educator_teaching_insights(current_user=current_user)
+
+
+@router.get(
+    "/me/analytics/material-briefs",
+    summary="Get Educator Material Briefs [Educator]",
+    description="Returns module-level material coverage summaries and difficulty signals for the current educator without returning material URLs or source text.",
+    response_model=EducatorMaterialBriefsResponse,
+)
+def get_my_material_briefs(
+    current_user: dict = Depends(require_identity_permission(COURSE_CREATE)),
+    session: Session = Depends(get_db_session),
+) -> EducatorMaterialBriefsResponse:
+    return CourseManagementService(session).get_educator_material_briefs(current_user=current_user)
 
 
 @router.get(

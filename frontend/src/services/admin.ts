@@ -1,4 +1,4 @@
-import type { ApiErrorResponse } from "../types/auth";
+import type { ApiErrorResponse, Identity } from "../types/auth";
 import type {
   AdminUpdateUserIdentityRequest,
   AdminUpdateUserStatusRequest,
@@ -7,9 +7,12 @@ import type {
   EducatorApprovalHistoryStatus,
   EducatorApprovalListResponse,
   EducatorApprovalResponse,
+  EducatorApprovalStatus,
   EducatorInviteTokenGenerateResponse,
   EducatorInviteTokenListResponse,
+  EducatorInviteTokenResponse,
   ReviewEducatorApprovalRequest,
+  SendEducatorInviteEmailResponse,
   SendEducatorInviteEmailRequest,
 } from "../types/admin";
 import {
@@ -34,6 +37,181 @@ function getErrorMessage(data: ApiErrorResponse | null, fallback: string) {
   return data.detail || fallback;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function getField(data: Record<string, unknown>, camelKey: string, snakeKey?: string) {
+  return data[camelKey] ?? (snakeKey ? data[snakeKey] : undefined);
+}
+
+function toNonNegativeNumber(value: unknown, fallback = 0) {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : fallback;
+
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
+}
+
+function toNullableNonNegativeNumber(value: unknown) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function toBoolean(value: unknown, fallback = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
+function toNullableString(value: unknown) {
+  return value === null || value === undefined ? null : String(value);
+}
+
+function toStringList(value: unknown) {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
+function normalizeIdentity(value: unknown): Identity {
+  return value === "Admin" || value === "Educator" || value === "Learner" ? value : "Learner";
+}
+
+function normalizeApprovalStatus(value: unknown): EducatorApprovalStatus {
+  return value === "approved" || value === "rejected" || value === "pending" ? value : "pending";
+}
+
+function normalizeAdminUser(payload: unknown): AdminUserResponse {
+  const data = asRecord(payload);
+
+  return {
+    id: toNonNegativeNumber(data.id),
+    userUuid: String(getField(data, "userUuid", "user_uuid") ?? ""),
+    email: String(data.email ?? ""),
+    userName: String(getField(data, "userName", "user_name") ?? ""),
+    identity: normalizeIdentity(data.identity),
+    roleCodes: toStringList(getField(data, "roleCodes", "role_codes")),
+    emailVerified: toBoolean(getField(data, "emailVerified", "email_verified")),
+    accountStatus: String(getField(data, "accountStatus", "account_status") ?? "deactivated"),
+    createdAt: String(getField(data, "createdAt", "created_at") ?? ""),
+    updatedAt: String(getField(data, "updatedAt", "updated_at") ?? ""),
+    lastLoginAt: toNullableString(getField(data, "lastLoginAt", "last_login_at")),
+  };
+}
+
+function normalizeAdminUserList(payload: unknown): AdminUserListResponse {
+  const data = asRecord(payload);
+  const users = Array.isArray(data.users) ? data.users.filter(isRecord).map(normalizeAdminUser) : [];
+
+  return { users };
+}
+
+function normalizeEducatorApproval(payload: unknown): EducatorApprovalResponse {
+  const data = asRecord(payload);
+
+  return {
+    requestUuid: String(getField(data, "requestUuid", "request_uuid") ?? ""),
+    requestStatus: normalizeApprovalStatus(getField(data, "requestStatus", "request_status")),
+    submittedAt: String(getField(data, "submittedAt", "submitted_at") ?? ""),
+    updatedAt: String(getField(data, "updatedAt", "updated_at") ?? ""),
+    reviewedAt: toNullableString(getField(data, "reviewedAt", "reviewed_at")),
+    reviewComment: toNullableString(getField(data, "reviewComment", "review_comment")),
+    supportingInfo: toNullableString(getField(data, "supportingInfo", "supporting_info")),
+    supportingFileUrl: toNullableString(getField(data, "supportingFileUrl", "supporting_file_url")),
+    userId: toNonNegativeNumber(getField(data, "userId", "user_id")),
+    userUuid: String(getField(data, "userUuid", "user_uuid") ?? ""),
+    email: String(data.email ?? ""),
+    userName: String(getField(data, "userName", "user_name") ?? ""),
+    identity: normalizeIdentity(data.identity),
+    accountStatus: String(getField(data, "accountStatus", "account_status") ?? "deactivated"),
+    emailVerified: toBoolean(getField(data, "emailVerified", "email_verified")),
+    reviewerUserId: toNullableNonNegativeNumber(getField(data, "reviewerUserId", "reviewer_user_id")),
+    reviewerUserUuid: toNullableString(getField(data, "reviewerUserUuid", "reviewer_user_uuid")),
+    reviewerEmail: toNullableString(getField(data, "reviewerEmail", "reviewer_email")),
+    reviewerName: toNullableString(getField(data, "reviewerName", "reviewer_name")),
+  };
+}
+
+function normalizeEducatorApprovalList(payload: unknown): EducatorApprovalListResponse {
+  const data = asRecord(payload);
+  const requests = Array.isArray(data.requests)
+    ? data.requests.filter(isRecord).map(normalizeEducatorApproval)
+    : [];
+
+  return { requests };
+}
+
+function normalizeInviteToken(payload: unknown): EducatorInviteTokenResponse {
+  const data = asRecord(payload);
+
+  return {
+    inviteUuid: String(getField(data, "inviteUuid", "invite_uuid") ?? ""),
+    createdAt: String(getField(data, "createdAt", "created_at") ?? ""),
+    expiresAt: String(getField(data, "expiresAt", "expires_at") ?? ""),
+    usedAt: toNullableString(getField(data, "usedAt", "used_at")),
+    isUsed: toBoolean(getField(data, "isUsed", "is_used")),
+  };
+}
+
+function normalizeGeneratedInviteToken(payload: unknown): EducatorInviteTokenGenerateResponse {
+  const data = asRecord(payload);
+
+  return {
+    inviteUuid: String(getField(data, "inviteUuid", "invite_uuid") ?? ""),
+    rawToken: String(getField(data, "rawToken", "raw_token") ?? ""),
+    expiresAt: String(getField(data, "expiresAt", "expires_at") ?? ""),
+    inviteUrl: String(getField(data, "inviteUrl", "invite_url") ?? ""),
+  };
+}
+
+function normalizeInviteTokenList(payload: unknown): EducatorInviteTokenListResponse {
+  const data = asRecord(payload);
+  const tokens = Array.isArray(data.tokens) ? data.tokens.filter(isRecord).map(normalizeInviteToken) : [];
+
+  return { tokens };
+}
+
+function normalizeSendInviteEmailResponse(payload: unknown): SendEducatorInviteEmailResponse {
+  const data = asRecord(payload);
+  const delivery = asRecord(getField(data, "emailDelivery", "email_delivery"));
+
+  return {
+    detail: String(data.detail ?? ""),
+    emailDelivery: {
+      attempted: toBoolean(data.attempted ?? delivery.attempted),
+      delivered: toBoolean(data.delivered ?? delivery.delivered),
+      reason: toNullableString(delivery.reason ?? data.reason),
+    },
+  };
+}
+
 export async function getAdminUsers(
   accessToken: string
 ): Promise<AdminUserListResponse> {
@@ -50,10 +228,10 @@ export async function getAdminUsers(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to fetch users."));
+    throw new Error(getErrorMessage(data, "获取用户失败。"));
   }
 
-  return data as AdminUserListResponse;
+  return normalizeAdminUserList(data);
 }
 
 export async function updateAdminUserIdentity(
@@ -75,10 +253,10 @@ export async function updateAdminUserIdentity(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to update user identity."));
+    throw new Error(getErrorMessage(data, "更新用户身份失败。"));
   }
 
-  return data as AdminUserResponse;
+  return normalizeAdminUser(data);
 }
 
 export async function updateAdminUserStatus(
@@ -100,10 +278,10 @@ export async function updateAdminUserStatus(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to update user status."));
+    throw new Error(getErrorMessage(data, "更新用户状态失败。"));
   }
 
-  return data as AdminUserResponse;
+  return normalizeAdminUser(data);
 }
 
 export async function getPendingEducatorApprovals(
@@ -122,10 +300,10 @@ export async function getPendingEducatorApprovals(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to fetch pending educator requests."));
+    throw new Error(getErrorMessage(data, "获取待处理教师申请失败。"));
   }
 
-  return data as EducatorApprovalListResponse;
+  return normalizeEducatorApprovalList(data);
 }
 
 export async function getReviewedEducatorApprovals(
@@ -148,10 +326,10 @@ export async function getReviewedEducatorApprovals(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to fetch reviewed educator requests."));
+    throw new Error(getErrorMessage(data, "获取已审核教师申请失败。"));
   }
 
-  return data as EducatorApprovalListResponse;
+  return normalizeEducatorApprovalList(data);
 }
 
 export async function getEducatorApprovalDetail(
@@ -171,10 +349,10 @@ export async function getEducatorApprovalDetail(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to fetch educator request details."));
+    throw new Error(getErrorMessage(data, "获取教师申请详情失败。"));
   }
 
-  return data as EducatorApprovalResponse;
+  return normalizeEducatorApproval(data);
 }
 
 export async function reviewEducatorApproval(
@@ -196,10 +374,10 @@ export async function reviewEducatorApproval(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to review educator request."));
+    throw new Error(getErrorMessage(data, "审核教师申请失败。"));
   }
 
-  return data as EducatorApprovalResponse;
+  return normalizeEducatorApproval(data);
 }
 
 export async function generateEducatorInviteToken(
@@ -218,17 +396,17 @@ export async function generateEducatorInviteToken(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to generate educator invite link."));
+    throw new Error(getErrorMessage(data, "生成教师邀请链接失败。"));
   }
 
-  return data as EducatorInviteTokenGenerateResponse;
+  return normalizeGeneratedInviteToken(data);
 }
 
 export async function sendEducatorInviteEmail(
   accessToken: string,
   inviteUuid: string,
   payload: SendEducatorInviteEmailRequest
-): Promise<{ detail: string }> {
+): Promise<SendEducatorInviteEmailResponse> {
   void accessToken;
 
   const response = await fetch(`${API_BASE_URL}/admin/educator-invite-tokens/${inviteUuid}/send-email`, {
@@ -243,10 +421,10 @@ export async function sendEducatorInviteEmail(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to send invite email."));
+    throw new Error(getErrorMessage(data, "发送邀请邮件失败。"));
   }
 
-  return data as { detail: string };
+  return normalizeSendInviteEmailResponse(data);
 }
 
 export async function listEducatorInviteTokens(
@@ -265,8 +443,8 @@ export async function listEducatorInviteTokens(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "Failed to fetch invite tokens."));
+    throw new Error(getErrorMessage(data, "获取邀请令牌失败。"));
   }
 
-  return data as EducatorInviteTokenListResponse;
+  return normalizeInviteTokenList(data);
 }

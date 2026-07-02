@@ -13,6 +13,23 @@ const STATUS_OPTIONS: UserAccountStatus[] = [
   "deactivated",
 ];
 
+function formatIdentityLabel(identity: UserRole) {
+  switch (identity) {
+    case "Educator":
+      return "教师";
+    case "Learner":
+      return "学生";
+    case "Admin":
+      return "管理员";
+    default:
+      return identity;
+  }
+}
+
+function formatAccountStatusLabel(status: UserAccountStatus) {
+  return status === "active" ? "启用" : "停用";
+}
+
 function UserManagementTable({
   users,
   updatingUserUuid,
@@ -24,10 +41,10 @@ function UserManagementTable({
       <table className="user-management-table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Identity</th>
-            <th>Status</th>
+            <th>姓名</th>
+            <th>邮箱</th>
+            <th>身份</th>
+            <th>状态</th>
           </tr>
         </thead>
         <tbody>
@@ -47,7 +64,7 @@ function UserManagementTable({
                   >
                     {IDENTITY_OPTIONS.map((identity) => (
                       <option key={identity} value={identity}>
-                        {identity}
+                        {formatIdentityLabel(identity)}
                       </option>
                     ))}
                   </select>
@@ -66,7 +83,7 @@ function UserManagementTable({
                   >
                     {STATUS_OPTIONS.map((status) => (
                       <option key={status} value={status}>
-                        {status}
+                        {formatAccountStatusLabel(status)}
                       </option>
                     ))}
                   </select>
@@ -75,8 +92,7 @@ function UserManagementTable({
             ))
           ) : (
             <tr>
-              <td colSpan={4} className="empty-state">
-                No users found.
+              <td colSpan={4} className="empty-state">未找到用户。
               </td>
             </tr>
           )}

@@ -10,7 +10,7 @@ on:
       project_dir:
         description: "Project directory on remote host"
         required: true
-        default: "~/ai-studyplatform"
+        default: "~/capstone-project-26t1-9900-f14a-cake"
 
 permissions:
   contents: read

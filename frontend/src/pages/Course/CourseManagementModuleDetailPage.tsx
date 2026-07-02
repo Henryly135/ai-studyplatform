@@ -9,7 +9,7 @@ import {
   FaCheckCircle,
   FaClipboardList,
 } from "react-icons/fa";
-import { LuTrash2 } from "react-icons/lu";
+import { LuTrash2, LuX } from "react-icons/lu";
 
 import {
   abortMultipartManagedModuleMaterialUpload,
@@ -17,19 +17,16 @@ import {
   completeMultipartManagedModuleMaterialUpload,
   deleteManagedModule,
   deleteManagedModuleMaterial,
-  generateEducatorContentDraft,
   getMultipartManagedModuleMaterialPartUploadUrl,
   initMultipartManagedModuleMaterialUpload,
-  listEducatorContentDrafts,
   publishManagedModule,
   updateManagedModule,
-  updateEducatorContentDraft,
   uploadManagedModuleMaterial,
   getQuizAuthoring,
   setModulePrerequisite,
   removeModulePrerequisite,
 } from "../../services/course";
-import type { EducatorContentDraftGrounding, EducatorContentDraftRecord, EducatorContentDraftType, QuizRecord } from "../../types/course";
+import type { QuizRecord } from "../../types/course";
 import { emitAppRefresh } from "../../utils/refreshEvents";
 import type { CourseManagementOutletContext } from "./CourseManagementLayout";
 
@@ -43,14 +40,14 @@ function getInitialEstimatedMinutes(durationLabel: string) {
 
 function formatModuleStatusLabel(status: "available" | "locked" | "draft") {
   if (status === "available") {
-    return "Published";
+    return "已发布";
   }
 
   if (status === "locked") {
-    return "Archived";
+    return "已归档";
   }
 
-  return "Draft";
+  return "草稿";
 }
 
 function getModuleStatusPillClassName(status: "available" | "locked" | "draft") {
@@ -174,66 +171,6 @@ function inferMaterialType(file: File) {
   return extension;
 }
 
-const CONTENT_DRAFT_TYPE_OPTIONS: Array<{ value: EducatorContentDraftType; label: string }> = [
-  { value: "summary", label: "Summary" },
-  { value: "learning_objectives", label: "Learning objectives" },
-  { value: "activity_suggestions", label: "Activity suggestions" },
-  { value: "differentiated_explanation", label: "Differentiated explanation" },
-  { value: "slide_outline", label: "Slide outline" },
-];
-
-function formatContentDraftType(value: EducatorContentDraftType) {
-  return CONTENT_DRAFT_TYPE_OPTIONS.find((option) => option.value === value)?.label ?? value;
-}
-
-function contentDraftStructuredText(draft: EducatorContentDraftRecord) {
-  const editableMarkdown = draft.structuredContent.editableMarkdown;
-  if (typeof editableMarkdown === "string" && editableMarkdown.trim()) {
-    return editableMarkdown;
-  }
-  return JSON.stringify(draft.structuredContent, null, 2);
-}
-
-function contentDraftGroundingText(draft: EducatorContentDraftRecord) {
-  return JSON.stringify(draft.grounding, null, 2);
-}
-
-function parseStructuredContentInput(value: string): Record<string, unknown> {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("Structured content is required.");
-  }
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    return { editableMarkdown: trimmed };
-  }
-  return { editableMarkdown: trimmed };
-}
-
-function parseGroundingInput(value: string): EducatorContentDraftGrounding[] {
-  const parsed = JSON.parse(value.trim());
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new Error("Source grounding must be a non-empty JSON array.");
-  }
-  return parsed.map((item) => {
-    const row = (item ?? {}) as Record<string, unknown>;
-    const grounding = {
-      sourceTitle: String(row.sourceTitle ?? "").trim(),
-      sourceType: String(row.sourceType ?? "").trim(),
-      reference: String(row.reference ?? "").trim(),
-      rationale: String(row.rationale ?? "").trim(),
-    };
-    if (!grounding.sourceTitle || !grounding.sourceType || !grounding.reference || !grounding.rationale) {
-      throw new Error("Each grounding item needs sourceTitle, sourceType, reference, and rationale.");
-    }
-    return grounding;
-  });
-}
-
 function normalizeMultipartUploadUrl(uploadUrl: string) {
   if (typeof window === "undefined") {
     return uploadUrl;
@@ -307,24 +244,16 @@ function CourseManagementModuleDetailPage() {
   const [isPublishingModule, setIsPublishingModule] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishSuccess, setPublishSuccess] = useState<string | null>(null);
+  const [isModuleDeleteModalOpen, setIsModuleDeleteModalOpen] = useState(false);
   const [isDeletingModule, setIsDeletingModule] = useState(false);
   const [deleteModuleError, setDeleteModuleError] = useState<string | null>(null);
+  const [pendingMaterialDelete, setPendingMaterialDelete] = useState<{
+    materialUuid: string;
+    materialTitle: string;
+  } | null>(null);
   const [deletingMaterialUuid, setDeletingMaterialUuid] = useState<string | null>(null);
   const [deleteMaterialError, setDeleteMaterialError] = useState<string | null>(null);
   const [quiz, setQuiz] = useState<QuizRecord | null | undefined>(undefined); // undefined = loading
-  const [contentDrafts, setContentDrafts] = useState<EducatorContentDraftRecord[]>([]);
-  const [selectedContentDraftUuid, setSelectedContentDraftUuid] = useState("");
-  const [contentDraftType, setContentDraftType] = useState<EducatorContentDraftType>("summary");
-  const [contentDraftTitle, setContentDraftTitle] = useState("");
-  const [contentDraftPrompt, setContentDraftPrompt] = useState("");
-  const [contentDraftMaterialScope, setContentDraftMaterialScope] = useState("");
-  const [contentDraftText, setContentDraftText] = useState("");
-  const [contentDraftGrounding, setContentDraftGrounding] = useState("");
-  const [isLoadingContentDrafts, setIsLoadingContentDrafts] = useState(false);
-  const [isGeneratingContentDraft, setIsGeneratingContentDraft] = useState(false);
-  const [isSavingContentDraft, setIsSavingContentDraft] = useState(false);
-  const [contentDraftError, setContentDraftError] = useState<string | null>(null);
-  const [contentDraftSuccess, setContentDraftSuccess] = useState<string | null>(null);
   const [selectedPrerequisiteUuid, setSelectedPrerequisiteUuid] = useState(module?.prerequisiteModuleUuid ?? "");
   const [isSavingPrerequisite, setIsSavingPrerequisite] = useState(false);
   const [prerequisiteError, setPrerequisiteError] = useState<string | null>(null);
@@ -333,13 +262,31 @@ function CourseManagementModuleDetailPage() {
   const activeCourseUuidRef = useRef(course.courseUuid);
   const activeManagedModuleUuidRef = useRef<string | null>(null);
   const managedModuleUuid = module?.moduleUuid ?? null;
-  const selectedContentDraft = useMemo(
-    () => contentDrafts.find((draft) => draft.draftUuid === selectedContentDraftUuid) ?? null,
-    [contentDrafts, selectedContentDraftUuid]
-  );
 
   activeCourseUuidRef.current = course.courseUuid;
   activeManagedModuleUuidRef.current = managedModuleUuid;
+
+  useEffect(() => {
+    if (!isModuleDeleteModalOpen && !pendingMaterialDelete) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || isDeletingModule || deletingMaterialUuid) {
+        return;
+      }
+
+      setIsModuleDeleteModalOpen(false);
+      setPendingMaterialDelete(null);
+      setDeleteModuleError(null);
+      setDeleteMaterialError(null);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [deletingMaterialUuid, isDeletingModule, isModuleDeleteModalOpen, pendingMaterialDelete]);
 
   const abortActiveUploadSession = useCallback(() => {
     const uploadSessionUuid = activeMultipartUploadSessionRef.current;
@@ -402,43 +349,6 @@ function CourseManagementModuleDetailPage() {
       .catch(() => { if (!cancelled) setQuiz(null); });
     return () => { cancelled = true; };
   }, [course.courseUuid, module]);
-
-  useEffect(() => {
-    if (!module) return;
-    let cancelled = false;
-    setIsLoadingContentDrafts(true);
-    setContentDraftError(null);
-    listEducatorContentDrafts(course.courseUuid, module.moduleUuid)
-      .then((drafts) => {
-        if (cancelled) return;
-        setContentDrafts(drafts);
-        setSelectedContentDraftUuid(drafts[0]?.draftUuid ?? "");
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setContentDraftError(error instanceof Error ? error.message : "Failed to load content drafts.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoadingContentDrafts(false);
-      });
-    return () => { cancelled = true; };
-  }, [course.courseUuid, module]);
-
-  useEffect(() => {
-    if (!selectedContentDraft) {
-      setContentDraftTitle("");
-      setContentDraftText("");
-      setContentDraftGrounding("");
-      return;
-    }
-    setContentDraftType(selectedContentDraft.contentType);
-    setContentDraftTitle(selectedContentDraft.title);
-    setContentDraftPrompt(selectedContentDraft.teacherPrompt ?? "");
-    setContentDraftMaterialScope(selectedContentDraft.materialScope ?? "");
-    setContentDraftText(contentDraftStructuredText(selectedContentDraft));
-    setContentDraftGrounding(contentDraftGroundingText(selectedContentDraft));
-  }, [selectedContentDraft]);
 
   useEffect(() => {
     window.addEventListener("pagehide", abortActiveUploadSession);
@@ -619,11 +529,26 @@ function CourseManagementModuleDetailPage() {
     }
   };
 
+  const openModuleDeleteModal = () => {
+    if (isDeletingModule) {
+      return;
+    }
+
+    setDeleteModuleError(null);
+    setIsModuleDeleteModalOpen(true);
+  };
+
+  const closeModuleDeleteModal = () => {
+    if (isDeletingModule) {
+      return;
+    }
+
+    setIsModuleDeleteModalOpen(false);
+    setDeleteModuleError(null);
+  };
+
   const handleModuleDelete = async () => {
-    const confirmed = window.confirm(
-      `Delete "${module.title}"? This will permanently remove the module and its materials.`
-    );
-    if (!confirmed || isDeletingModule) {
+    if (!isModuleDeleteModalOpen || isDeletingModule) {
       return;
     }
 
@@ -633,6 +558,7 @@ function CourseManagementModuleDetailPage() {
     try {
       await deleteManagedModule(course.courseUuid, module.moduleUuid);
       await refreshCourse();
+      setIsModuleDeleteModalOpen(false);
       navigate(`/course/${course.courseUuid}/management/modules${managementSearchSuffix}`, { replace: true });
     } catch (error) {
       setDeleteModuleError(error instanceof Error ? error.message : "Failed to delete module.");
@@ -641,87 +567,43 @@ function CourseManagementModuleDetailPage() {
     }
   };
 
-  const handleMaterialDelete = async (materialUuid: string, materialTitle: string) => {
-    const confirmed = window.confirm(`Delete "${materialTitle}"? This will remove the material file and record.`);
-    if (!confirmed || deletingMaterialUuid) {
+  const openMaterialDeleteModal = (materialUuid: string, materialTitle: string) => {
+    if (deletingMaterialUuid) {
       return;
     }
 
-    setDeletingMaterialUuid(materialUuid);
+    setDeleteMaterialError(null);
+    setPendingMaterialDelete({ materialUuid, materialTitle });
+  };
+
+  const closeMaterialDeleteModal = () => {
+    if (deletingMaterialUuid) {
+      return;
+    }
+
+    setPendingMaterialDelete(null);
+    setDeleteMaterialError(null);
+  };
+
+  const handleMaterialDelete = async () => {
+    if (!pendingMaterialDelete || deletingMaterialUuid) {
+      return;
+    }
+
+    setDeletingMaterialUuid(pendingMaterialDelete.materialUuid);
     setDeleteMaterialError(null);
 
     try {
-      await deleteManagedModuleMaterial(course.courseUuid, module.moduleUuid, materialUuid);
+      await deleteManagedModuleMaterial(course.courseUuid, module.moduleUuid, pendingMaterialDelete.materialUuid);
       await refreshCourse();
       emitAppRefresh({ scope: "course:materials", courseUuid: course.courseUuid, moduleUuid: module.moduleUuid });
       emitAppRefresh({ scope: "course:detail", courseUuid: course.courseUuid, moduleUuid: module.moduleUuid });
+      setPendingMaterialDelete(null);
     } catch (error) {
       setDeleteMaterialError(error instanceof Error ? error.message : "Failed to delete material.");
     } finally {
       setDeletingMaterialUuid(null);
     }
-  };
-
-  const handleGenerateContentDraft = async () => {
-    setIsGeneratingContentDraft(true);
-    setContentDraftError(null);
-    setContentDraftSuccess(null);
-
-    try {
-      const draft = await generateEducatorContentDraft(course.courseUuid, module.moduleUuid, {
-        contentType: contentDraftType,
-        title: contentDraftTitle,
-        teacherPrompt: contentDraftPrompt,
-        materialScope: contentDraftMaterialScope,
-      });
-      setContentDrafts((drafts) => [draft, ...drafts.filter((item) => item.draftUuid !== draft.draftUuid)]);
-      setSelectedContentDraftUuid(draft.draftUuid);
-      setContentDraftSuccess(draft.isFallback ? "Fallback draft generated and saved." : "AI content draft generated and saved.");
-    } catch (error) {
-      setContentDraftError(error instanceof Error ? error.message : "Failed to generate content draft.");
-    } finally {
-      setIsGeneratingContentDraft(false);
-    }
-  };
-
-  const handleSaveContentDraft = async () => {
-    if (!selectedContentDraft) {
-      setContentDraftError("Generate or select a content draft first.");
-      return;
-    }
-    setIsSavingContentDraft(true);
-    setContentDraftError(null);
-    setContentDraftSuccess(null);
-
-    try {
-      const saved = await updateEducatorContentDraft(
-        course.courseUuid,
-        module.moduleUuid,
-        selectedContentDraft.draftUuid,
-        {
-          title: contentDraftTitle,
-          structuredContent: parseStructuredContentInput(contentDraftText),
-          grounding: parseGroundingInput(contentDraftGrounding),
-        }
-      );
-      setContentDrafts((drafts) => drafts.map((item) => (item.draftUuid === saved.draftUuid ? saved : item)));
-      setSelectedContentDraftUuid(saved.draftUuid);
-      setContentDraftSuccess("Content draft saved.");
-    } catch (error) {
-      setContentDraftError(error instanceof Error ? error.message : "Failed to save content draft.");
-    } finally {
-      setIsSavingContentDraft(false);
-    }
-  };
-
-  const handleCopyContentDraftToModuleEditor = () => {
-    if (!contentDraftText.trim()) {
-      setContentDraftError("Content draft is empty.");
-      return;
-    }
-    setContent(contentDraftText);
-    setSaveSuccess("Content draft copied into the module editor. Save module changes to apply it.");
-    setContentDraftSuccess(null);
   };
 
   const eligiblePrerequisiteModules = course.modules.filter(
@@ -752,18 +634,17 @@ function CourseManagementModuleDetailPage() {
     <section className="course-management-page course-management-page-module-detail">
       {uploadToastSuccess ? (
         <div className="course-management-toast course-management-toast-success" role="status" aria-live="polite">
-          <strong>Upload complete</strong>
+          <strong>上传完成</strong>
           <span>{uploadToastSuccess}</span>
         </div>
       ) : null}
 
-      <Link to={`/course/${course.courseUuid}/management/modules${managementSearchSuffix}`} className="course-management-back-link">
-        Back to modules
+      <Link to={`/course/${course.courseUuid}/management/modules${managementSearchSuffix}`} className="course-management-back-link">返回模块
       </Link>
 
       <div className="course-management-section-heading">
         <div>
-          <span className="course-surface-badge">Module Detail</span>
+          <span className="course-surface-badge">模块详情</span>
           <div className="course-management-title-row">
             <h1>{module.title}</h1>
             <span className={`course-management-status-pill ${getModuleStatusPillClassName(module.status)}`}>
@@ -787,49 +668,43 @@ function CourseManagementModuleDetailPage() {
             <button
               type="button"
               className="course-management-action-button course-management-action-button-danger"
-              onClick={handleModuleDelete}
+              onClick={openModuleDeleteModal}
               disabled={isDeletingModule}
             >
               {isDeletingModule ? "Deleting..." : "Delete module"}
             </button>
           </div>
-          <p>Edit module content, refine teaching notes, and upload new materials for this module.</p>
+          <p>编辑模块内容、完善教学说明，并为该模块上传新资料。</p>
           {publishError ? (
             <div className="course-management-inline-alert">
-              <strong>Unable to publish module.</strong>
+              <strong>无法发布模块。</strong>
               <span>{publishError}</span>
             </div>
           ) : null}
           {publishSuccess ? <p className="course-management-inline-success">{publishSuccess}</p> : null}
-          {deleteModuleError ? (
-            <div className="course-management-inline-alert">
-              <strong>Unable to delete module.</strong>
-              <span>{deleteModuleError}</span>
-            </div>
-          ) : null}
         </div>
       </div>
 
       <div className="course-management-grid">
-        <ManagementPanel title="Module content">
+        <ManagementPanel title="模块内容">
           <form className="course-management-form course-management-form-single" onSubmit={handleModuleSave}>
             <label className="course-management-field course-management-field-full">
-              <span>Title</span>
+              <span>标题</span>
               <input value={title} onChange={(event) => setTitle(event.target.value)} required />
             </label>
 
             <label className="course-management-field course-management-field-full">
-              <span>Description</span>
+              <span>描述</span>
               <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={4} />
             </label>
 
             <label className="course-management-field course-management-field-full">
-              <span>Content</span>
+              <span>内容</span>
               <textarea value={content} onChange={(event) => setContent(event.target.value)} rows={8} />
             </label>
 
             <label className="course-management-field">
-              <span>Estimated minutes</span>
+              <span>预计分钟数</span>
               <input
                 type="number"
                 min="1"
@@ -840,7 +715,7 @@ function CourseManagementModuleDetailPage() {
 
             {saveError ? (
               <div className="course-management-inline-alert course-management-field-full">
-                <strong>Unable to update module.</strong>
+                <strong>无法更新模块。</strong>
                 <span>{saveError}</span>
               </div>
             ) : null}
@@ -852,36 +727,35 @@ function CourseManagementModuleDetailPage() {
                 className="course-management-action-button course-management-action-button-primary"
                 disabled={isSavingModule}
               >
-                {isSavingModule ? "Saving..." : "Update module"}
+                {isSavingModule ? "保存中..." : "更新模块"}
               </button>
             </div>
           </form>
         </ManagementPanel>
 
-        <ManagementPanel title="Upload material">
+        <ManagementPanel title="上传资料">
           <form className="course-management-form course-management-form-single" onSubmit={handleMaterialUpload}>
             <div className="course-management-inline-note course-management-field-full">
-              <strong>Upload order</strong>
-              <span>New material will be added to the end of this module's material list.</span>
+              <strong>上传顺序</strong>
+              <span>新资料会添加到该模块资料列表末尾。</span>
             </div>
 
             {isPublishedModule ? (
               <div className="course-management-inline-warning course-management-field-full">
-                <strong>Published module notice</strong>
+                <strong>已发布模块提示</strong>
                 <span>
-                  This module is already published. Any new material uploaded here will become published immediately after
-                  upload.
+                  该模块已发布。这里上传的新资料会在上传后立即发布。
                 </span>
               </div>
             ) : null}
 
             <label className="course-management-field course-management-field-full">
-              <span>Material title</span>
+              <span>资料标题</span>
               <input value={materialTitle} onChange={(event) => setMaterialTitle(event.target.value)} />
             </label>
 
             <label className="course-management-field">
-              <span>Material type</span>
+              <span>资料类型</span>
               <input value={materialType} onChange={(event) => setMaterialType(event.target.value)} />
             </label>
 
@@ -904,13 +778,13 @@ function CourseManagementModuleDetailPage() {
                   checked={confirmPublishedUpload}
                   onChange={(event) => setConfirmPublishedUpload(event.target.checked)}
                 />
-                <span>I understand this material will be published immediately after upload.</span>
+                <span>我理解该资料会在上传后立即发布。</span>
               </label>
             ) : null}
 
             {uploadError ? (
               <div className="course-management-inline-alert course-management-field-full">
-                <strong>Unable to upload material.</strong>
+                <strong>无法上传资料。</strong>
                 <span>{uploadError}</span>
               </div>
             ) : null}
@@ -923,7 +797,7 @@ function CourseManagementModuleDetailPage() {
                   />
                 </div>
                 <div className="course-management-upload-progress-meta">
-                  <span>{uploadStatus || "Uploading..."}</span>
+                  <span>{uploadStatus || "上传中..."}</span>
                   <strong>{uploadProgress}%</strong>
                 </div>
               </div>
@@ -937,160 +811,21 @@ function CourseManagementModuleDetailPage() {
                 className="course-management-action-button course-management-action-button-primary"
                 disabled={isUploading || (isPublishedModule && !confirmPublishedUpload)}
               >
-                {isUploading ? "Uploading..." : "Upload material"}
+                {isUploading ? "上传中..." : "上传资料"}
               </button>
             </div>
           </form>
         </ManagementPanel>
-
-        <ManagementPanel title="AI content draft">
-          <div className="course-management-form course-management-form-single">
-            <label className="course-management-field course-management-field-full">
-              <span>Draft type</span>
-              <select
-                value={contentDraftType}
-                onChange={(event) => setContentDraftType(event.target.value as EducatorContentDraftType)}
-                disabled={isGeneratingContentDraft}
-              >
-                {CONTENT_DRAFT_TYPE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="course-management-field course-management-field-full">
-              <span>Draft title</span>
-              <input value={contentDraftTitle} onChange={(event) => setContentDraftTitle(event.target.value)} />
-            </label>
-
-            <label className="course-management-field course-management-field-full">
-              <span>Teacher prompt</span>
-              <textarea
-                value={contentDraftPrompt}
-                onChange={(event) => setContentDraftPrompt(event.target.value)}
-                rows={3}
-                placeholder="Optional focus, audience, or constraints"
-              />
-            </label>
-
-            <label className="course-management-field course-management-field-full">
-              <span>Material scope</span>
-              <textarea
-                value={contentDraftMaterialScope}
-                onChange={(event) => setContentDraftMaterialScope(event.target.value)}
-                rows={2}
-                placeholder="Optional material titles or sections"
-              />
-            </label>
-
-            {contentDrafts.length > 0 ? (
-              <label className="course-management-field course-management-field-full">
-                <span>Saved drafts</span>
-                <select
-                  value={selectedContentDraftUuid}
-                  onChange={(event) => setSelectedContentDraftUuid(event.target.value)}
-                >
-                  {contentDrafts.map((draft) => (
-                    <option key={draft.draftUuid} value={draft.draftUuid}>
-                      {formatContentDraftType(draft.contentType)} - {draft.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-
-            {isLoadingContentDrafts ? (
-              <p className="course-management-inline-status course-management-field-full">Loading content drafts...</p>
-            ) : null}
-
-            {selectedContentDraft ? (
-              <div className="course-management-inline-note course-management-field-full">
-                <strong>
-                  {selectedContentDraft.isFallback ? "Fallback draft" : "AI draft"} · confidence{" "}
-                  {Math.round(selectedContentDraft.confidenceScore * 100)}%
-                </strong>
-                <span>
-                  {selectedContentDraft.provider ?? "unknown provider"}
-                  {selectedContentDraft.model ? ` / ${selectedContentDraft.model}` : ""}
-                  {selectedContentDraft.fallbackReason ? ` · ${selectedContentDraft.fallbackReason}` : ""}
-                </span>
-              </div>
-            ) : null}
-
-            <label className="course-management-field course-management-field-full">
-              <span>Structured content</span>
-              <textarea
-                value={contentDraftText}
-                onChange={(event) => setContentDraftText(event.target.value)}
-                rows={10}
-                placeholder="Generated draft content appears here"
-              />
-            </label>
-
-            <label className="course-management-field course-management-field-full">
-              <span>Source grounding JSON</span>
-              <textarea
-                value={contentDraftGrounding}
-                onChange={(event) => setContentDraftGrounding(event.target.value)}
-                rows={6}
-                placeholder='[{"sourceTitle":"...","sourceType":"pdf","reference":"...","rationale":"..."}]'
-              />
-            </label>
-
-            {contentDraftError ? (
-              <div className="course-management-inline-alert course-management-field-full">
-                <strong>Content draft action failed.</strong>
-                <span>{contentDraftError}</span>
-              </div>
-            ) : null}
-            {contentDraftSuccess ? <p className="course-management-inline-success">{contentDraftSuccess}</p> : null}
-
-            <div className="course-management-form-actions course-management-field-full">
-              <button
-                type="button"
-                className="course-management-action-button course-management-action-button-primary"
-                onClick={() => void handleGenerateContentDraft()}
-                disabled={isGeneratingContentDraft || isSavingContentDraft}
-              >
-                {isGeneratingContentDraft ? "Generating..." : "Generate draft"}
-              </button>
-              <button
-                type="button"
-                className="course-management-action-button"
-                onClick={() => void handleSaveContentDraft()}
-                disabled={!selectedContentDraft || isGeneratingContentDraft || isSavingContentDraft}
-              >
-                {isSavingContentDraft ? "Saving..." : "Save edited draft"}
-              </button>
-              <button
-                type="button"
-                className="course-management-action-button"
-                onClick={handleCopyContentDraftToModuleEditor}
-                disabled={!contentDraftText.trim()}
-              >
-                Copy to module editor
-              </button>
-            </div>
-          </div>
-        </ManagementPanel>
       </div>
 
-      <ManagementPanel title="Current materials" style={{ marginBottom: "1.25rem" }}>
-        {deleteMaterialError ? (
-          <div className="course-management-inline-alert" style={{ marginBottom: "1rem" }}>
-            <strong>Unable to delete material.</strong>
-            <span>{deleteMaterialError}</span>
-          </div>
-        ) : null}
+      <ManagementPanel title="当前资料" style={{ marginBottom: "1.25rem" }}>
         <div className="course-management-material-grid">
           {module.materials.map((material) => (
             <div key={material.materialUuid} className="course-management-material-card-with-actions">
               <button
                 type="button"
                 className="course-management-material-delete-icon"
-                onClick={() => void handleMaterialDelete(material.materialUuid, material.title)}
+                onClick={() => openMaterialDeleteModal(material.materialUuid, material.title)}
                 disabled={deletingMaterialUuid === material.materialUuid}
                 aria-label={deletingMaterialUuid === material.materialUuid ? "Deleting material" : `Delete ${material.title}`}
                 title={deletingMaterialUuid === material.materialUuid ? "Deleting..." : "Delete material"}
@@ -1103,33 +838,32 @@ function CourseManagementModuleDetailPage() {
 
           {module.materials.length === 0 && (
             <div className="course-empty-state">
-              <strong>No materials yet</strong>
-              <p>Upload a file using the form above.</p>
+              <strong>暂无资料</strong>
+              <p>请使用上方表单上传文件。</p>
             </div>
           )}
         </div>
       </ManagementPanel>
 
       {/* Prerequisite section */}
-      <ManagementPanel title="Conditional Unlocking" style={{ marginBottom: "1.25rem" }}>
+      <ManagementPanel title="条件解锁" style={{ marginBottom: "1.25rem" }}>
         <div className="course-management-form course-management-form-single">
           <div className="course-management-inline-note course-management-field-full">
-            <strong>How it works</strong>
-            <span>Learners must complete the selected module before this one becomes accessible.</span>
+            <strong>工作方式</strong>
+            <span>学生必须先完成选中的模块，才能访问当前模块。</span>
           </div>
 
           {eligiblePrerequisiteModules.length === 0 ? (
-            <p className="course-management-field-full" style={{ color: "#64748b", fontSize: "0.9rem" }}>
-              No earlier modules available. Add modules before this one to set a prerequisite.
+            <p className="course-management-field-full" style={{ color: "#64748b", fontSize: "0.9rem" }}>暂无更早的模块。请先在当前模块之前添加模块，再设置前置条件。
             </p>
           ) : (
             <label className="course-management-field course-management-field-full">
-              <span>Required prerequisite module</span>
+              <span>必修前置模块</span>
               <select
                 value={selectedPrerequisiteUuid}
                 onChange={(e) => setSelectedPrerequisiteUuid(e.target.value)}
               >
-                <option value="">— None (always accessible) —</option>
+                <option value="">无（始终可访问）</option>
                 {eligiblePrerequisiteModules.map((m) => (
                   <option key={m.moduleUuid} value={m.moduleUuid}>
                     {m.sortOrder}. {m.title}
@@ -1141,7 +875,7 @@ function CourseManagementModuleDetailPage() {
 
           {prerequisiteError ? (
             <div className="course-management-inline-alert course-management-field-full">
-              <strong>Unable to update prerequisite.</strong>
+              <strong>无法更新前置条件。</strong>
               <span>{prerequisiteError}</span>
             </div>
           ) : null}
@@ -1157,25 +891,15 @@ function CourseManagementModuleDetailPage() {
                 onClick={() => void handlePrerequisiteSave()}
                 disabled={isSavingPrerequisite}
               >
-                {isSavingPrerequisite ? "Saving..." : "Save prerequisite"}
+                {isSavingPrerequisite ? "保存中..." : "Save prerequisite"}
               </button>
             </div>
           ) : null}
         </div>
       </ManagementPanel>
 
-      <ManagementPanel title="Short-answer assessment" style={{ marginBottom: "1.25rem" }}>
-        <Link
-          to={`/course/${course.courseUuid}/management/modules/${module.moduleUuid}/short-answer${managementSearchSuffix}`}
-          className="course-management-create-module-card"
-        >
-          <span className="course-management-create-module-plus" aria-hidden="true" />
-          <strong>Manage short-answer assessment</strong>
-        </Link>
-      </ManagementPanel>
-
       {/* Quiz section */}
-      <ManagementPanel title="Quiz">
+      <ManagementPanel title="测验">
         {quiz ? (
           <div className="course-management-material-grid">
             <Link
@@ -1189,13 +913,13 @@ function CourseManagementModuleDetailPage() {
               <div className="material-resource-card-body">
                 <strong>{quiz.title || "Module Quiz"}</strong>
                 <div className="material-resource-card-meta">
-                  <span>Quiz</span>
+                  <span>测验</span>
                   <span>{quiz.status}</span>
                 </div>
               </div>
               <div className="material-resource-card-action">
                 {quiz.status === "published" && (
-                  <span className="material-resource-card-status-icon material-resource-card-status-published" title="Published" aria-label="Published">
+                  <span className="material-resource-card-status-icon material-resource-card-status-published" title="已发布" aria-label="已发布">
                     <FaCheckCircle aria-hidden="true" />
                   </span>
                 )}
@@ -1208,10 +932,134 @@ function CourseManagementModuleDetailPage() {
             className="course-management-create-module-card"
           >
             <span className="course-management-create-module-plus" aria-hidden="true" />
-            <strong>Create quiz</strong>
+            <strong>创建测验</strong>
           </Link>
         )}
       </ManagementPanel>
+
+      {isModuleDeleteModalOpen ? (
+        <div className="course-management-modal-overlay" role="presentation">
+          <div
+            className="course-management-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-module-detail-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="course-management-modal-header">
+              <div>
+                <span className="course-surface-badge">删除模块</span>
+                <h3 id="delete-module-detail-title">删除这个模块？</h3>
+                <p className="course-management-modal-status">这将永久删除该模块及其所有关联资料。
+                </p>
+              </div>
+              <button
+                type="button"
+                className="course-management-modal-close"
+                onClick={closeModuleDeleteModal}
+                aria-label="关闭删除模块窗口"
+                disabled={isDeletingModule}
+              >
+                <LuX size={18} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="course-management-form course-management-form-single">
+              <div className="course-management-inline-alert course-management-field-full">
+                <strong>{module.title}</strong>
+                <span>删除该模块后无法撤销。</span>
+              </div>
+
+              {deleteModuleError ? (
+                <div className="course-management-inline-alert course-management-field-full">
+                  <strong>无法删除模块。</strong>
+                  <span>{deleteModuleError}</span>
+                </div>
+              ) : null}
+
+              <div className="course-management-form-actions course-management-field-full">
+                <button
+                  type="button"
+                  className="course-management-action-button"
+                  onClick={closeModuleDeleteModal}
+                  disabled={isDeletingModule}
+                >保留模块
+                </button>
+                <button
+                  type="button"
+                  className="course-management-action-button course-management-action-button-danger"
+                  onClick={() => void handleModuleDelete()}
+                  disabled={isDeletingModule}
+                >
+                  {isDeletingModule ? "Deleting..." : "永久删除"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingMaterialDelete ? (
+        <div className="course-management-modal-overlay" role="presentation">
+          <div
+            className="course-management-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-module-material-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="course-management-modal-header">
+              <div>
+                <span className="course-surface-badge">删除资料</span>
+                <h3 id="delete-module-material-title">删除这份资料？</h3>
+                <p className="course-management-modal-status">这会从模块中删除资料文件和记录。
+                </p>
+              </div>
+              <button
+                type="button"
+                className="course-management-modal-close"
+                onClick={closeMaterialDeleteModal}
+                aria-label="关闭删除资料窗口"
+                disabled={deletingMaterialUuid !== null}
+              >
+                <LuX size={18} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="course-management-form course-management-form-single">
+              <div className="course-management-inline-alert course-management-field-full">
+                <strong>{pendingMaterialDelete.materialTitle}</strong>
+                <span>所属模块： {module.title}</span>
+              </div>
+
+              {deleteMaterialError ? (
+                <div className="course-management-inline-alert course-management-field-full">
+                  <strong>无法删除资料。</strong>
+                  <span>{deleteMaterialError}</span>
+                </div>
+              ) : null}
+
+              <div className="course-management-form-actions course-management-field-full">
+                <button
+                  type="button"
+                  className="course-management-action-button"
+                  onClick={closeMaterialDeleteModal}
+                  disabled={deletingMaterialUuid !== null}
+                >保留资料
+                </button>
+                <button
+                  type="button"
+                  className="course-management-action-button course-management-action-button-danger"
+                  onClick={() => void handleMaterialDelete()}
+                  disabled={deletingMaterialUuid !== null}
+                >
+                  {deletingMaterialUuid ? "Deleting..." : "永久删除"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

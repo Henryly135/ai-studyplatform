@@ -54,9 +54,9 @@ def list_forum_posts(
     current_user: dict = Depends(require_identity_permission(FORUM_READ)),
     session: Session = Depends(get_db_session),
 ) -> PaginatedCourseForumPostResponse:
-    _ = current_user
     return ForumService(session).list_posts(
         course_id=decode_course_uuid(course_uuid),
+        current_user=current_user,
         query=query,
         page=page,
         page_size=page_size,
@@ -69,8 +69,7 @@ def get_forum_post(
     current_user: dict = Depends(require_identity_permission(FORUM_READ)),
     session: Session = Depends(get_db_session),
 ) -> CourseForumPostRead:
-    _ = current_user
-    return ForumService(session).get_post(post_id=decode_forum_post_uuid(post_uuid))
+    return ForumService(session).get_post(post_id=decode_forum_post_uuid(post_uuid), current_user=current_user)
 
 
 @router.patch("/forum-posts/{post_uuid}", response_model=CourseForumPostRead)
@@ -154,9 +153,9 @@ def list_forum_comments(
     current_user: dict = Depends(require_identity_permission(FORUM_READ)),
     session: Session = Depends(get_db_session),
 ) -> PaginatedCourseForumCommentResponse:
-    _ = current_user
     return ForumCommentService(session).list_post_comments(
         post_id=decode_forum_post_uuid(post_uuid),
+        current_user=current_user,
         page=page,
         page_size=page_size,
     )
@@ -168,8 +167,7 @@ def get_forum_comment(
     current_user: dict = Depends(require_identity_permission(FORUM_READ)),
     session: Session = Depends(get_db_session),
 ) -> CourseForumCommentRead:
-    _ = current_user
-    return ForumCommentService(session).get_comment(comment_id=decode_comment_uuid(comment_uuid))
+    return ForumCommentService(session).get_comment(comment_id=decode_comment_uuid(comment_uuid), current_user=current_user)
 
 
 @router.get(
@@ -183,9 +181,9 @@ def list_forum_comment_replies(
     current_user: dict = Depends(require_identity_permission(FORUM_READ)),
     session: Session = Depends(get_db_session),
 ) -> PaginatedCourseForumCommentResponse:
-    _ = current_user
     return ForumCommentService(session).list_comment_replies(
         comment_id=decode_comment_uuid(comment_uuid),
+        current_user=current_user,
         page=page,
         page_size=page_size,
     )

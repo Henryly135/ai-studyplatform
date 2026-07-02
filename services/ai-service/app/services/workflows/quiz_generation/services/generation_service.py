@@ -4,9 +4,11 @@ import json
 import logging
 import time
 
+from google import genai
+from google.genai import errors as genai_errors, types
+
 from app.core.config import settings
 from app.core.prompts import get_prompt_template
-from app.services.providers import AIProviderConfigurationError, AIProviderError, ChatGenerationRequest, get_chat_provider
 from app.services.workflows.quiz_generation.schemas import (
     QuizGenerationCandidateSetRead,
     QuizGenerationContextRead,
@@ -15,6 +17,7 @@ from app.services.workflows.quiz_generation.schemas import (
     QuizGenerationRequest,
     RetrievalContextRead,
 )
+from app.services.provider_error_messages import QUIZ_GENERATION_UNAVAILABLE
 from platform_common.errors import http_error, invalid_request_error
 
 
@@ -35,6 +38,9 @@ class QuizCandidateGenerationService:
         plan: QuizGenerationPlanRead,
         profile_context: QuizGenerationProfileContextRead | None = None,
     ) -> QuizGenerationCandidateSetRead:
+        if not settings.gemini_api_key:
+            raise invalid_request_error(QUIZ_GENERATION_UNAVAILABLE)
+
         prompt_template = get_prompt_template(self.PROMPT_TEMPLATE_NAME)
         prompt = self._build_prompt(
             request=request,
@@ -43,37 +49,31 @@ class QuizCandidateGenerationService:
             plan=plan,
             profile_context=profile_context,
         )
-        try:
-            provider = get_chat_provider()
-        except AIProviderConfigurationError as exc:
-            raise invalid_request_error(str(exc)) from exc
-
+        client = genai.Client(api_key=settings.gemini_api_key)
         response = None
         for attempt in range(1, self.MAX_PROVIDER_ATTEMPTS + 1):
             try:
-                response = provider.generate(
-                    ChatGenerationRequest(
-                        model=settings.ai_chat_model,
+                response = client.models.generate_content(
+                    model=settings.ai_demo_model_name,
+                    config=types.GenerateContentConfig(
                         system_instruction=prompt_template.system_instruction,
-                        contents=prompt,
                         temperature=0.2,
                         max_output_tokens=4000,
                         response_mime_type="application/json",
-                    )
+                    ),
+                    contents=prompt,
                 )
                 break
-            except AIProviderError as exc:
-                if exc.error_type not in {"provider_timeout", "transient_network_error"}:
-                    raise invalid_request_error(f"Quiz generation failed: {exc}") from exc
+            except genai_errors.ServerError as exc:
                 if attempt >= self.MAX_PROVIDER_ATTEMPTS:
                     raise http_error(
                         status_code=503,
                         code="AI_PROVIDER_UNAVAILABLE",
-                        message=f"Quiz generation is temporarily unavailable: {exc}",
+                        message=QUIZ_GENERATION_UNAVAILABLE,
                     ) from exc
                 backoff_seconds = self.RETRY_BACKOFF_SECONDS[min(attempt - 1, len(self.RETRY_BACKOFF_SECONDS) - 1)]
                 logger.warning(
-                    "Quiz generation hit AI provider error; retrying",
+                    "Quiz generation hit Gemini provider error; retrying",
                     extra={
                         "attempt": attempt,
                         "maxAttempts": self.MAX_PROVIDER_ATTEMPTS,
@@ -81,6 +81,8 @@ class QuizCandidateGenerationService:
                     },
                 )
                 time.sleep(backoff_seconds)
+            except genai_errors.ClientError as exc:
+                raise invalid_request_error(QUIZ_GENERATION_UNAVAILABLE) from exc
 
         content = (response.text or "").strip()
         if not content:
@@ -106,7 +108,6 @@ class QuizCandidateGenerationService:
                 {
                     "questionText": "Example question?",
                     "explanationText": "Why the correct answer is right.",
-                    "sourceGrounding": "Concise citation or source note from the retrieved module context.",
                     "sortOrder": 1,
                     "isActive": True,
                     "options": [
@@ -129,7 +130,6 @@ class QuizCandidateGenerationService:
             f"{json.dumps(plan.model_dump(mode='json'), ensure_ascii=True, indent=2)}\n\n"
             "Required output JSON shape:\n"
             f"{json.dumps(output_shape, ensure_ascii=True, indent=2)}\n"
-            "Each question's sourceGrounding must name the retrieved material, heading, or chunk basis in one concise sentence.\n"
         )
 
     def _profile_context_payload(self, profile_context: QuizGenerationProfileContextRead | None) -> dict:

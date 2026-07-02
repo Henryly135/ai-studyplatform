@@ -15,6 +15,7 @@ from app.core.security import (
     generate_token,
     hash_password,
     hash_token,
+    password_hash_needs_upgrade,
     verify_password,
 )
 from app.core.time import now_local
@@ -343,6 +344,9 @@ class AuthService:
                 user_agent=user_agent,
             )
             raise AuthInvalidCredentialsError()
+
+        if password_hash_needs_upgrade(user.password_hash):
+            self.users.update_password(user, hash_password(password))
 
         # DEACTIVATED and REJECTED accounts cannot log in.
         # PENDING educators CAN log in after email verification but will have restricted permissions.

@@ -20,46 +20,15 @@ class QuizGenerationAutoStartRequest(BaseModel):
     additionalInstructions: str | None = Field(default=None, max_length=2000)
 
 
+class QuizGenerationAuthoringRequest(BaseModel):
+    additionalInstructions: str | None = Field(default=None, max_length=2000)
+
+
 class QuizGenerationAutoStartRunRequest(BaseModel):
     courseUuid: str = Field(..., min_length=1)
     moduleUuid: str = Field(..., min_length=1)
     actorId: int = Field(..., ge=1)
     additionalInstructions: str | None = Field(default=None, max_length=2000)
-
-
-class EducatorQuizDraftGenerationRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
-
-    courseUuid: str = Field(..., min_length=1)
-    moduleUuid: str = Field(..., min_length=1)
-    educatorId: int = Field(..., ge=1)
-    courseTitle: str = Field(..., min_length=1, max_length=200)
-    moduleTitle: str = Field(..., min_length=1, max_length=200)
-    quizTitle: str = Field(..., min_length=1, max_length=200)
-    questionCount: int = Field(..., ge=1, le=20)
-    availableQuestionCount: int = Field(default=0, ge=0)
-    timeLimitSeconds: int | None = Field(default=None, ge=1)
-    shuffleQuestions: bool = True
-    shuffleOptions: bool = False
-    difficulty: Literal["easy", "medium", "hard", "mixed"] = "mixed"
-    questionTypes: list[Literal["multiple_choice", "true_false"]] = Field(
-        default_factory=lambda: ["multiple_choice"],
-        min_length=1,
-        max_length=2,
-    )
-    learningObjectives: list[str] = Field(default_factory=list, max_length=10)
-    materialScope: str | None = Field(default=None, max_length=1000)
-    additionalInstructions: str | None = Field(default=None, max_length=2000)
-
-    @model_validator(mode="after")
-    def validate_unique_question_types(self) -> "EducatorQuizDraftGenerationRequest":
-        if len(self.questionTypes) != len(set(self.questionTypes)):
-            raise ValueError("questionTypes must be unique")
-        normalized_objectives = [objective.strip() for objective in self.learningObjectives if objective.strip()]
-        if len(normalized_objectives) != len(self.learningObjectives):
-            raise ValueError("learningObjectives cannot contain blank values")
-        self.learningObjectives = normalized_objectives
-        return self
 
 
 class QuizGenerationRunStartResponse(BaseModel):
@@ -159,7 +128,6 @@ class QuizGenerationCandidateQuestion(BaseModel):
 
     questionText: str = Field(..., min_length=1, max_length=2000)
     explanationText: str | None = Field(default=None, max_length=2000)
-    sourceGrounding: str = Field(..., min_length=1, max_length=1000)
     sortOrder: int = Field(..., ge=1)
     isActive: bool = True
     options: list[QuizGenerationCandidateOption] = Field(..., min_length=2)
@@ -232,13 +200,6 @@ class QuizGenerationRunResponse(BaseModel):
     plan: QuizGenerationPlanRead
     candidateSet: QuizGenerationCandidateSetRead
     createdQuestions: list[CreatedQuizQuestionRead]
-
-
-class EducatorQuizDraftGenerationResponse(BaseModel):
-    context: QuizGenerationContextRead
-    retrievalContext: RetrievalContextRead
-    plan: QuizGenerationPlanRead
-    candidateSet: QuizGenerationCandidateSetRead
 
 
 class QuizGenerationWorkflowState(TypedDict, total=False):

@@ -3,9 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from google import genai
+from google.genai import errors as genai_errors, types
+
 from app.core.config import settings
 from app.core.prompts import get_prompt_template
-from app.services.providers import AIProviderConfigurationError, AIProviderError, ChatGenerationRequest, get_chat_provider
+from app.services.provider_error_messages import GLOBAL_PROFILE_GENERATION_UNAVAILABLE
 from platform_common.errors import invalid_request_error
 
 _REQUIRED_SECTIONS = (
@@ -109,24 +112,28 @@ class GlobalProfileGenerationService:
         default_template: str,
         validation_issues: list[str],
     ) -> str:
+        if not settings.gemini_api_key:
+            raise invalid_request_error(GLOBAL_PROFILE_GENERATION_UNAVAILABLE)
+
         prompt = self._build_user_prompt(
             preferences=preferences,
             default_template=default_template,
             validation_issues=validation_issues,
         )
+        client = genai.Client(api_key=settings.gemini_api_key)
         try:
             prompt_template = get_prompt_template(self.PROMPT_TEMPLATE_NAME)
-            response = get_chat_provider().generate(
-                ChatGenerationRequest(
-                    model=settings.ai_chat_model,
-                    contents=prompt,
+            response = client.models.generate_content(
+                model=settings.ai_demo_model_name,
+                config=types.GenerateContentConfig(
                     system_instruction=prompt_template.system_instruction,
                     temperature=0.2,
                     max_output_tokens=800,
-                )
+                ),
+                contents=prompt,
             )
-        except (AIProviderConfigurationError, AIProviderError) as exc:
-            raise invalid_request_error(f"Global profile generation failed: {exc}") from exc
+        except genai_errors.ClientError as exc:
+            raise invalid_request_error(GLOBAL_PROFILE_GENERATION_UNAVAILABLE) from exc
 
         content = (response.text or "").strip()
         if not content:

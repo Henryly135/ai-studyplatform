@@ -20,6 +20,10 @@ from app.services.indexing.text_chunking_service import TextChunkingService
 from platform_common.errors import invalid_request_error
 
 
+def _safe_task_error_message(*, stage: str, exc: Exception) -> str:
+    return f"[{stage}] {type(exc).__name__}"
+
+
 @celery_app.task(bind=True, name="app.tasks.material_index.index_material_task")
 def index_material_task(self, jobId: int) -> dict[str, object]:
     '''Celery task to process material indexing jobs.'''
@@ -192,7 +196,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
                     },
                     latency_ms=None,
                     status=AIPromptStatus.FAILED,
-                    error_message=f"{type(exc).__name__}: {exc}",
+                    error_message=_safe_task_error_message(stage="embedding", exc=exc),
                     trace_id=None,
                 )
                 session.commit()
@@ -296,7 +300,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             if not isinstance(job.metadata_json, dict):
                 job.metadata_json = {}
             current_attempt = job.attempt_count or 0
-            error_message = f"[{stage}] {type(exc).__name__}: {exc}"
+            error_message = _safe_task_error_message(stage=stage, exc=exc)
             if _should_auto_retry(exc=exc, stage=stage) and current_attempt < settings.ai_index_job_max_auto_retries:
                 retry_delay_seconds = _compute_retry_delay_seconds(current_attempt)
                 retry_at = now_local() + timedelta(seconds=retry_delay_seconds)
@@ -304,7 +308,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
                     **job.metadata_json,
                     "lastErrorStage": stage,
                     "lastErrorType": type(exc).__name__,
-                    "lastErrorMessage": str(exc),
+                    "lastErrorMessage": error_message,
                     "autoRetryScheduledAt": retry_at.isoformat(),
                     "autoRetryDelaySeconds": retry_delay_seconds,
                     "autoRetryAttempt": current_attempt + 1,
@@ -336,7 +340,10 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
                         retry_job.metadata_json = {
                             **retry_job.metadata_json,
                             "retryDispatchErrorType": type(dispatch_exc).__name__,
-                            "retryDispatchErrorMessage": str(dispatch_exc),
+                            "retryDispatchErrorMessage": _safe_task_error_message(
+                                stage="retry_dispatch",
+                                exc=dispatch_exc,
+                            ),
                         }
                         jobs.update_status(
                             retry_job,
@@ -346,7 +353,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
                             started_at=retry_job.started_at,
                             finished_at=now_local(),
                             next_retry_at=None,
-                            error_message=f"[retry_dispatch] {type(dispatch_exc).__name__}: {dispatch_exc}",
+                            error_message=_safe_task_error_message(stage="retry_dispatch", exc=dispatch_exc),
                         )
                         session.commit()
                     raise
@@ -363,7 +370,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
                 **job.metadata_json,
                 "lastErrorStage": stage,
                 "lastErrorType": type(exc).__name__,
-                "lastErrorMessage": str(exc),
+                "lastErrorMessage": error_message,
             }
             jobs.update_status(
                 job,

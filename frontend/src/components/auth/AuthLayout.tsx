@@ -9,8 +9,7 @@ function AuthLayout({ children }: AuthLayoutProps) {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <Link to="/" className="auth-back-link">
-          Back to home
+        <Link to="/" className="auth-back-link">返回首页
         </Link>
         {children}
       </div>

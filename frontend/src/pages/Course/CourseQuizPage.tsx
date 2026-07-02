@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useOutletContext, useParams } from "react-router-dom";
 
 import {
@@ -99,12 +99,12 @@ type ActiveQuizProps = {
 };
 
 function ActiveQuiz({ session, answers, onAnswerChange, onSubmit, isSubmitting, submitError }: ActiveQuizProps) {
-  const getRemainingSeconds = () => {
+  const getRemainingSeconds = useCallback(() => {
     if (session.expiresAt) {
       return Math.max(0, Math.ceil((new Date(session.expiresAt).getTime() - Date.now()) / 1000));
     }
     return session.timeLimitSeconds ?? null;
-  };
+  }, [session.expiresAt, session.timeLimitSeconds]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(() => getRemainingSeconds());
   const timerRef = useRef<number | null>(null);
@@ -115,7 +115,7 @@ function ActiveQuiz({ session, answers, onAnswerChange, onSubmit, isSubmitting, 
 
   // Declare handleSubmit before the timer effect so the closure reference is valid
   const handleSubmitRef = useRef<((timedOut?: boolean) => Promise<void>) | null>(null);
-  const handleSubmit = async (timedOut = false) => {
+  const handleSubmit = useCallback(async (timedOut = false) => {
     if (timedOut && timerRef.current) window.clearInterval(timerRef.current);
     if (timedOut) {
       if (hasAutoSubmittedRef.current) return;
@@ -126,25 +126,33 @@ function ActiveQuiz({ session, answers, onAnswerChange, onSubmit, isSubmitting, 
       selectedOptionUuid: answersRef.current[q.questionUuid] ?? null,
     }));
     await onSubmit(payload, timedOut ? { timedOut: true } : undefined);
-  };
-  handleSubmitRef.current = handleSubmit;
+  }, [onSubmit, session.questions]);
 
   useEffect(() => {
-    if (!session.timeLimitSeconds) return;
+    handleSubmitRef.current = handleSubmit;
+  }, [handleSubmit]);
+
+  useEffect(() => {
+    if (!session.timeLimitSeconds) {
+      return;
+    }
     timerRef.current = window.setInterval(() => {
       setRemainingSeconds(getRemainingSeconds());
     }, 250);
-    return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    return () => {
+      if (timerRef.current) {
+        window.clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [getRemainingSeconds, session.timeLimitSeconds]);
 
   // Trigger auto-submit after render when timer reaches 0 (not inside state updater)
   useEffect(() => {
     if (remainingSeconds === 0 && session.timeLimitSeconds && !hasAutoSubmittedRef.current) {
       void handleSubmitRef.current?.(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remainingSeconds]);
+  }, [remainingSeconds, session.timeLimitSeconds]);
 
   const currentQ: QuizSessionQuestion = session.questions[currentIndex];
   const answeredCount = Object.values(answers).filter((v) => v !== null && v !== undefined).length;
@@ -157,9 +165,8 @@ function ActiveQuiz({ session, answers, onAnswerChange, onSubmit, isSubmitting, 
       )}
 
       <div className="quiz-active-header">
-        <span className="quiz-attempt-badge">Attempt #{session.attemptNumber}</span>
-        <span className="quiz-progress-label">
-          Question {currentIndex + 1} / {session.questions.length}
+        <span className="quiz-attempt-badge">尝试 #{session.attemptNumber}</span>
+        <span className="quiz-progress-label">题目 {currentIndex + 1} / {session.questions.length}
         </span>
       </div>
 
@@ -208,16 +215,14 @@ function ActiveQuiz({ session, answers, onAnswerChange, onSubmit, isSubmitting, 
           className="quiz-nav-btn"
           onClick={() => setCurrentIndex((i) => Math.max(0, i - 1))}
           disabled={currentIndex === 0}
-        >
-          ← Previous
+        >← 上一题
         </button>
         {currentIndex < session.questions.length - 1 ? (
           <button
             type="button"
             className="quiz-nav-btn quiz-nav-btn-primary"
             onClick={() => setCurrentIndex((i) => i + 1)}
-          >
-            Next →
+          >下一题 →
           </button>
         ) : (
           <button
@@ -226,21 +231,20 @@ function ActiveQuiz({ session, answers, onAnswerChange, onSubmit, isSubmitting, 
             onClick={() => void handleSubmit()}
             disabled={isSubmitting}
           >
-            {isSubmitting ? "Submitting…" : "Submit Quiz"}
+            {isSubmitting ? "提交中…" : "提交测验"}
           </button>
         )}
       </div>
 
       {unansweredCount > 0 && (
         <p className="quiz-unanswered-note">
-          {unansweredCount} question{unansweredCount > 1 ? "s" : ""} not yet answered.
-          You can still submit — unanswered questions count as incorrect.
+          {unansweredCount} 道题尚未作答。仍可提交，未作答题目会计为错误。
         </p>
       )}
 
       {submitError && (
         <div className="course-management-inline-alert" style={{ marginTop: "1rem" }}>
-          <strong>Submit failed.</strong>
+          <strong>提交失败。</strong>
           <span>{submitError}</span>
         </div>
       )}
@@ -269,15 +273,15 @@ function ResultView({
       <div className={`quiz-result-banner${passed ? " quiz-result-banner-pass" : " quiz-result-banner-fail"}`}>
         <span className="quiz-result-icon">{passed ? "✓" : "✗"}</span>
         <div>
-          <strong className="quiz-result-verdict">{passed ? "Passed" : "Not passed"}</strong>
+          <strong className="quiz-result-verdict">{passed ? "已通过" : "Not passed"}</strong>
           <p className="quiz-result-score">
-            {result.correctCount} / {result.questionCount} correct — {score.toFixed(0)}%
+            {result.correctCount} / {result.questionCount}正确 — {score.toFixed(0)}%
           </p>
-          {result.isTimedOut && <p className="quiz-result-timed-out">Time ran out</p>}
-          {result.moduleCompleted && <p className="quiz-result-module-done">Module marked as completed</p>}
+          {result.isTimedOut && <p className="quiz-result-timed-out">时间已到</p>}
+          {result.moduleCompleted && <p className="quiz-result-module-done">模块已标记为完成</p>}
         </div>
         <div className="quiz-result-meta">
-          <span>Attempt #{result.attemptNumber}</span>
+          <span>尝试 #{result.attemptNumber}</span>
           <span>{formatDuration(result.durationSeconds)}</span>
         </div>
       </div>
@@ -296,14 +300,13 @@ function ResultView({
             </div>
             <div className="quiz-answer-detail">
               {ans.selectedOptionText ? (
-                <p className={`quiz-answer-chosen${ans.isCorrect ? " quiz-answer-chosen-correct" : " quiz-answer-chosen-wrong"}`}>
-                  Your answer: {ans.selectedOptionText}
+                <p className={`quiz-answer-chosen${ans.isCorrect ? " quiz-answer-chosen-correct" : " quiz-answer-chosen-wrong"}`}>你的答案： {ans.selectedOptionText}
                 </p>
               ) : (
-                <p className="quiz-answer-chosen quiz-answer-chosen-wrong">No answer selected</p>
+                <p className="quiz-answer-chosen quiz-answer-chosen-wrong">未选择答案</p>
               )}
               {!ans.isCorrect && (
-                <p className="quiz-answer-correct-opt">Correct answer: {ans.correctOptionText}</p>
+                <p className="quiz-answer-correct-opt">正确答案： {ans.correctOptionText}</p>
               )}
               {ans.explanationText && (
                 <p className="quiz-answer-explanation">{ans.explanationText}</p>
@@ -315,12 +318,10 @@ function ResultView({
 
       <div className="quiz-result-actions">
         {onBack ? (
-          <button type="button" className="course-secondary-link" onClick={onBack}>
-            Back to history
+          <button type="button" className="course-secondary-link" onClick={onBack}>返回历史记录
           </button>
         ) : null}
-        <button type="button" className="course-primary-link" onClick={onRetry}>
-          Try again
+        <button type="button" className="course-primary-link" onClick={onRetry}>重试
         </button>
       </div>
     </div>
@@ -343,13 +344,12 @@ function HistoryTable({
   if (history.attempts.length === 0) return null;
   return (
     <div className="quiz-history-section">
-      <h3 className="quiz-history-title">
-        Past attempts
-        {history.passedOnce && <span className="quiz-passed-badge">Passed</span>}
+      <h3 className="quiz-history-title">历史尝试
+        {history.passedOnce && <span className="quiz-passed-badge">已通过</span>}
       </h3>
       <div className="quiz-history-table">
         <div className="quiz-history-row quiz-history-row-head">
-          <span>#</span><span>Score</span><span>Result</span><span>Duration</span><span>Date</span>
+          <span>#</span><span>得分</span><span>结果</span><span>时长</span><span>日期</span>
         </div>
         {history.attempts.map((a) => (
           <button
@@ -362,10 +362,10 @@ function HistoryTable({
             <span>{a.attemptNumber}</span>
             <span>{parseFloat(a.scorePercent).toFixed(0)}% ({a.correctCount}/{a.questionCount})</span>
             <span className={a.isPassed ? "quiz-history-pass" : "quiz-history-fail"}>
-              {a.isTimedOut ? "Timed out" : a.isPassed ? "Passed" : "Failed"}
+              {a.isTimedOut ? "已超时" : a.isPassed ? "已通过" : "失败"}
             </span>
             <span>{formatDuration(a.durationSeconds)}</span>
-            <span>{loadingAttemptUuid === a.quizAttemptUuid ? "Loading..." : formatDate(a.submittedAt)}</span>
+            <span>{loadingAttemptUuid === a.quizAttemptUuid ? "加载中..." : formatDate(a.submittedAt)}</span>
           </button>
         ))}
       </div>
@@ -398,10 +398,15 @@ function getGenerationRunStorageKey(courseUuid: string, moduleUuid: string) {
   return `quizGenerationRun:${courseUuid}:${moduleUuid}`;
 }
 
+function getErrorMessage(error: unknown, fallbackMessage: string) {
+  return error instanceof Error && error.message.trim() ? error.message : fallbackMessage;
+}
+
 function CourseQuizPage() {
   const { moduleUuid } = useParams();
   const { course, setQuizGuard, markModuleCompleted, refreshCourse } = useOutletContext<CourseOutletContext>();
   const module = course.modules.find((m) => m.moduleUuid === moduleUuid) ?? null;
+  const activeModuleUuid = module?.moduleUuid ?? null;
 
   const [pageState, setPageState] = useState<QuizPageState>("idle");
   const [answers, setAnswers] = useState<Record<string, string | null>>({});
@@ -421,14 +426,18 @@ function CourseQuizPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [historyDetailError, setHistoryDetailError] = useState<string | null>(null);
+  const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
   const [loadingAttemptUuid, setLoadingAttemptUuid] = useState<string | null>(null);
   const [generationRunId, setGenerationRunId] = useState<string | null>(null);
+  const [overviewReloadKey, setOverviewReloadKey] = useState(0);
   const generationRunStorageKey = module ? getGenerationRunStorageKey(course.courseUuid, module.moduleUuid) : null;
+  const pageStateRef = useRef(pageState);
   // Keep latest answers in a ref so the quiz guard callback always sees current values
   const answersRef = useRef<Record<string, string | null>>({});
   useEffect(() => { answersRef.current = answers; }, [answers]);
+  useEffect(() => { pageStateRef.current = pageState; }, [pageState]);
 
-  const applyGenerationRunStatus = (run: QuizGenerationRun) => {
+  const applyGenerationRunStatus = useCallback((run: QuizGenerationRun) => {
     setGenerationEvents(run.events);
     if (run.currentStep) {
       setCurrentGenerationStep(getGenerationStepLabel(run.currentStep));
@@ -444,12 +453,12 @@ function CourseQuizPage() {
       setGenerationRunId(null);
       setSession(run.attemptStartResponse);
       setPageState("active");
-      if (module) {
-        emitAppRefresh({ scope: "course:quiz", courseUuid: course.courseUuid, moduleUuid: module.moduleUuid });
+      if (activeModuleUuid) {
+        emitAppRefresh({ scope: "course:quiz", courseUuid: course.courseUuid, moduleUuid: activeModuleUuid });
       }
       setToastMessage({
-        title: "Generated quiz restored.",
-        message: "Your generated quiz session is ready.",
+        title: "已恢复生成的测验。",
+        message: "你生成的测验会话已准备好。",
         variant: "success",
       });
       return;
@@ -460,12 +469,12 @@ function CourseQuizPage() {
       setGenerationRunId(null);
       setPageState("idle");
       setToastMessage({
-        title: "Quiz generation failed.",
-        message: run.error || run.message || "Please generate the quiz again.",
+        title: "测验生成失败。",
+        message: run.error || run.message || "请重新生成测验。",
         variant: "error",
       });
     }
-  };
+  }, [activeModuleUuid, course.courseUuid, generationRunStorageKey]);
 
   useEffect(() => {
     setPageState("idle");
@@ -478,12 +487,13 @@ function CourseQuizPage() {
     setCurrentGenerationStep("Generating quiz");
     setSubmitError(null);
     setHistoryDetailError(null);
+    setHistoryLoadError(null);
     setLoadingAttemptUuid(null);
     setGenerationRunId(null);
   }, [moduleUuid]);
 
   useEffect(() => {
-    if (!generationRunStorageKey || !module) return;
+    if (!generationRunStorageKey || !activeModuleUuid) return;
     const storedRunId = window.sessionStorage.getItem(generationRunStorageKey);
     if (storedRunId) {
       setGenerationRunId(storedRunId);
@@ -493,7 +503,7 @@ function CourseQuizPage() {
     }
 
     let cancelled = false;
-    void getActiveAutoGeneratedQuizAttemptRun(course.courseUuid, module.moduleUuid)
+    void getActiveAutoGeneratedQuizAttemptRun(course.courseUuid, activeModuleUuid)
       .then((run) => {
         if (cancelled || !run || run.status === "failed") return;
         if (run.status === "completed") {
@@ -512,7 +522,7 @@ function CourseQuizPage() {
     return () => {
       cancelled = true;
     };
-  }, [course.courseUuid, generationRunStorageKey, module]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeModuleUuid, applyGenerationRunStatus, course.courseUuid, generationRunStorageKey]);
 
   // Reset answers when returning to idle
   useEffect(() => {
@@ -526,14 +536,14 @@ function CourseQuizPage() {
   }, [toastMessage]);
 
   useEffect(() => {
-    if (!module || !generationRunId || pageState !== "generating") return;
+    if (!activeModuleUuid || !generationRunId || pageState !== "generating") return;
 
     let cancelled = false;
     let timeoutId: number | null = null;
 
     const pollRun = async () => {
       try {
-        const run = await getAutoGeneratedQuizAttemptRun(course.courseUuid, module.moduleUuid, generationRunId);
+        const run = await getAutoGeneratedQuizAttemptRun(course.courseUuid, activeModuleUuid, generationRunId);
         if (cancelled) return;
         applyGenerationRunStatus(run);
         if (run.status === "queued" || run.status === "running") {
@@ -541,7 +551,7 @@ function CourseQuizPage() {
         }
       } catch (err) {
         if (cancelled) return;
-        const activeSession = await getActiveQuizSession(course.courseUuid, module.moduleUuid).catch(() => null);
+        const activeSession = await getActiveQuizSession(course.courseUuid, activeModuleUuid).catch(() => null);
         if (cancelled) return;
         if (activeSession) {
           if (generationRunStorageKey) window.sessionStorage.removeItem(generationRunStorageKey);
@@ -549,8 +559,8 @@ function CourseQuizPage() {
           setSession(activeSession);
           setPageState("active");
           setToastMessage({
-            title: "Generated quiz restored.",
-            message: "We found your quiz session and opened the attempt.",
+            title: "已恢复生成的测验。",
+            message: "我们已找到你的测验会话并打开本次尝试。",
             variant: "success",
           });
           return;
@@ -559,8 +569,8 @@ function CourseQuizPage() {
         setGenerationRunId(null);
         setPageState("idle");
         setToastMessage({
-          title: "Unable to restore quiz generation.",
-          message: err instanceof Error ? err.message : "Please generate the quiz again.",
+          title: "无法恢复测验生成。",
+          message: err instanceof Error ? err.message : "请重新生成测验。",
           variant: "error",
         });
       }
@@ -572,11 +582,11 @@ function CourseQuizPage() {
       cancelled = true;
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [course.courseUuid, generationRunId, generationRunStorageKey, module, pageState]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeModuleUuid, applyGenerationRunStatus, course.courseUuid, generationRunId, generationRunStorageKey, pageState]);
 
   // Register/clear quiz guard in CourseLayout
   useEffect(() => {
-    if (!module) return;
+    if (!activeModuleUuid) return;
     if (pageState === "active" && session) {
       setQuizGuard(true, async () => {
         const payload = session.questions.map((q) => ({
@@ -584,27 +594,43 @@ function CourseQuizPage() {
           selectedOptionUuid: answersRef.current[q.questionUuid] ?? null,
         }));
         try {
-          await submitQuizAttempt(course.courseUuid, module.moduleUuid, session.attemptSessionToken, payload);
+          await submitQuizAttempt(course.courseUuid, activeModuleUuid, session.attemptSessionToken, payload);
         } catch { /* ignore */ }
       });
     } else {
       setQuizGuard(false);
     }
     return () => setQuizGuard(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageState, session]);
+  }, [activeModuleUuid, course.courseUuid, pageState, session, setQuizGuard]);
 
   useEffect(() => {
-    if (!module) return;
+    if (!activeModuleUuid) return;
     setIsLoadingHistory(true);
-    Promise.all([
-      getQuizAttemptHistory(course.courseUuid, module.moduleUuid).catch(() => null),
-      module.hasPublishedQuiz
-        ? getActiveQuizSession(course.courseUuid, module.moduleUuid).catch(() => null)
+    setHistoryLoadError(null);
+    let cancelled = false;
+    Promise.allSettled([
+      getQuizAttemptHistory(course.courseUuid, activeModuleUuid),
+      module?.hasPublishedQuiz
+        ? getActiveQuizSession(course.courseUuid, activeModuleUuid)
         : Promise.resolve(null),
-    ]).then(([h, activeSession]) => {
-      setHistory(h);
-      if (activeSession && pageState === "idle") {
+    ]).then(([historyResult, activeSessionResult]) => {
+      if (cancelled) return;
+      if (historyResult.status === "fulfilled") {
+        setHistory(historyResult.value);
+      } else {
+        setHistory(null);
+        setHistoryLoadError(getErrorMessage(historyResult.reason, "Failed to load quiz history."));
+      }
+
+      if (activeSessionResult.status === "rejected") {
+        setHistoryLoadError((current) =>
+          current ?? getErrorMessage(activeSessionResult.reason, "Failed to check active quiz session.")
+        );
+        return;
+      }
+
+      const activeSession = activeSessionResult.value;
+      if (activeSession && pageStateRef.current === "idle") {
         const wasRecoveringGeneration = generationRunStorageKey
           ? window.sessionStorage.getItem(generationRunStorageKey) !== null
           : false;
@@ -614,14 +640,21 @@ function CourseQuizPage() {
         setPageState("active");
         if (wasRecoveringGeneration) {
           setToastMessage({
-            title: "Generated quiz restored.",
-            message: "We found your quiz session and opened the attempt.",
+            title: "已恢复生成的测验。",
+            message: "我们已找到你的测验会话并打开本次尝试。",
             variant: "success",
           });
         }
       }
-    }).finally(() => setIsLoadingHistory(false));
-  }, [course.courseUuid, module, generationRunStorageKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    }).finally(() => {
+      if (!cancelled) {
+        setIsLoadingHistory(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeModuleUuid, course.courseUuid, generationRunStorageKey, module?.hasPublishedQuiz, overviewReloadKey]);
 
   if (!module) {
     return <Navigate to={`/course/${course.courseUuid}`} replace />;
@@ -637,7 +670,7 @@ function CourseQuizPage() {
       emitAppRefresh({ scope: "course:quiz", courseUuid: course.courseUuid, moduleUuid: module.moduleUuid });
     } catch (err) {
       setToastMessage({
-        title: "Unable to start quiz.",
+        title: "无法开始测验。",
         message: err instanceof Error ? err.message : "Failed to start quiz.",
         variant: "error",
       });
@@ -662,7 +695,7 @@ function CourseQuizPage() {
       if (generationRunStorageKey) window.sessionStorage.removeItem(generationRunStorageKey);
       setGenerationRunId(null);
       setToastMessage({
-        title: "Unable to generate quiz.",
+        title: "无法生成测验。",
         message: err instanceof Error ? err.message : "Failed to generate quiz.",
         variant: "error",
       });
@@ -748,6 +781,7 @@ function CourseQuizPage() {
       )}
       {pageState === "active" && session ? (
         <ActiveQuiz
+          key={session.attemptSessionToken}
           session={session}
           answers={answers}
           onAnswerChange={setAnswers}
@@ -764,19 +798,19 @@ function CourseQuizPage() {
       ) : (
         <section className="course-detail-page">
           <div className="course-module-hero">
-            <span className="course-surface-badge">Quiz</span>
+            <span className="course-surface-badge">测验</span>
             <h1>{history?.title ?? module.title}</h1>
             {history?.timeLimitSeconds ? (
-              <p>Time limit: {formatDuration(history.timeLimitSeconds)} &middot; Test your knowledge of this module.</p>
+              <p>时间限制： {formatDuration(history.timeLimitSeconds)}· 检查你对本模块的掌握情况。</p>
             ) : (
-              <p>No time limit &middot; Test your knowledge of this module.</p>
+              <p>无时间限制 · 检查你对本模块的掌握情况。</p>
             )}
           </div>
 
           <div className="quiz-overview-body">
             <div className="quiz-overview-start-row">
               {history?.passedOnce && (
-                <span className="quiz-passed-badge quiz-passed-badge-lg">Already passed</span>
+                <span className="quiz-passed-badge quiz-passed-badge-lg">已通过</span>
               )}
               <button
                 type="button"
@@ -784,9 +818,24 @@ function CourseQuizPage() {
                 onClick={() => void handleStart()}
                 disabled={isStarting}
               >
-                {isStarting ? "Starting…" : history?.attempts && history.attempts.length > 0 ? "Try again" : "Start quiz"}
+                {isStarting ? "启动中…" : history?.attempts && history.attempts.length > 0 ? "重试" : "开始测验"}
               </button>
             </div>
+
+            {historyLoadError && (
+              <div className="course-management-inline-alert" style={{ marginBottom: "1rem" }}>
+                <strong>无法加载测验历史。</strong>
+                <span>{historyLoadError}</span>
+                <button
+                  type="button"
+                  className="course-secondary-link"
+                  onClick={() => setOverviewReloadKey((value) => value + 1)}
+                  disabled={isLoadingHistory}
+                >
+                  {isLoadingHistory ? "Retrying..." : "重试"}
+                </button>
+              </div>
+            )}
 
             <div className="quiz-overview-generate-row">
               <button
@@ -794,14 +843,13 @@ function CourseQuizPage() {
                 className="course-secondary-link quiz-generate-btn"
                 onClick={() => void handleGenerate()}
                 disabled={isStarting}
-              >
-                Generate quiz
+              >生成测验
               </button>
             </div>
 
             {historyDetailError && (
               <div className="course-management-inline-alert" style={{ marginBottom: "1rem" }}>
-                <strong>Unable to load attempt detail.</strong>
+                <strong>无法加载尝试详情。</strong>
                 <span>{historyDetailError}</span>
               </div>
             )}

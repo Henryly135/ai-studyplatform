@@ -13,10 +13,11 @@ from app.core.uuid_codec import (
     encode_module_uuid,
     encode_user_uuid,
 )
+from app.models.course_enrollments import EnrollmentStatus
 from app.models.courses import Course
 from app.models.module_materials import ModuleMaterial
 from app.models.module_progress import ProgressStatus
-from app.models.modules import Module
+from app.models.modules import Module, ModuleStatus
 from app.repositories.learning_path_repository import LearningPathRepository
 from app.repositories.module_material_repository import ModuleMaterialRepository
 from app.repositories.module_prerequisite_repository import ModulePrerequisiteRepository
@@ -25,7 +26,6 @@ from app.repositories.module_repository import ModuleRepository
 from app.repositories.course_enrollment_repository import CourseEnrollmentRepository
 from app.repositories.course_repository import CourseRepository
 from app.repositories.quiz_repository import QuizRepository
-from app.repositories.short_answer_assessment_repository import ShortAnswerAssessmentRepository
 from app.schemas.course import (
     CourseDetailResponse,
     CourseSummaryResponse,
@@ -36,6 +36,7 @@ from app.schemas.course import (
 from app.models.courses import CourseStatus
 from app.services.identity_user_client import IdentityUserClient
 from app.services.module_unlocking_service import ModuleUnlockingService
+from app.services.storage_service import StorageService
 
 
 def _slugify(title: str) -> str:
@@ -54,9 +55,9 @@ class CourseCatalogService:
         self.module_progress = ModuleProgressRepository(session)
         self.enrollments = CourseEnrollmentRepository(session)
         self.quizzes = QuizRepository(session)
-        self.short_answer_assessments = ShortAnswerAssessmentRepository(session)
         self.identity_users = IdentityUserClient()
         self.unlocking = ModuleUnlockingService(session)
+        self.storage = StorageService()
 
     def list_courses(self, *, current_user: dict, search: str | None = None) -> list[CourseSummaryResponse]:
         courses = self.courses.list_all()
@@ -309,7 +310,7 @@ class CourseCatalogService:
         ):
             raise HTTPException(status_code=403, detail="Module is not accessible for the current user")
 
-        return self._to_module_response(module, current_user=current_user)
+        return self._to_module_response(module, course=course, current_user=current_user)
 
     def get_course_module_by_uuid(
         self,
@@ -333,7 +334,10 @@ class CourseCatalogService:
             moduleId=material.module_id,
             title=material.title,
             materialType=material.material_type.value,
-            resourceUrl=self._resolve_material_url(material.resource_url),
+            resourceUrl=self.storage.get_material_access_url(
+                metadata=material.metadata_json,
+                fallback_url=self._resolve_material_url(material.resource_url),
+            ),
             sortOrder=material.sort_order,
             metadataJson=material.metadata_json,
         )
@@ -428,14 +432,20 @@ class CourseCatalogService:
         )
 
         return CourseDetailResponse(
-            **summary.dict(),
+            **summary.model_dump(),
             learningPathId=learning_path.learning_path_id if learning_path else None,
             learningPathTitle=learning_path.title if learning_path else None,
             learningPathDescription=learning_path.description if learning_path else None,
-            modules=[self._to_module_response(module, current_user=current_user) for module in modules],
+            modules=[self._to_module_response(module, course=course, current_user=current_user) for module in modules],
         )
 
-    def _to_module_response(self, module: Module, *, current_user: dict) -> ModuleResponse:
+    def _to_module_response(
+        self,
+        module: Module,
+        *,
+        course: Course,
+        current_user: dict,
+    ) -> ModuleResponse:
         prerequisite_rule = self.module_prerequisites.get_by_module_id(module.module_id)
         prerequisite_module = (
             self.modules.get_by_id(prerequisite_rule.prerequisite_module_id)
@@ -451,11 +461,6 @@ class CourseCatalogService:
         quiz = self.quizzes.get_by_module_id(module.module_id)
         from app.models.quizzes import QuizStatus
         has_published_quiz = quiz is not None and quiz.status == QuizStatus.PUBLISHED
-        short_answer = self.short_answer_assessments.get_by_module_id(module.module_id)
-        from app.models.short_answer_assessments import ShortAnswerAssessmentStatus
-        has_published_short_answer = (
-            short_answer is not None and short_answer.status == ShortAnswerAssessmentStatus.PUBLISHED
-        )
         learner_id = current_user.get("id")
         is_learner = current_user.get("identity") == "Learner" and isinstance(learner_id, int)
         progress = (
@@ -486,15 +491,21 @@ class CourseCatalogService:
             isLocked=is_locked,
             lockMessage=lock_message,
             slug=_slugify(module.title),
-            materials=[
-                self.to_material_response(material)
-                for material in self.materials.list_by_module(module.module_id)
-            ],
+            materials=(
+                [
+                    self.to_material_response(material)
+                    for material in self.materials.list_by_module(module.module_id)
+                ]
+                if self._can_user_access_materials(
+                    course=course,
+                    module=module,
+                    current_user=current_user,
+                )
+                else []
+            ),
             hasPublishedQuiz=has_published_quiz,
             quizTitle=quiz.title if has_published_quiz else None,
             quizTimeLimitSeconds=quiz.time_limit_seconds if has_published_quiz else None,
-            hasPublishedShortAnswer=has_published_short_answer,
-            shortAnswerTitle=short_answer.title if has_published_short_answer else None,
             progressStatus=progress_status,
             isCompleted=is_completed,
             completedAt=completed_at,
@@ -515,11 +526,11 @@ class CourseCatalogService:
         )
 
         return CourseDetailResponse(
-            **summary.dict(),
+            **summary.model_dump(),
             learningPathId=learning_path.learning_path_id if learning_path else None,
             learningPathTitle=learning_path.title if learning_path else None,
             learningPathDescription=learning_path.description if learning_path else None,
-            modules=[self._to_module_response(module, current_user=current_user) for module in modules],
+            modules=[self._to_module_response(module, course=course, current_user=current_user) for module in modules],
         )
 
     def _resolve_cover_image_url(self, cover_image_url: str | None) -> str | None:
@@ -592,6 +603,39 @@ class CourseCatalogService:
         if module.status.value == "published":
             return True
         return bool(class_id and module.visible_to_class_id == class_id)
+
+    def _can_user_access_materials(
+        self,
+        *,
+        course: Course,
+        module: Module,
+        current_user: dict,
+    ) -> bool:
+        identity = current_user.get("identity")
+        user_id = current_user.get("id")
+
+        if identity == "Admin":
+            return True
+        if identity == "Educator" and isinstance(user_id, int) and user_id == course.educator_id:
+            return True
+        if identity != "Learner" or not isinstance(user_id, int):
+            return False
+        if course.status != CourseStatus.PUBLISHED or module.status != ModuleStatus.PUBLISHED:
+            return False
+        if module.visible_to_class_id:
+            return False
+
+        enrollment = self.enrollments.get_by_course_and_learner(
+            course_id=course.course_id,
+            learner_id=user_id,
+        )
+        if enrollment is None or enrollment.enrollment_status not in {
+            EnrollmentStatus.ACTIVE,
+            EnrollmentStatus.COMPLETED,
+        }:
+            return False
+
+        return self.unlocking.is_module_unlocked(module_id=module.module_id, learner_id=user_id)
 
     def _get_lock_state(
         self,

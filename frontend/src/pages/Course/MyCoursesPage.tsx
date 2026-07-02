@@ -176,29 +176,29 @@ function MyCoursesPage() {
     <section className="course-center-page">
       <div className="course-center-hero">
         <div>
-          <span className="course-surface-badge">Learner Workspace</span>
-          <h1>Keep track of your enrolled courses</h1>
-          <p>Open the courses you already joined, review your study lineup, or cancel enrollment when needed.</p>
+          <span className="course-surface-badge">学生工作区</span>
+          <h1>追踪你已加入的课程</h1>
+          <p>打开已加入课程、查看学习安排，或在需要时取消报名。</p>
         </div>
 
         <label className="course-search-card">
-          <span>Search my courses</span>
+          <span>搜索我的课程</span>
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search by title, code, category, school..."
+            placeholder="按标题、代码、分类或学院搜索..."
           />
         </label>
       </div>
 
       <div className="course-center-toolbar">
-        <strong>{loading ? "Loading courses..." : `${totalCourses} enrolled courses`}</strong>
+        <strong>{loading ? "正在加载课程..." : `${totalCourses} enrolled courses`}</strong>
       </div>
 
       {error ? (
         <div className="course-management-inline-alert">
-          <strong>Unable to load your courses.</strong>
+          <strong>无法加载你的课程。</strong>
           <span>{error}</span>
         </div>
       ) : null}
@@ -217,13 +217,13 @@ function MyCoursesPage() {
         <div className="course-pagination">
           <span className="course-pagination-summary">{toolbarCopy}</span>
           {coursesPerPage > 0 && totalCourses > coursesPerPage ? (
-            <nav className="course-pagination-nav" aria-label="My courses pagination">
+            <nav className="course-pagination-nav" aria-label="我的课程分页">
           <button
             type="button"
             className="course-pagination-button"
             onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
             disabled={safeCurrentPage === 1}
-            aria-label="Go to previous my courses page"
+            aria-label="上一页我的课程"
           >
             <LuChevronLeft size={18} aria-hidden="true" />
           </button>
@@ -253,7 +253,7 @@ function MyCoursesPage() {
             className="course-pagination-button"
             onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
             disabled={safeCurrentPage === totalPages}
-            aria-label="Go to next my courses page"
+            aria-label="下一页我的课程"
             >
               <LuChevronRight size={18} aria-hidden="true" />
             </button>
