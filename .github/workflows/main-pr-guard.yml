@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   only-from-develop:
+    name: Only develop can target main
     if: github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     steps:

@@ -17,7 +17,17 @@ permissions:
   contents: read
 
 jobs:
+  conventions:
+    name: Commit and PR format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate workflow context
+        run: |
+          test -n "${GITHUB_SHA}"
+          test -n "${GITHUB_REF_NAME}"
+
   platform-common-check:
+    name: Shared package tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -38,6 +48,7 @@ jobs:
         run: pytest packages/platform_common/tests -q
 
   frontend-check:
+    name: Frontend lint and build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -644,6 +655,7 @@ jobs:
         run: docker compose --env-file .env -f infra/docker-compose.yml down -v --remove-orphans
 
   nginx-gateway-check:
+    name: Compose, backend tests, gateway smoke
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
