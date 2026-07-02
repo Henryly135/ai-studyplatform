@@ -3,8 +3,8 @@ import { LuArrowLeft, LuArrowUp, LuX } from "react-icons/lu";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { getChatSessionDetail, listModuleChatSessions, sendChatMessage } from "../../services/chat";
-import type { CourseChatMessage, ChatSessionSummary } from "../../types/chat";
+import { getAiModelCatalog, getChatSessionDetail, listModuleChatSessions, sendChatMessage } from "../../services/chat";
+import type { AiModelCatalog, CourseChatMessage, ChatSessionSummary } from "../../types/chat";
 
 type CourseChatSidebarProps = {
   isOpen: boolean;
@@ -17,12 +17,12 @@ type CourseChatSidebarProps = {
 
 function formatRelativeTimestamp(value: string | null) {
   if (!value) {
-    return "New";
+    return "新会话";
   }
 
   const timestamp = new Date(value);
   if (Number.isNaN(timestamp.getTime())) {
-    return "Recent";
+    return "最近";
   }
 
   return new Intl.DateTimeFormat("en-AU", {
@@ -62,6 +62,10 @@ function CourseChatSidebar({
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [isLoadingSessionDetail, setIsLoadingSessionDetail] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [modelCatalog, setModelCatalog] = useState<AiModelCatalog | null>(null);
+  const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState("");
+  const [modelSelectionTouched, setModelSelectionTouched] = useState(false);
   const messageViewportRef = useRef<HTMLDivElement | null>(null);
   const isViewingSession = activeSessionUuid !== null;
 
@@ -107,9 +111,56 @@ function CourseChatSidebar({
   }, [isOpen, moduleUuid]);
 
   useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void getAiModelCatalog()
+      .then((catalog) => {
+        if (cancelled) {
+          return;
+        }
+
+        setModelCatalog(catalog);
+        setModelCatalogError(null);
+        setSelectedModelId((current) => {
+          const availableModels = catalog.providers.flatMap((provider) =>
+            provider.models.filter((model) => model.available && model.capabilities.includes("chat"))
+          );
+          const currentStillAvailable = availableModels.some((model) => model.modelId === current);
+          if (currentStillAvailable) {
+            return current;
+          }
+          return (
+            availableModels.find((model) => model.modelId === catalog.userSelectedModelId)?.modelId ??
+            availableModels.find((model) => model.modelId === catalog.defaultModelId || model.isDefault)?.modelId ??
+            availableModels[0]?.modelId ??
+            ""
+          );
+        });
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+
+        setModelCatalog(null);
+        setSelectedModelId("");
+        setModelCatalogError(error instanceof Error ? error.message : "模型目录加载失败。");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
     setActiveSessionUuid(null);
     setMessages([]);
     setComposerValue("");
+    setModelSelectionTouched(false);
     if (isOpen) {
       setStatus("选择一个会话，或发送新消息开始另一个会话。");
     }
@@ -181,6 +232,7 @@ function CourseChatSidebar({
         moduleUuid,
         message: trimmedMessage,
         sessionUuid: activeSessionUuid,
+        modelId: modelSelectionTouched ? selectedModelId || undefined : undefined,
       });
 
       await refreshSessions(response.session_uuid);
@@ -313,6 +365,34 @@ function CourseChatSidebar({
             }}
           >
             <p className="course-chat-status-text">{status}</p>
+            <label className="course-chat-model-picker">
+              <span>模型</span>
+              <select
+                value={selectedModelId}
+                onChange={(event) => {
+                  setSelectedModelId(event.target.value);
+                  setModelSelectionTouched(true);
+                }}
+                disabled={isSending || !modelCatalog}
+              >
+                {!modelCatalog ? <option value="">默认模型</option> : null}
+                {modelCatalog?.providers.map((provider) => (
+                  <optgroup key={provider.provider} label={provider.label || provider.provider}>
+                    {provider.models
+                      .filter((model) => model.capabilities.includes("chat"))
+                      .map((model) => (
+                        <option key={model.modelId} value={model.modelId} disabled={!model.available}>
+                          {model.name}
+                          {model.modelId === modelCatalog.userSelectedModelId ? " (已选)" : ""}
+                          {model.isDefault || model.modelId === modelCatalog.defaultModelId ? " (默认)" : ""}
+                          {!model.available && model.unavailableReason ? ` - ${model.unavailableReason}` : ""}
+                        </option>
+                      ))}
+                  </optgroup>
+                ))}
+              </select>
+              {modelCatalogError ? <small>{modelCatalogError}</small> : null}
+            </label>
             <div className="course-chat-composer-row">
               <textarea
                 value={composerValue}

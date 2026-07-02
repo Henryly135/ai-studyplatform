@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from time import perf_counter
+from time import perf_counter, sleep
 import re
-from time import sleep
 from uuid import uuid4
 
-from google import genai
+from fastapi import HTTPException
 from google.genai import errors as genai_errors
-from google.genai import types
 from langchain_core.messages import BaseMessage
 from sqlalchemy.orm import Session
 
@@ -16,14 +14,18 @@ from app.core.config import settings
 from app.core.prompts import get_prompt_template
 from app.models.ai_prompt_logs import AIPromptStatus
 from app.services.provider_error_messages import (
+    AI_EMBEDDING_PROVIDER_UNAVAILABLE,
+    AI_EMBEDDING_PROVIDER_UNSUPPORTED,
     AI_PROVIDER_CONFIGURATION_UNAVAILABLE,
     AI_PROVIDER_TEMPORARILY_UNAVAILABLE,
 )
 from app.services.chat.chat_history_service import ChatHistoryService
 from app.services.chat.custom_pgvector_retriever import CustomPgvectorRetriever, CustomPgvectorRetrieverInput
 from app.services.chat.langchain_message_adapter import to_langchain_messages
-from app.services.chat.langchain_rag_service import render_rag_user_prompt, run_langchain_chat
+from app.services.chat.langchain_rag_service import render_rag_user_prompt
 from app.services.chat.rag_retrieval_service import RetrievalResult
+from app.services.providers.model_service import AIModelInvocationService
+from app.services.providers.types import ProviderConfigurationError, ProviderInvocationError, ProviderQuotaError
 
 _COURSE_CONTEXT_MARKERS = {
     "module",
@@ -207,17 +209,17 @@ class ChatWorkflowResult:
         ]
 
 
-def _build_client() -> genai.Client:
-    if not settings.gemini_api_key:
-        raise AIChatConfigurationError(AI_PROVIDER_CONFIGURATION_UNAVAILABLE)
-    return genai.Client(api_key=settings.gemini_api_key)
+def build_rag_user_prompt(*, current_user_message: str, retrieval_result: RetrievalResult) -> str:
+    return render_rag_user_prompt(
+        current_user_message=current_user_message,
+        retrieval_result=retrieval_result,
+    )
 
 
 def _extract_usage_value(usage_metadata: object, *names: str) -> int | None:
     for name in names:
         if isinstance(usage_metadata, dict) and usage_metadata.get(name) is not None:
             return int(usage_metadata[name])
-
         value = getattr(usage_metadata, name, None)
         if value is not None:
             return int(value)
@@ -229,7 +231,6 @@ def _safe_usage_metadata(usage_metadata: object) -> dict | None:
         return None
     if isinstance(usage_metadata, dict):
         return usage_metadata
-
     result: dict[str, int | str | None] = {}
     for name in (
         "prompt_token_count",
@@ -243,13 +244,6 @@ def _safe_usage_metadata(usage_metadata: object) -> dict | None:
         if value is not None:
             result[name] = int(value)
     return result or None
-
-
-def build_rag_user_prompt(*, current_user_message: str, retrieval_result: RetrievalResult) -> str:
-    return render_rag_user_prompt(
-        current_user_message=current_user_message,
-        retrieval_result=retrieval_result,
-    )
 
 
 def _has_retrieved_context(retrieval_result: RetrievalResult | None) -> bool:
@@ -343,12 +337,27 @@ def _invoke_with_short_retries(
     for attempt in range(len(delays) + 1):
         try:
             return invoke_fn(), None
+        except ProviderQuotaError as exc:
+            raise AIChatQuotaError("AI provider quota is temporarily unavailable.") from exc
+        except ProviderConfigurationError as exc:
+            raise AIChatConfigurationError(AI_PROVIDER_CONFIGURATION_UNAVAILABLE) from exc
+        except ProviderInvocationError as exc:
+            provider_error_type = exc.provider_error_type
+            if attempt < len(delays) and _is_retryable_provider_error(provider_error_type):
+                sleep(delays[attempt])
+                last_exc = exc
+                continue
+            raise AIModelInvocationError(
+                AI_PROVIDER_TEMPORARILY_UNAVAILABLE,
+                provider_error_type=provider_error_type,
+                orchestrator=orchestrator,
+                chain_name=chain_name,
+                fallback_used=fallback_used,
+            ) from exc
         except genai_errors.ClientError as exc:
             provider_error_type = _classify_provider_error(exc)
             if provider_error_type == "quota":
-                raise AIChatQuotaError(
-                    "Gemini quota exceeded. Please retry shortly or check billing/quota limits."
-                ) from exc
+                raise AIChatQuotaError("AI provider quota is temporarily unavailable.") from exc
             if attempt < len(delays) and _is_retryable_provider_error(provider_error_type):
                 sleep(delays[attempt])
                 last_exc = exc
@@ -383,12 +392,51 @@ def _invoke_with_short_retries(
     )
 
 
+def _serialize_conversation_history(conversation_history: list[BaseMessage] | None) -> str:
+    if not conversation_history:
+        return ""
+    lines: list[str] = []
+    for message in conversation_history[-8:]:
+        content = message.content
+        rendered = " ".join(str(item) for item in content) if isinstance(content, list) else str(content)
+        if rendered.strip():
+            lines.append(f"{message.type}: {rendered.strip()}")
+    return "\n".join(lines)
+
+
+def _build_provider_prompt_input(
+    *,
+    current_user_message: str,
+    retrieval_result: RetrievalResult | None,
+    conversation_history: list[BaseMessage] | None,
+) -> str:
+    if retrieval_result is not None:
+        prompt_input_text = build_rag_user_prompt(
+            current_user_message=current_user_message,
+            retrieval_result=retrieval_result,
+        )
+    else:
+        prompt_input_text = current_user_message.strip()
+    history_text = _serialize_conversation_history(conversation_history)
+    if not history_text:
+        return prompt_input_text
+    return (
+        "Conversation history:\n"
+        f"{history_text}\n\n"
+        "Current turn:\n"
+        f"{prompt_input_text}"
+    )
+
+
 def generate_chat_reply(
     *,
     current_user_message: str,
     prompt_template_name: str = "chat_reply_v1",
     retrieval_result: RetrievalResult | None = None,
     conversation_history: list[BaseMessage] | None = None,
+    db: Session | None = None,
+    user_id: int | None = None,
+    model_id: str | None = None,
 ) -> AIChatReplyResult:
     started_at = perf_counter()
     trace_id = str(uuid4())
@@ -407,6 +455,8 @@ def generate_chat_reply(
             latency_ms=latency_ms,
             request_json={
                 "model": None,
+                "modelId": None,
+                "provider": None,
                 "contents": current_user_message,
                 "config": None,
                 "prompt_template_name": "time_sensitive_guardrail_v1",
@@ -428,120 +478,55 @@ def generate_chat_reply(
             trace_id=trace_id,
         )
 
-    langchain_failure: AIModelInvocationError | None = None
-    if settings.ai_chat_orchestrator.strip().lower() == "langchain":
-        try:
-            chain_result, _ = _invoke_with_short_retries(
-                invoke_fn=lambda: run_langchain_chat(
-                    current_user_message=current_user_message,
-                    prompt=prompt,
-                    retrieval_result=retrieval_result if use_retrieval else None,
-                    conversation_history=conversation_history,
-                ),
-                orchestrator="langchain",
-                chain_name=chain_name,
-                fallback_used=False,
-            )
-            latency_ms = int((perf_counter() - started_at) * 1000)
-            request_json = dict(chain_result.request_json)
-            request_json.update(
-                {
-                    "orchestrator": "langchain",
-                    "chain_name": chain_name,
-                    "fallback_used": False,
-                    "provider_error_type": None,
-                }
-            )
-            response_json = dict(chain_result.response_json)
-            response_json.update(
-                {
-                    "orchestrator": "langchain",
-                    "chain_name": chain_name,
-                    "fallback_used": False,
-                    "provider_error_type": None,
-                }
-            )
-            return AIChatReplyResult(
-                reply=chain_result.reply or "Sorry, I could not generate a response this time.",
-                prompt_tokens=None,
-                completion_tokens=None,
-                total_tokens=None,
-                latency_ms=latency_ms,
-                request_json=request_json,
-                response_json=response_json,
-                status=AIPromptStatus.SUCCESS,
-                error_message=None,
-                trace_id=trace_id,
-            )
-        except AIModelInvocationError as exc:
-            langchain_failure = exc
-
-    client = _build_client()
-    prompt_input_text = (
-        build_rag_user_prompt(
-            current_user_message=current_user_message,
-            retrieval_result=retrieval_result,
-        )
-        if use_retrieval
-        else current_user_message
+    prompt_input_text = _build_provider_prompt_input(
+        current_user_message=current_user_message,
+        retrieval_result=retrieval_result if use_retrieval else None,
+        conversation_history=conversation_history,
     )
-    request_json = {
-        "model": settings.ai_demo_model_name,
-        "contents": prompt_input_text,
-        "config": {
-            "system_instruction": prompt.system_instruction,
-            "temperature": 0.5,
-            "max_output_tokens": settings.ai_chat_max_output_tokens,
-        },
-        "prompt_template_name": prompt.name,
-        "orchestrator": "direct_sdk",
-        "chain_name": chain_name,
-        "fallback_used": settings.ai_chat_orchestrator.strip().lower() == "langchain",
-        "provider_error_type": None,
-        "fallback_source_error_type": langchain_failure.provider_error_type if langchain_failure else None,
-    }
     try:
-        response, _ = _invoke_with_short_retries(
-            invoke_fn=lambda: client.models.generate_content(
-                model=settings.ai_demo_model_name,
-                contents=prompt_input_text,
-                config=types.GenerateContentConfig(
-                    system_instruction=prompt.system_instruction,
-                    temperature=0.5,
-                    max_output_tokens=settings.ai_chat_max_output_tokens,
-                ),
+        provider_result, _ = _invoke_with_short_retries(
+            invoke_fn=lambda: AIModelInvocationService(db).generate_text(
+                prompt=prompt_input_text,
+                system_instruction=prompt.system_instruction,
+                model_id=model_id,
+                user_id=user_id,
+                temperature=settings.ai_chat_temperature,
+                max_output_tokens=settings.ai_chat_max_output_tokens,
             ),
-            orchestrator="direct_sdk",
+            orchestrator="provider_adapter",
             chain_name=chain_name,
-            fallback_used=settings.ai_chat_orchestrator.strip().lower() == "langchain",
+            fallback_used=False,
         )
     except AIChatQuotaError:
         raise
-    except AIModelInvocationError as exc:
-        request_json["provider_error_type"] = exc.provider_error_type
-        raise
 
     latency_ms = int((perf_counter() - started_at) * 1000)
-    usage_metadata = getattr(response, "usage_metadata", None)
-    prompt_tokens = _extract_usage_value(usage_metadata, "prompt_token_count", "input_tokens")
-    completion_tokens = _extract_usage_value(usage_metadata, "candidates_token_count", "output_tokens")
-    total_tokens = _extract_usage_value(usage_metadata, "total_token_count", "total_tokens")
-    response_json = {
-        "text": getattr(response, "text", None),
-        "usage_metadata": _safe_usage_metadata(usage_metadata),
-        "orchestrator": "direct_sdk",
-        "chain_name": chain_name,
-        "fallback_used": settings.ai_chat_orchestrator.strip().lower() == "langchain",
-        "provider_error_type": None,
-        "fallback_source_error_type": langchain_failure.provider_error_type if langchain_failure else None,
-    }
+    request_json = dict(provider_result.request_json)
+    request_json.update(
+        {
+            "prompt_template_name": prompt.name,
+            "orchestrator": "provider_adapter",
+            "chain_name": chain_name,
+            "fallback_used": False,
+            "provider_error_type": None,
+        }
+    )
+    response_json = dict(provider_result.response_json)
+    response_json.update(
+        {
+            "orchestrator": "provider_adapter",
+            "chain_name": chain_name,
+            "fallback_used": False,
+            "provider_error_type": None,
+        }
+    )
 
-    if getattr(response, "text", None):
+    if provider_result.text:
         return AIChatReplyResult(
-            reply=response.text.strip(),
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
+            reply=provider_result.text.strip(),
+            prompt_tokens=provider_result.prompt_tokens,
+            completion_tokens=provider_result.completion_tokens,
+            total_tokens=provider_result.total_tokens,
             latency_ms=latency_ms,
             request_json=request_json,
             response_json=response_json,
@@ -552,9 +537,9 @@ def generate_chat_reply(
 
     return AIChatReplyResult(
         reply="Sorry, I could not generate a response this time.",
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
+        prompt_tokens=provider_result.prompt_tokens,
+        completion_tokens=provider_result.completion_tokens,
+        total_tokens=provider_result.total_tokens,
         latency_ms=latency_ms,
         request_json=request_json,
         response_json=response_json,
@@ -568,7 +553,19 @@ class RAGWorkflowService:
     def __init__(self, session: Session) -> None:
         self.session = session
         self.history_service = ChatHistoryService(session)
-        self.retriever = CustomPgvectorRetriever(session)
+        self._retriever: CustomPgvectorRetriever | None = None
+
+    @property
+    def retriever(self) -> CustomPgvectorRetriever:
+        if self._retriever is None:
+            self._retriever = CustomPgvectorRetriever(self.session)
+        return self._retriever
+
+    @staticmethod
+    def _is_embedding_unavailable_error(exc: HTTPException) -> bool:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        message = str(detail.get("message") or exc.detail or "")
+        return message in {AI_EMBEDDING_PROVIDER_UNAVAILABLE, AI_EMBEDDING_PROVIDER_UNSUPPORTED}
 
     def execute_chat_workflow(
         self,
@@ -579,6 +576,7 @@ class RAGWorkflowService:
         current_user_message: str,
         course_id: int | None,
         module_id: int | None,
+        model_id: str | None = None,
     ) -> ChatWorkflowResult:
         is_time_sensitive_non_course = _is_time_sensitive_question(current_user_message) and not _is_course_scoped_question(
             current_user_message
@@ -593,17 +591,22 @@ class RAGWorkflowService:
 
         retrieval_result: RetrievalResult | None = None
         if course_id is not None and not is_time_sensitive_non_course:
-            retrieval_result = self.retriever.invoke(
-                CustomPgvectorRetrieverInput(
-                    user_id=user_id,
-                    query_text=current_user_message.strip(),
-                    course_id=course_id,
-                    module_id=module_id,
-                    session_id=session_id,
-                    message_id=message_id,
-                    top_k=settings.ai_retrieval_top_k,
+            try:
+                retrieval_result = self.retriever.invoke(
+                    CustomPgvectorRetrieverInput(
+                        user_id=user_id,
+                        query_text=current_user_message.strip(),
+                        course_id=course_id,
+                        module_id=module_id,
+                        session_id=session_id,
+                        message_id=message_id,
+                        top_k=settings.ai_retrieval_top_k,
+                    )
                 )
-            )
+            except HTTPException as exc:
+                if not self._is_embedding_unavailable_error(exc):
+                    raise
+                retrieval_result = None
 
         use_retrieval = False if is_time_sensitive_non_course else should_use_retrieval(
             current_user_message, retrieval_result
@@ -614,6 +617,9 @@ class RAGWorkflowService:
             prompt_template_name=prompt_template_name,
             retrieval_result=retrieval_result if use_retrieval else None,
             conversation_history=conversation_history,
+            db=self.session,
+            user_id=user_id,
+            model_id=model_id,
         )
         retrieval_context_text = (
             build_rag_user_prompt(

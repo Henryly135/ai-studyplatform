@@ -15,6 +15,7 @@ from app.models.ai_embedding_logs import AIEmbeddingLog
 from app.models.ai_index_jobs import AIIndexJob, AIJobStatus
 from app.models.ai_prompt_logs import AIPromptLog, AIPromptStatus
 from app.models.ai_retrieval_logs import AIRetrievalLog
+from app.repositories.ai_model_catalog_repository import AIModelCatalogRepository
 from app.schemas.admin_telemetry import (
     AdminAIGovernanceAlert,
     AdminAIGovernanceMetric,
@@ -38,6 +39,7 @@ from app.schemas.admin_telemetry import (
     RetrievalTelemetry,
     TelemetryCountByStatus,
 )
+from app.services.providers.model_service import AIModelCatalogService
 
 _SECRET_PATTERNS = [
     re.compile(r"(?i)(bearer\s+)[a-z0-9._~+/=-]+"),
@@ -60,6 +62,15 @@ class AdminAITelemetryService:
         )
 
     def get_provider_config_status(self) -> AdminAIProviderConfigResponse:
+        default_chat_model = None
+        if hasattr(self.session, "get"):
+            repo = AIModelCatalogRepository(self.session)
+            defaults = repo.get_defaults()
+            default_chat_model = (
+                repo.get_model(defaults.default_chat_model_id)
+                if defaults and defaults.default_chat_model_id
+                else None
+            )
         items = [
             self._build_chat_provider_config_item(),
             self._build_embedding_provider_config_item(),
@@ -72,8 +83,8 @@ class AdminAITelemetryService:
         return AdminAIProviderConfigResponse(
             generatedAt=self._format_datetime(datetime.now(timezone.utc)) or "",
             overallStatus=self._overall_config_status(items),
-            provider="gemini",
-            model=settings.ai_demo_model_name,
+            provider=default_chat_model.provider_key if default_chat_model else "gemini",
+            model=default_chat_model.model_name if default_chat_model else getattr(settings, "ai_demo_model_name", "unconfigured"),
             embeddingProvider=settings.ai_embedding_provider,
             embeddingModel=settings.ai_embedding_model,
             storageProvider=settings.object_storage_provider,
@@ -81,6 +92,7 @@ class AdminAITelemetryService:
         )
 
     def get_provider_health(self, *, days: int = 14) -> AdminAIProviderHealthResponse:
+        AIModelCatalogService(self.session).ensure_seeded()
         normalized_days = min(max(days, 1), 60)
         now = datetime.now(timezone.utc)
         window_start = now - timedelta(days=normalized_days)
@@ -107,7 +119,7 @@ class AdminAITelemetryService:
             windowEnd=self._format_datetime(now) or "",
             days=normalized_days,
             overallStatus=self._overall_provider_health_status(items=items, anomalies=anomalies),
-            provider="gemini",
+            provider="multi_provider",
             totalCalls=total_calls,
             successRatePercent=self._format_float(self._percentage(total_success, total_calls)) or 0.0,
             averageLatencyMs=self._format_float(weighted_latency),
@@ -562,7 +574,7 @@ class AdminAITelemetryService:
         return [
             self._build_provider_health_item(
                 key=f"prompt:{self._status_value(call_type)}:{model_name}",
-                provider="gemini",
+                provider=self._provider_for_model_name(model_name),
                 model_name=model_name,
                 call_type=self._status_value(call_type),
                 total_calls=int(total or 0),
@@ -574,6 +586,13 @@ class AdminAITelemetryService:
             )
             for model_name, call_type, total, success, failed, timeout, avg_latency, latest_at in self.session.execute(stmt).all()
         ]
+
+    def _provider_for_model_name(self, model_name: str) -> str:
+        repo = AIModelCatalogRepository(self.session)
+        for model in repo.list_models():
+            if model.model_name == model_name or model.model_id == model_name:
+                return model.provider_key
+        return "unknown"
 
     def _get_embedding_provider_health_items(self, window_start: datetime) -> list[AdminAIProviderHealthItem]:
         stmt = (
@@ -1256,27 +1275,62 @@ class AdminAITelemetryService:
         }
 
     def _build_chat_provider_config_item(self) -> AdminAIProviderConfigItem:
-        if not settings.gemini_api_key:
+        if not hasattr(self.session, "get"):
+            if not getattr(settings, "gemini_api_key", ""):
+                return AdminAIProviderConfigItem(
+                    key="chat_provider",
+                    label="Chat provider",
+                    status="blocked",
+                    detail=f"gemini / {getattr(settings, 'ai_demo_model_name', 'unconfigured')}",
+                    recommendation="Configure an AI provider API key before enabling production AI chat.",
+                )
+            return AdminAIProviderConfigItem(
+                key="chat_provider",
+                label="Chat provider",
+                status="ready",
+                detail=f"gemini / {getattr(settings, 'ai_demo_model_name', 'unconfigured')}",
+            )
+        catalog = AIModelCatalogService(self.session)
+        catalog.ensure_seeded()
+        repo = AIModelCatalogRepository(self.session)
+        defaults = repo.get_defaults()
+        model = repo.get_model(defaults.default_chat_model_id) if defaults and defaults.default_chat_model_id else None
+        if model is None:
             return AdminAIProviderConfigItem(
                 key="chat_provider",
                 label="Chat provider",
                 status="blocked",
-                detail=f"gemini / {settings.ai_demo_model_name}",
-                recommendation="Configure GEMINI_API_KEY before enabling production AI chat.",
+                detail="No default chat model",
+                recommendation="Set a default chat model in AI provider settings.",
+            )
+        availability = catalog.availability_for_model(model)
+        provider = repo.get_provider(model.provider_key)
+        if not availability.available:
+            return AdminAIProviderConfigItem(
+                key="chat_provider",
+                label="Chat provider",
+                status="blocked",
+                detail=f"{model.provider_key} / {model.model_name}",
+                recommendation=availability.reason or "Configure a supported AI provider credential.",
             )
         return AdminAIProviderConfigItem(
             key="chat_provider",
             label="Chat provider",
             status="ready",
-            detail=f"gemini / {settings.ai_demo_model_name}",
+            detail=f"{provider.display_name if provider else model.provider_key} / {model.model_name}",
         )
 
     def _build_embedding_provider_config_item(self) -> AdminAIProviderConfigItem:
         provider = settings.ai_embedding_provider.strip().lower()
-        requires_gemini_key = provider == "gemini"
-        if requires_gemini_key and not settings.gemini_api_key:
+        credential = AIModelCatalogRepository(self.session).get_credential(provider) if hasattr(self.session, "get") else None
+        missing_gemini_key = (
+            provider == "gemini"
+            and hasattr(self.session, "get")
+            and (credential is None or not credential.is_enabled or not credential.encrypted_api_key)
+        )
+        if missing_gemini_key:
             status = "blocked"
-            recommendation = "Configure GEMINI_API_KEY before indexing course materials."
+            recommendation = "Configure the Gemini provider API key before indexing course materials."
         elif settings.ai_embedding_output_dimension <= 0 or settings.ai_embedding_dimension <= 0:
             status = "blocked"
             recommendation = "Set positive embedding dimensions before running indexing jobs."

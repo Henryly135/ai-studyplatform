@@ -17,8 +17,9 @@ class LangChainEmbeddingExecutionResult:
 
 
 class LangChainEmbeddingService:
-    def __init__(self) -> None:
-        if not settings.gemini_api_key:
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key.strip()
+        if not self.api_key:
             raise invalid_request_error(AI_EMBEDDING_PROVIDER_UNAVAILABLE)
 
     def embed_query(self, *, text: str) -> LangChainEmbeddingExecutionResult:
@@ -93,6 +94,6 @@ class LangChainEmbeddingService:
     def _build_embeddings(self, *, task_type: str) -> GoogleGenerativeAIEmbeddings:
         return GoogleGenerativeAIEmbeddings(
             model=settings.ai_embedding_model,
-            google_api_key=settings.gemini_api_key,
+            google_api_key=self.api_key,
             task_type=task_type,
         )

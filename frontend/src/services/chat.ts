@@ -9,6 +9,7 @@ import type {
   AdminAiTelemetryFailuresResponse,
   AdminAiTelemetrySummary,
   AdminAiTelemetryTrendResponse,
+  AiModelCatalog,
   AiRuntimeHealth,
   ChatSessionDetail,
   ChatSessionSummary,
@@ -23,6 +24,7 @@ import {
 
 const CHAT_API_URL = "/api/ai/chat";
 const CHAT_SESSIONS_API_URL = "/api/ai/chat/sessions";
+const AI_MODELS_API_URL = "/api/ai/models";
 const AI_RUNTIME_HEALTH_URL = "/api/ai/demo/health";
 const ADMIN_AI_TELEMETRY_SUMMARY_URL = "/api/ai/admin/telemetry/summary";
 const ADMIN_AI_TELEMETRY_TRENDS_URL = "/api/ai/admin/telemetry/trends";
@@ -133,8 +135,116 @@ function toNullableString(value: unknown) {
   return value === null || value === undefined ? null : String(value);
 }
 
+function toStringList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item));
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .filter(([, enabled]) => toBoolean(enabled))
+      .map(([key]) => key);
+  }
+  return [];
+}
+
+function toBoolean(value: unknown, fallback = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return fallback;
+}
+
 function getField(data: Record<string, unknown>, camelKey: string, snakeKey?: string) {
   return data[camelKey] ?? (snakeKey ? data[snakeKey] : undefined);
+}
+
+function normalizeAiModelCatalogModel(
+  payload: unknown,
+  fallbackProvider = ""
+): AiModelCatalog["providers"][number]["models"][number] {
+  const data = asRecord(payload);
+  const provider = String(data.provider ?? fallbackProvider);
+  const modelId = String(getField(data, "modelId", "model_id") ?? data.id ?? data.name ?? "");
+  const unavailableReason = toNullableString(
+    getField(data, "unavailableReason", "unavailable_reason") ?? data.reason
+  );
+
+  return {
+    modelId,
+    provider,
+    name: String(data.name ?? getField(data, "displayName", "display_name") ?? data.modelName ?? modelId),
+    description: toNullableString(data.description),
+    available: data.available === undefined ? !unavailableReason : toBoolean(data.available),
+    unavailableReason,
+    backendSupported: toBoolean(getField(data, "backendSupported", "backend_supported"), true),
+    displayOnly: toBoolean(getField(data, "displayOnly", "display_only")),
+    isDefault: toBoolean(getField(data, "isDefaultChat", "is_default_chat") ?? getField(data, "isDefault", "is_default")),
+    capabilities: toStringList(data.capabilities),
+  };
+}
+
+function normalizeAiModelProvider(payload: unknown): AiModelCatalog["providers"][number] {
+  const data = asRecord(payload);
+  const provider = String(data.provider ?? data.id ?? "");
+
+  return {
+    provider,
+    label: String(data.label ?? data.name ?? provider),
+    backendSupported: toBoolean(getField(data, "backendSupported", "backend_supported"), true),
+    configured: toBoolean(data.configured ?? getField(data, "hasCredential", "has_credential")),
+    models: Array.isArray(data.models)
+      ? data.models.map((model) => normalizeAiModelCatalogModel(model, provider))
+      : [],
+  };
+}
+
+function normalizeAiModelCatalog(payload: unknown): AiModelCatalog {
+  const data = asRecord(payload);
+  const providers = Array.isArray(data.providers) ? data.providers.map(normalizeAiModelProvider) : [];
+  const rawModels = Array.isArray(data.items) ? data.items : Array.isArray(data.models) ? data.models : [];
+
+  if (providers.length === 0 && rawModels.length > 0) {
+    const groupedProviders = new Map<string, AiModelCatalog["providers"][number]>();
+    rawModels.map((model) => normalizeAiModelCatalogModel(model)).forEach((model) => {
+      const providerKey = model.provider || "default";
+      const currentProvider = groupedProviders.get(providerKey);
+      if (currentProvider) {
+        currentProvider.models.push(model);
+        currentProvider.configured = currentProvider.configured || model.available;
+        currentProvider.backendSupported = currentProvider.backendSupported || model.backendSupported;
+      } else {
+        groupedProviders.set(providerKey, {
+          provider: providerKey,
+          label: providerKey,
+          backendSupported: model.backendSupported,
+          configured: model.available,
+          models: [model],
+        });
+      }
+    });
+    providers.push(...groupedProviders.values());
+  }
+
+  return {
+    generatedAt: String(getField(data, "generatedAt", "generated_at") ?? ""),
+    defaultModelId: toNullableString(getField(data, "defaultChatModelId", "default_chat_model_id") ?? getField(data, "defaultModelId", "default_model_id")),
+    userSelectedModelId: toNullableString(
+      getField(data, "userSelectedChatModelId", "user_selected_chat_model_id") ??
+        getField(data, "userSelectedModelId", "user_selected_model_id")
+    ),
+    providers,
+  };
 }
 
 function normalizeCountByStatus(payload: unknown): AdminAiTelemetrySummary["indexJobs"]["byStatus"][number] {
@@ -489,6 +599,14 @@ export async function getChatSessionDetail(sessionUuid: string): Promise<ChatSes
   return parseResponse<ChatSessionDetail>(response);
 }
 
+export async function getAiModelCatalog(): Promise<AiModelCatalog> {
+  const response = await fetch(AI_MODELS_API_URL, {
+    headers: buildAuthHeaders(),
+  });
+
+  return normalizeAiModelCatalog(await parseResponse<unknown>(response));
+}
+
 export async function getAiRuntimeHealth(): Promise<AiRuntimeHealth> {
   const response = await fetch(AI_RUNTIME_HEALTH_URL, {
     headers: buildAuthHeaders(),
@@ -619,19 +737,25 @@ export async function sendChatMessage(payload: {
   moduleUuid: string;
   message: string;
   sessionUuid?: string | null;
+  modelId?: string | null;
 }) {
   getAccessToken();
+  const requestBody: Record<string, unknown> = {
+    session_uuid: payload.sessionUuid ?? null,
+    course_uuid: payload.courseUuid,
+    module_uuid: payload.moduleUuid,
+    message: payload.message,
+  };
+  if (payload.modelId) {
+    requestBody.model_id = payload.modelId;
+  }
+
   const response = await fetch(CHAT_API_URL, {
     method: "POST",
     headers: buildAuthHeaders({
       "Content-Type": "application/json",
     }),
-    body: JSON.stringify({
-      session_uuid: payload.sessionUuid ?? null,
-      course_uuid: payload.courseUuid,
-      module_uuid: payload.moduleUuid,
-      message: payload.message,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   const data = await parseResponse<ChatSuccessResponse>(response);

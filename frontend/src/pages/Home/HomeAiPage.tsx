@@ -5,7 +5,14 @@ import { LuArrowLeft, LuDownload, LuRefreshCw, LuSearch } from "react-icons/lu";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { getAdminUsers } from "../../services/admin";
+import {
+  checkAdminAiProviderCredentialHealth,
+  deleteAdminAiProviderCredential,
+  getAdminUsers,
+  listAdminAiProviderCredentials,
+  saveAdminAiProviderCredential,
+  setAdminAiDefaultModel,
+} from "../../services/admin";
 import {
   getAdminAiGovernance,
   getAdminAiProviderConfig,
@@ -13,6 +20,7 @@ import {
   getAdminAiTelemetryAnomalies,
   getAdminAiTelemetrySummary,
   getAdminAiTelemetryTrends,
+  getAiModelCatalog,
   getAiRuntimeHealth,
   exportAdminAiTelemetryFailures,
   getChatSessionDetail,
@@ -28,7 +36,7 @@ import {
   getManagedCourses,
   getMyEnrolledCourses,
 } from "../../services/course";
-import type { AdminUserResponse } from "../../types/admin";
+import type { AdminAiProviderCredential, AdminUserResponse } from "../../types/admin";
 import type {
   AdminAiGovernance,
   AdminAiProviderConfig,
@@ -38,6 +46,7 @@ import type {
   AdminAiTelemetryFailureFilters,
   AdminAiTelemetrySummary,
   AdminAiTelemetryTrendPoint,
+  AiModelCatalog,
   AiRuntimeHealth,
   ChatSessionDetail,
   ChatSessionSummary,
@@ -63,6 +72,8 @@ type RoleAiDashboardState = {
   adminUsers: AdminUserResponse[];
   aiHealth: AiRuntimeHealth | null;
   aiHealthError: string | null;
+  aiModelCatalog: AiModelCatalog | null;
+  aiProviderCredentials: AdminAiProviderCredential[];
   aiGovernance: AdminAiGovernance | null;
   aiProviderConfig: AdminAiProviderConfig | null;
   aiProviderHealth: AdminAiProviderHealth | null;
@@ -81,6 +92,8 @@ const EMPTY_ROLE_AI_DASHBOARD: RoleAiDashboardState = {
   adminUsers: [],
   aiHealth: null,
   aiHealthError: null,
+  aiModelCatalog: null,
+  aiProviderCredentials: [],
   aiGovernance: null,
   aiProviderConfig: null,
   aiProviderHealth: null,
@@ -103,12 +116,12 @@ const DEFAULT_ADMIN_FAILURE_FILTERS: AdminAiTelemetryFailureFilters = {
 
 function formatSessionTimestamp(value: string | null) {
   if (!value) {
-    return "No activity yet";
+    return "暂无活动";
   }
 
   const timestamp = new Date(value);
   if (Number.isNaN(timestamp.getTime())) {
-    return "Recent";
+    return "最近";
   }
 
   return new Intl.DateTimeFormat("en-AU", {
@@ -148,7 +161,7 @@ function formatPercent(value: number | null | undefined) {
 
 function formatLatency(value: number | null | undefined) {
   if (typeof value !== "number" || Number.isNaN(value)) {
-    return "No latency";
+    return "暂无延迟数据";
   }
   if (value >= 1000) {
     return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}s`;
@@ -158,15 +171,15 @@ function formatLatency(value: number | null | undefined) {
 
 function formatTrendDelta(recent: number, previous: number) {
   if (previous === 0) {
-    return recent > 0 ? "new activity" : "flat vs previous 7d";
+    return recent > 0 ? "新增活动" : "较前 7 天持平";
   }
 
   const delta = ((recent - previous) / previous) * 100;
   if (Math.abs(delta) < 1) {
-    return "flat vs previous 7d";
+    return "较前 7 天持平";
   }
 
-  return `${delta > 0 ? "+" : ""}${Math.round(delta)}% vs previous 7d`;
+  return `较前 7 天 ${delta > 0 ? "+" : ""}${Math.round(delta)}%`;
 }
 
 function normalizeStatus(value: string | undefined | null) {
@@ -216,6 +229,11 @@ function HomeAiPage() {
   const [failureAuditNotice, setFailureAuditNotice] = useState<string | null>(null);
   const [failureAuditExporting, setFailureAuditExporting] = useState(false);
   const [retryingIndexJobId, setRetryingIndexJobId] = useState<number | null>(null);
+  const [credentialDrafts, setCredentialDrafts] = useState<Record<string, string>>({});
+  const [credentialActionProvider, setCredentialActionProvider] = useState<string | null>(null);
+  const [credentialActionError, setCredentialActionError] = useState<string | null>(null);
+  const [credentialActionNotice, setCredentialActionNotice] = useState<string | null>(null);
+  const [selectedDefaultModelId, setSelectedDefaultModelId] = useState("");
 
   useEffect(() => {
     if (!isLearner) {
@@ -271,7 +289,7 @@ function HomeAiPage() {
         errors.push(
           managedCoursesResult.reason instanceof Error
             ? managedCoursesResult.reason.message
-            : "Failed to load managed courses."
+            : "管理课程加载失败。"
         );
       }
 
@@ -298,7 +316,7 @@ function HomeAiPage() {
           errors.push(
             analyticsResult.reason instanceof Error
               ? analyticsResult.reason.message
-              : "Failed to load educator analytics."
+              : "教师分析加载失败。"
           );
         }
 
@@ -308,7 +326,7 @@ function HomeAiPage() {
           errors.push(
             quizAnalyticsResult.reason instanceof Error
               ? quizAnalyticsResult.reason.message
-              : "Failed to load quiz analytics."
+              : "测验分析加载失败。"
           );
         }
 
@@ -318,7 +336,7 @@ function HomeAiPage() {
           errors.push(
             teachingInsightsResult.reason instanceof Error
               ? teachingInsightsResult.reason.message
-              : "Failed to load teaching insights."
+              : "教学洞察加载失败。"
           );
         }
 
@@ -328,7 +346,7 @@ function HomeAiPage() {
           errors.push(
             materialBriefsResult.reason instanceof Error
               ? materialBriefsResult.reason.message
-              : "Failed to load material briefs."
+              : "资料摘要加载失败。"
           );
         }
       }
@@ -343,6 +361,8 @@ function HomeAiPage() {
           trendsResult,
           anomaliesResult,
           failuresResult,
+          modelCatalogResult,
+          providerCredentialsResult,
         ] = await Promise.allSettled([
           getAdminUsers(""),
           getAdminAiGovernance(),
@@ -352,6 +372,8 @@ function HomeAiPage() {
           getAdminAiTelemetryTrends(14),
           getAdminAiTelemetryAnomalies(14),
           searchAdminAiTelemetryFailures(DEFAULT_ADMIN_FAILURE_FILTERS),
+          getAiModelCatalog(),
+          listAdminAiProviderCredentials(""),
         ]);
 
         if (usersResult.status === "fulfilled") {
@@ -360,7 +382,7 @@ function HomeAiPage() {
           errors.push(
             usersResult.reason instanceof Error
               ? usersResult.reason.message
-            : "Failed to load platform users."
+            : "平台用户加载失败。"
           );
         }
 
@@ -433,6 +455,26 @@ function HomeAiPage() {
               : "智能服务失败审计加载失败。"
           );
         }
+
+        if (modelCatalogResult.status === "fulfilled") {
+          nextDashboard.aiModelCatalog = modelCatalogResult.value;
+        } else {
+          errors.push(
+            modelCatalogResult.reason instanceof Error
+              ? modelCatalogResult.reason.message
+              : "智能模型目录加载失败。"
+          );
+        }
+
+        if (providerCredentialsResult.status === "fulfilled") {
+          nextDashboard.aiProviderCredentials = providerCredentialsResult.value.credentials;
+        } else {
+          errors.push(
+            providerCredentialsResult.reason instanceof Error
+              ? providerCredentialsResult.reason.message
+              : "智能供应商密钥配置加载失败。"
+          );
+        }
       }
 
       if (!cancelled) {
@@ -448,6 +490,22 @@ function HomeAiPage() {
       cancelled = true;
     };
   }, [currentUser.identity, isLearner]);
+
+  useEffect(() => {
+    if (selectedDefaultModelId || !roleDashboard.aiModelCatalog) {
+      return;
+    }
+
+    const availableModels = roleDashboard.aiModelCatalog.providers.flatMap((provider) =>
+      provider.models.filter((model) => model.available)
+    );
+    setSelectedDefaultModelId(
+      roleDashboard.aiModelCatalog.defaultModelId ??
+      availableModels.find((model) => model.isDefault)?.modelId ??
+      availableModels[0]?.modelId ??
+      ""
+    );
+  }, [roleDashboard.aiModelCatalog, selectedDefaultModelId]);
 
   const loadFailureAudit = useCallback(
     async (filters: AdminAiTelemetryFailureFilters = failureFilters) => {
@@ -642,7 +700,7 @@ function HomeAiPage() {
     };
   }, [roleDashboard.aiTrends]);
 
-  const aiRuntimeStatus = roleDashboard.aiHealth?.configured ? "Configured" : "Needs configuration";
+  const aiRuntimeStatus = roleDashboard.aiHealth?.configured ? "已配置" : "需要配置";
   const aiRuntimeDetail = roleDashboard.aiHealth
     ? `${roleDashboard.aiHealth.provider} / ${roleDashboard.aiHealth.model}`
     : roleDashboard.aiHealthError ?? "智能服务健康状态不可用。";
@@ -656,7 +714,7 @@ function HomeAiPage() {
   const providerConfigStatus = roleDashboard.aiProviderConfig?.overallStatus ?? "unknown";
   const providerConfigDetail = roleDashboard.aiProviderConfig
     ? `${roleDashboard.aiProviderConfig.provider} / ${roleDashboard.aiProviderConfig.model}`
-    : "Not loaded";
+    : "尚未加载";
   const providerHealth = roleDashboard.aiProviderHealth;
   const providerHealthItems = providerHealth?.items ?? [];
   const providerHealthAnomalies = providerHealth?.anomalies ?? [];
@@ -665,11 +723,45 @@ function HomeAiPage() {
   const governanceMetrics = roleDashboard.aiGovernance?.metrics ?? [];
   const governanceAlerts = roleDashboard.aiGovernance?.alerts ?? [];
   const governanceStatus = roleDashboard.aiGovernance?.overallStatus ?? "unknown";
+  const modelCatalog = roleDashboard.aiModelCatalog;
+  const availableDefaultModelOptions =
+    modelCatalog?.providers.flatMap((provider) =>
+      provider.models
+        .filter((model) => model.available && model.capabilities.includes("chat"))
+        .map((model) => ({
+          provider: provider.provider,
+          providerLabel: provider.label,
+          modelId: model.modelId,
+          name: model.name,
+          isDefault: model.isDefault || model.modelId === modelCatalog.defaultModelId,
+        }))
+    ) ?? [];
+  const credentialByProvider = new Map(roleDashboard.aiProviderCredentials.map((item) => [item.provider, item]));
+  const providerCredentialEntries =
+    modelCatalog?.providers.map((provider) => {
+      const credential = credentialByProvider.get(provider.provider) ?? null;
+      return {
+        provider: provider.provider,
+        label: credential?.label || provider.label,
+        backendSupported: provider.backendSupported || Boolean(credential?.backendSupported),
+        configured: provider.configured,
+        models: provider.models,
+        credential,
+      };
+    }) ??
+    roleDashboard.aiProviderCredentials.map((credential) => ({
+      provider: credential.provider,
+      label: credential.label || credential.provider,
+      backendSupported: credential.backendSupported,
+      configured: credential.configured,
+      models: [],
+      credential,
+    }));
 
   function getSessionContextLabel(session: ChatSessionSummary) {
     return session.course_uuid
-      ? courseTitleMap.get(session.course_uuid) ?? "Unknown course"
-      : "Unknown course";
+      ? courseTitleMap.get(session.course_uuid) ?? "未知课程"
+      : "未知课程";
   }
 
   function handleBackToSessions() {
@@ -697,6 +789,24 @@ function HomeAiPage() {
   }
 
   function formatTelemetryKind(value: string) {
+    const labels: Record<string, string> = {
+      ready: "正常",
+      warning: "警告",
+      blocked: "阻塞",
+      failed: "失败",
+      quota: "额度受限",
+      unknown: "未知",
+      not_configured: "未配置",
+      provider_adapter: "供应商适配器",
+      multi_provider: "多供应商",
+      gemini: "Gemini",
+      deepseek: "DeepSeek",
+      glm: "GLM",
+      openrouter: "OpenRouter",
+    };
+    if (labels[value]) {
+      return labels[value];
+    }
     return value
       .split("_")
       .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -744,13 +854,127 @@ function HomeAiPage() {
       await loadFailureAudit();
       setFailureAuditNotice(
         response.dispatched
-          ? `Index job #${response.jobId} was requeued.`
-          : `Index job #${response.jobId} moved to ${response.status}.`
+          ? `索引任务 #${response.jobId} 已重新入队。`
+          : `索引任务 #${response.jobId} 已更新为 ${response.status}。`
       );
     } catch (error) {
-      setFailureAuditError(error instanceof Error ? error.message : "Failed to retry index job.");
+      setFailureAuditError(error instanceof Error ? error.message : "重试索引任务失败。");
     } finally {
       setRetryingIndexJobId(null);
+    }
+  }
+
+  function updateCredentialDraft(provider: string, value: string) {
+    setCredentialDrafts((current) => ({ ...current, [provider]: value }));
+  }
+
+  async function refreshProviderCredentials() {
+    const response = await listAdminAiProviderCredentials("");
+    setRoleDashboard((current) => ({
+      ...current,
+      aiProviderCredentials: response.credentials,
+    }));
+  }
+
+  async function handleSaveProviderCredential(provider: string) {
+    if (currentUser.identity !== "Admin" || credentialActionProvider) return;
+    const apiKey = credentialDrafts[provider]?.trim() ?? "";
+    if (!apiKey) {
+      setCredentialActionError("请输入供应商 API 密钥后再保存。");
+      return;
+    }
+
+    setCredentialActionProvider(provider);
+    setCredentialActionError(null);
+    setCredentialActionNotice(null);
+    try {
+      const credential = await saveAdminAiProviderCredential("", {
+        provider,
+        apiKey,
+        defaultModelId: selectedDefaultModelId || null,
+      });
+      setCredentialDrafts((current) => ({ ...current, [provider]: "" }));
+      setRoleDashboard((current) => ({
+        ...current,
+        aiProviderCredentials: [
+          ...current.aiProviderCredentials.filter((item) => item.provider !== credential.provider),
+          credential,
+        ],
+      }));
+      setCredentialActionNotice(`${credential.label || credential.provider} 密钥已保存。`);
+    } catch (error) {
+      setCredentialActionError(error instanceof Error ? error.message : "保存供应商密钥失败。");
+    } finally {
+      setCredentialActionProvider(null);
+    }
+  }
+
+  async function handleDeleteProviderCredential(provider: string) {
+    if (currentUser.identity !== "Admin" || credentialActionProvider) return;
+    setCredentialActionProvider(provider);
+    setCredentialActionError(null);
+    setCredentialActionNotice(null);
+    try {
+      await deleteAdminAiProviderCredential("", provider);
+      await refreshProviderCredentials();
+      setCredentialActionNotice(`${formatTelemetryKind(provider)} 密钥已删除。`);
+    } catch (error) {
+      setCredentialActionError(error instanceof Error ? error.message : "删除供应商密钥失败。");
+    } finally {
+      setCredentialActionProvider(null);
+    }
+  }
+
+  async function handleProviderHealthCheck(provider: string) {
+    if (currentUser.identity !== "Admin" || credentialActionProvider) return;
+    setCredentialActionProvider(provider);
+    setCredentialActionError(null);
+    setCredentialActionNotice(null);
+    try {
+      const result = await checkAdminAiProviderCredentialHealth("", provider);
+      await refreshProviderCredentials();
+      setCredentialActionNotice(
+        `${formatTelemetryKind(provider)} 健康检查：${formatTelemetryKind(result.status)}${
+          result.message ? ` · ${result.message}` : ""
+        }`
+      );
+    } catch (error) {
+      setCredentialActionError(error instanceof Error ? error.message : "供应商健康检查失败。");
+    } finally {
+      setCredentialActionProvider(null);
+    }
+  }
+
+  async function handleSetDefaultModel() {
+    if (currentUser.identity !== "Admin" || credentialActionProvider || !selectedDefaultModelId) return;
+    setCredentialActionProvider("default-model");
+    setCredentialActionError(null);
+    setCredentialActionNotice(null);
+    try {
+      const response = await setAdminAiDefaultModel("", { modelId: selectedDefaultModelId });
+      setCredentialActionNotice(`默认模型已设置为 ${response.modelId}。`);
+      setRoleDashboard((current) =>
+        current.aiModelCatalog
+          ? {
+              ...current,
+              aiModelCatalog: {
+                ...current.aiModelCatalog,
+                defaultModelId: response.modelId,
+                providers: current.aiModelCatalog.providers.map((provider) => ({
+                  ...provider,
+                  models: provider.models.map((model) => ({
+                    ...model,
+                    isDefault: model.modelId === response.modelId,
+                  })),
+                })),
+              },
+            }
+          : current
+      );
+    } catch (error) {
+      setCredentialActionError(error instanceof Error ? error.message : "设置默认模型失败。");
+    } finally {
+      setCredentialActionProvider(null);
     }
   }
 
@@ -845,7 +1069,7 @@ function HomeAiPage() {
                   <em>
                     {isEducator
                       ? `${countCoursePublishedQuizzes(course)} 个测验模块`
-                      : course.educatorName || "Unassigned educator"}
+                      : course.educatorName || "未分配教师"}
                   </em>
                 </Link>
               ))}
@@ -871,11 +1095,11 @@ function HomeAiPage() {
                 ? [
                     {
                       label: "课程上下文",
-                      value: `${formatNumber(educatorDashboard.totalCourses)} managed courses`,
+                      value: `${formatNumber(educatorDashboard.totalCourses)} 门管理课程`,
                     },
                     {
                       label: "学生信号",
-                      value: `${formatNumber(educatorDashboard.totalEnrollments)} enrolments`,
+                      value: `${formatNumber(educatorDashboard.totalEnrollments)} 个选课记录`,
                     },
                     {
                       label: "测验证据",
@@ -885,7 +1109,7 @@ function HomeAiPage() {
                 : [
                     {
                       label: "角色覆盖",
-                      value: `${adminDashboard.learners} learners · ${adminDashboard.educators} educators`,
+                      value: `${adminDashboard.learners} 名学生 · ${adminDashboard.educators} 名教师`,
                     },
                     {
                       label: "服务配置",
@@ -893,15 +1117,15 @@ function HomeAiPage() {
                     },
                     {
                       label: "服务健康",
-                      value: `${formatTelemetryKind(providerHealthStatus)} · ${formatPercent(providerHealth?.successRatePercent)} success`,
+                      value: `${formatTelemetryKind(providerHealthStatus)} · ${formatPercent(providerHealth?.successRatePercent)} 成功率`,
                     },
                     {
                       label: "异常洞察",
-                      value: `${aiAnomalies.length} signals`,
+                      value: `${aiAnomalies.length} 条信号`,
                     },
                     {
                       label: "成本护栏",
-                      value: `${formatTelemetryKind(governanceStatus)} · ${governanceAlerts.length} alerts`,
+                      value: `${formatTelemetryKind(governanceStatus)} · ${governanceAlerts.length} 条提醒`,
                     },
                     {
                       label: "索引失败",
@@ -1015,6 +1239,135 @@ function HomeAiPage() {
                     <em>{formatTelemetryKind(item.status)}</em>
                   </div>
                 ))}
+              </div>
+            ) : null}
+
+            {!isEducator ? (
+              <div className="home-ai-config-summary">
+                <div className="home-ai-worklist-heading">
+                  <h3>供应商密钥管理</h3>
+                  <span>{providerCredentialEntries.length} 个供应商</span>
+                </div>
+
+                {roleDashboardLoading ? <p className="home-ai-muted">正在加载供应商密钥配置...</p> : null}
+                {credentialActionError ? <p className="home-ai-muted">{credentialActionError}</p> : null}
+                {credentialActionNotice ? <p className="home-ai-muted">{credentialActionNotice}</p> : null}
+
+                {availableDefaultModelOptions.length > 0 ? (
+                  <div className="home-ai-default-model-row">
+                    <label>
+                      <span>默认模型</span>
+                      <select
+                        value={selectedDefaultModelId}
+                        onChange={(event) => setSelectedDefaultModelId(event.target.value)}
+                        disabled={credentialActionProvider !== null}
+                      >
+                        {availableDefaultModelOptions.map((model) => (
+                          <option key={model.modelId} value={model.modelId}>
+                            {model.providerLabel}: {model.name}
+                            {model.isDefault ? " (当前)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void handleSetDefaultModel()}
+                      disabled={
+                        credentialActionProvider !== null ||
+                        !selectedDefaultModelId ||
+                        selectedDefaultModelId === modelCatalog?.defaultModelId
+                      }
+                    >
+                      保存默认
+                    </button>
+                  </div>
+                ) : null}
+
+                {!roleDashboardLoading && providerCredentialEntries.length === 0 ? (
+                  <p className="home-ai-muted">模型目录暂不可用，供应商密钥配置入口无法展示。</p>
+                ) : null}
+
+                {providerCredentialEntries.map((entry) => {
+                  const configured = entry.credential?.configured ?? entry.configured;
+                  const actionBusy = credentialActionProvider === entry.provider;
+                  const backendSupported = entry.backendSupported;
+                  const availableModels = entry.models.filter((model) => model.available);
+                  const unavailableModels = entry.models.filter((model) => !model.available);
+
+                  return (
+                    <div key={entry.provider} className="home-ai-provider-card">
+                      <div className="home-ai-provider-card-header">
+                        <span>
+                          <strong>{entry.label || entry.provider}</strong>
+                          <small>
+                            {!backendSupported ? "本版本暂未接入" : configured ? "密钥已配置" : "缺少密钥"}
+                            {entry.credential?.keyPreview ? ` · ${entry.credential.keyPreview}` : ""}
+                          </small>
+                          {entry.credential?.lastHealthStatus ? (
+                            <small>健康状态：{formatTelemetryKind(entry.credential.lastHealthStatus)}</small>
+                          ) : null}
+                        </span>
+                        <em>{formatTelemetryKind(entry.credential?.status ?? (configured ? "ready" : "blocked"))}</em>
+                      </div>
+
+                      <div className="home-ai-model-chip-list">
+                        {availableModels.map((model) => (
+                          <span key={model.modelId} className="home-ai-model-chip home-ai-model-chip-ready">
+                            {model.name}
+                          </span>
+                        ))}
+                        {unavailableModels.map((model) => (
+                          <span key={model.modelId} className="home-ai-model-chip home-ai-model-chip-disabled">
+                            {model.name}: {model.unavailableReason || "不可用"}
+                          </span>
+                        ))}
+                      </div>
+
+                      <div className="home-ai-provider-actions">
+                        <input
+                          type="password"
+                          autoComplete="off"
+                          value={credentialDrafts[entry.provider] ?? ""}
+                          onChange={(event) => updateCredentialDraft(entry.provider, event.target.value)}
+                          placeholder={
+                            backendSupported
+                              ? configured
+                                ? "粘贴新密钥以替换"
+                                : "粘贴供应商 API 密钥"
+                              : "本版本暂不支持配置"
+                          }
+                          disabled={credentialActionProvider !== null || !backendSupported}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveProviderCredential(entry.provider)}
+                          disabled={
+                            credentialActionProvider !== null ||
+                            !backendSupported ||
+                            !(credentialDrafts[entry.provider] ?? "").trim()
+                          }
+                        >
+                          {actionBusy ? "保存中" : "保存"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleProviderHealthCheck(entry.provider)}
+                          disabled={credentialActionProvider !== null || !backendSupported || !configured}
+                        >
+                          健康检查
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteProviderCredential(entry.provider)}
+                          disabled={credentialActionProvider !== null || !configured}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
 
