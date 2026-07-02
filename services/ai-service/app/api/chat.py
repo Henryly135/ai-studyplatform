@@ -135,6 +135,7 @@ def chat(
             course_id=decode_course_uuid(payload.course_uuid) if payload.course_uuid else None,
             module_id=decode_module_uuid(payload.module_uuid) if payload.module_uuid else None,
             message=payload.message,
+            model_id=payload.model_id,
         )
         chat_response = persist_chat(db, service_payload)
         return ChatSuccessResponse(
@@ -144,6 +145,9 @@ def chat(
                 assistant_message_id=chat_response.assistant_message_id,
                 reply=chat_response.reply,
                 sources=chat_response.sources,
+                model_id=getattr(chat_response, "model_id", None),
+                model_name=getattr(chat_response, "model_name", None),
+                provider=getattr(chat_response, "provider", None),
             )
         )
     except HTTPException:
@@ -177,7 +181,7 @@ def chat(
     except Exception as exc:
         db.rollback()
         logger.exception("Unexpected error while processing authenticated chat request")
-        raise _http_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "AI_INTERNAL_ERROR", "Gemini API call failed.") from exc
+        raise _http_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "AI_INTERNAL_ERROR", "AI provider call failed.") from exc
 
 
 @router.get("/chat/sessions", response_model=list[ChatSessionSummary])

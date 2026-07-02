@@ -35,6 +35,34 @@ export type ChatResponse = {
   reply: string;
 };
 
+export type AiModelCatalogModel = {
+  modelId: string;
+  provider: string;
+  name: string;
+  description: string | null;
+  available: boolean;
+  unavailableReason: string | null;
+  backendSupported: boolean;
+  displayOnly: boolean;
+  isDefault: boolean;
+  capabilities: string[];
+};
+
+export type AiModelCatalogProvider = {
+  provider: string;
+  label: string;
+  backendSupported: boolean;
+  configured: boolean;
+  models: AiModelCatalogModel[];
+};
+
+export type AiModelCatalog = {
+  generatedAt: string;
+  defaultModelId: string | null;
+  userSelectedModelId: string | null;
+  providers: AiModelCatalogProvider[];
+};
+
 export type ChatSuccessResponse = {
   success: true;
   data: ChatResponse;
