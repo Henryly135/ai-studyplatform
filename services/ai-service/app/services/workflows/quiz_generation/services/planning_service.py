@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 import json
-import logging
-import time
 
-from google import genai
-from google.genai import errors as genai_errors, types
-
-from app.core.config import settings
 from app.core.prompts import get_prompt_template
+from app.services.providers.model_service import AIModelInvocationService
+from app.services.providers.types import ProviderConfigurationError, ProviderInvocationError, ProviderQuotaError
 from app.services.workflows.quiz_generation.schemas import (
     QuizGenerationContextRead,
     QuizGenerationPlanRead,
@@ -18,9 +14,6 @@ from app.services.workflows.quiz_generation.schemas import (
 )
 from app.services.provider_error_messages import QUIZ_GENERATION_UNAVAILABLE
 from platform_common.errors import http_error, invalid_request_error
-
-
-logger = logging.getLogger(__name__)
 
 
 class QuizGenerationPlanningService:
@@ -36,9 +29,6 @@ class QuizGenerationPlanningService:
         retrieval_context: RetrievalContextRead,
         profile_context: QuizGenerationProfileContextRead | None = None,
     ) -> QuizGenerationPlanRead:
-        if not settings.gemini_api_key:
-            raise invalid_request_error(QUIZ_GENERATION_UNAVAILABLE)
-
         prompt_template = get_prompt_template(self.PROMPT_TEMPLATE_NAME)
         prompt = self._build_prompt(
             request=request,
@@ -46,49 +36,20 @@ class QuizGenerationPlanningService:
             retrieval_context=retrieval_context,
             profile_context=profile_context,
         )
-        client = genai.Client(api_key=settings.gemini_api_key)
-        response = None
-        for attempt in range(1, self.MAX_PROVIDER_ATTEMPTS + 1):
-            try:
-                response = client.models.generate_content(
-                    model=settings.ai_demo_model_name,
-                    config=types.GenerateContentConfig(
-                        system_instruction=prompt_template.system_instruction,
-                        temperature=0.2,
-                        max_output_tokens=1800,
-                        response_mime_type="application/json",
-                    ),
-                    contents=prompt,
-                )
-                break
-            except genai_errors.ServerError as exc:
-                if attempt >= self.MAX_PROVIDER_ATTEMPTS:
-                    raise http_error(
-                        status_code=503,
-                        code="AI_PROVIDER_UNAVAILABLE",
-                        message=QUIZ_GENERATION_UNAVAILABLE,
-                    ) from exc
-                backoff_seconds = self.RETRY_BACKOFF_SECONDS[min(attempt - 1, len(self.RETRY_BACKOFF_SECONDS) - 1)]
-                logger.warning(
-                    "Quiz generation planning hit Gemini provider error; retrying",
-                    extra={
-                        "attempt": attempt,
-                        "maxAttempts": self.MAX_PROVIDER_ATTEMPTS,
-                        "backoffSeconds": backoff_seconds,
-                    },
-                )
-                time.sleep(backoff_seconds)
-            except genai_errors.ClientError as exc:
-                raise invalid_request_error(QUIZ_GENERATION_UNAVAILABLE) from exc
-
-        content = (response.text or "").strip()
-        if not content:
-            raise invalid_request_error("Quiz generation planning returned empty content")
         try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise invalid_request_error("Quiz generation planning returned invalid JSON") from exc
-        return QuizGenerationPlanRead.model_validate(parsed)
+            return AIModelInvocationService().generate_json(
+                prompt=prompt,
+                system_instruction=prompt_template.system_instruction,
+                temperature=0.2,
+                max_output_tokens=1800,
+                validator=QuizGenerationPlanRead.model_validate,
+            )
+        except ProviderQuotaError as exc:
+            raise http_error(status_code=429, code="AI_QUOTA_EXCEEDED", message=QUIZ_GENERATION_UNAVAILABLE) from exc
+        except ProviderConfigurationError as exc:
+            raise invalid_request_error(QUIZ_GENERATION_UNAVAILABLE) from exc
+        except ProviderInvocationError as exc:
+            raise http_error(status_code=503, code="AI_PROVIDER_UNAVAILABLE", message=QUIZ_GENERATION_UNAVAILABLE) from exc
 
     def _build_prompt(
         self,

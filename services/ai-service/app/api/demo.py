@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_identity_permission
-from app.core.uuid_codec import encode_session_uuid
 from app.core.config import settings
+from app.core.uuid_codec import encode_session_uuid
 from app.db.session import get_db_session
 from app.schemas.demo import AIHealthResponse, ChatResponse, ChatServiceRequest
+from app.services.providers.model_service import AIModelCatalogService
 from app.services.chat.ai_chat_service import (
     AIChatConfigurationError,
     AIChatQuotaError,
@@ -31,13 +32,26 @@ def _demo_payload_for_authenticated_user(payload: ChatServiceRequest, current_us
         session_id=payload.session_id,
         user_id=int(current_user["id"]),
         message=payload.message,
+        model_id=payload.model_id,
     )
 
 
 @router.get("/health", response_model=AIHealthResponse)
-def demo_health() -> AIHealthResponse:
-    configured = bool(settings.gemini_api_key)
-    if not configured:
+def demo_health(db: Session = Depends(get_db_session)) -> AIHealthResponse:
+    default_item = None
+    if hasattr(db, "get"):
+        catalog = AIModelCatalogService(db)
+        catalog.ensure_seeded()
+        payload = catalog.list_model_status()
+        default_model_id = payload.get("defaultChatModelId")
+        default_item = next((item for item in payload["items"] if item["modelId"] == default_model_id), None)
+    elif settings.gemini_api_key:
+        default_item = {
+            "provider": "gemini",
+            "modelName": settings.ai_demo_model_name,
+            "available": True,
+        }
+    if default_item is None or not default_item["available"]:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=AI_PROVIDER_CONFIGURATION_UNAVAILABLE,
@@ -46,9 +60,9 @@ def demo_health() -> AIHealthResponse:
     return AIHealthResponse(
         status="ok",
         module="ai-demo",
-        provider="gemini",
-        model=settings.ai_demo_model_name,
-        configured=configured,
+        provider=default_item["provider"],
+        model=default_item["modelName"],
+        configured=True,
     )
 
 
@@ -73,6 +87,9 @@ def demo_chat(
             assistant_message_id=result.assistant_message_id,
             reply=result.reply,
             sources=result.sources,
+            model_id=getattr(result, "model_id", None),
+            model_name=getattr(result, "model_name", None),
+            provider=getattr(result, "provider", None),
         )
     except AIChatConfigurationError as exc:
         db.rollback()
@@ -98,5 +115,5 @@ def demo_chat(
         logger.exception("Unexpected error while processing demo chat request")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Gemini API call failed.",
+            detail="AI provider call failed.",
         ) from exc

@@ -3049,6 +3049,41 @@
   background: rgba(255, 255, 255, 0.88);
 }
 
+.course-chat-model-picker {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem 0.65rem;
+  align-items: center;
+}
+
+.course-chat-model-picker span,
+.course-chat-model-picker small {
+  color: #64748b;
+  font: 700 0.76rem/1.2 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.course-chat-model-picker select {
+  min-width: 0;
+  height: 2.25rem;
+  padding: 0 0.7rem;
+  border: 1px solid #d5deeb;
+  border-radius: 0.75rem;
+  background: #ffffff;
+  color: #0f172a;
+  font: 650 0.82rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.course-chat-model-picker select:focus {
+  outline: none;
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
+}
+
+.course-chat-model-picker small {
+  grid-column: 2;
+  overflow-wrap: anywhere;
+}
+
 .course-chat-composer textarea {
   min-height: 86px;
   border: 0;

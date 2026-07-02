@@ -98,6 +98,46 @@ export interface SendEducatorInviteEmailResponse {
   emailDelivery: EducatorInviteEmailDelivery;
 }
 
+export interface AdminAiProviderCredential {
+  provider: string;
+  label: string;
+  backendSupported: boolean;
+  configured: boolean;
+  keyPreview: string | null;
+  defaultModelId: string | null;
+  status: string;
+  lastHealthCheckAt: string | null;
+  lastHealthStatus: string | null;
+  updatedAt: string | null;
+}
+
+export interface AdminAiProviderCredentialListResponse {
+  credentials: AdminAiProviderCredential[];
+}
+
+export interface SaveAdminAiProviderCredentialRequest {
+  provider: string;
+  apiKey: string;
+  defaultModelId?: string | null;
+}
+
+export interface AdminAiProviderCredentialHealthResponse {
+  provider: string;
+  status: string;
+  ok: boolean;
+  checkedAt: string;
+  message: string | null;
+}
+
+export interface SetAdminAiDefaultModelRequest {
+  modelId: string;
+}
+
+export interface AdminAiDefaultModelResponse {
+  modelId: string;
+  provider: string | null;
+}
+
 export interface CourseInviteLinkResponse {
   inviteUuid: string;
   courseUuid: string;
