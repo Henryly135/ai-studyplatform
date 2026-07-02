@@ -9,8 +9,10 @@ from app.schemas.course import (
     CourseEnrollmentStatusUpdateRequest,
     CourseSummaryResponse,
 )
+from app.schemas.learner_progress import LearnerProgressOverviewResponse
 from app.services.course_catalog_service import CourseCatalogService
 from app.services.course_enrollment_service import CourseEnrollmentService, CourseEnrollmentServiceError
+from app.services.learner_progress_service import LearnerProgressService
 from platform_common.permissions.codes import COURSE_ENROL, COURSE_ENROLLMENT_MANAGE
 
 
@@ -111,3 +113,17 @@ def list_my_enrolled_courses(
     session: Session = Depends(get_db_session),
 ):
     return CourseCatalogService(session).list_enrolled_courses(current_user=current_user, search=search)
+
+
+@router.get(
+    "/me/progress-overview",
+    summary="Get My Learning Progress Overview [Learner]",
+    description="Returns the current learner's course progress, quiz score summary, and recent activity in one aggregate response.",
+    response_model=LearnerProgressOverviewResponse,
+    response_model_exclude_none=True,
+)
+def get_my_progress_overview(
+    current_user: dict = Depends(require_identity_user),
+    session: Session = Depends(get_db_session),
+) -> LearnerProgressOverviewResponse:
+    return LearnerProgressService(session).get_overview(current_user=current_user)

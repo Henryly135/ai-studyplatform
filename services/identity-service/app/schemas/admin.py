@@ -25,6 +25,17 @@ class SendEducatorInviteEmailRequest(BaseModel):
     inviteUrl: str
 
 
+class EmailDeliveryStatus(BaseModel):
+    attempted: bool
+    delivered: bool
+    reason: str | None = None
+
+
+class SendEducatorInviteEmailResponse(BaseModel):
+    detail: str
+    emailDelivery: EmailDeliveryStatus
+
+
 class AdminUserRead(BaseModel):
     id: int
     userUuid: str

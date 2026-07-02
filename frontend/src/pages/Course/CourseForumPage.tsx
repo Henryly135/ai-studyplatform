@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { LuPin, LuSearch, LuX } from "react-icons/lu";
 import { useOutletContext } from "react-router-dom";
 
+import { getStoredCurrentUser } from "../../services/api";
 import {
   createCourseForumPost,
   createForumComment,
@@ -16,7 +17,6 @@ import {
 } from "../../services/forum";
 import type { ForumComment, ForumPost } from "../../types/forum";
 import type { CourseOutletContext } from "./CourseLayout";
-import type { CurrentUserResponse } from "../../types/auth";
 
 type RepliesByComment = Record<string, ForumComment[]>;
 type ReplyDrafts = Record<string, string>;
@@ -42,13 +42,24 @@ type PostPaginationState = {
   total: number;
   totalPages: number;
 };
+type PendingForumDelete =
+  | {
+      kind: "post";
+      post: ForumPost;
+    }
+  | {
+      kind: "comment";
+      post: ForumPost;
+      comment: ForumComment;
+      parentComment?: ForumComment;
+    };
 
 const POSTS_PAGE_SIZE = 10;
 
 function formatForumTimestamp(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return "Just now";
+    return "刚刚";
   }
 
   return date.toLocaleString("en-US", {
@@ -79,11 +90,11 @@ function isEducatorAuthor(authorUserId: number, educatorId?: number) {
 
 function getAuthorRoleBadge(authorUserId: number, educatorId?: number) {
   if (isEducatorAuthor(authorUserId, educatorId)) {
-    return { label: "EDUCATOR", className: "course-forum-role-badge" };
+    return { label: "教师", className: "course-forum-role-badge" };
   }
 
   return {
-    label: "STUDENT",
+    label: "学生",
     className: "course-forum-role-badge course-forum-role-badge-student",
   };
 }
@@ -140,18 +151,7 @@ function renderHighlightedText(text: string, query: string) {
 
 function CourseForumPage() {
   const { course, forumCoursesLoading, forumCoursesError } = useOutletContext<CourseOutletContext>();
-  const [currentUser] = useState<CurrentUserResponse | null>(() => {
-    const raw = localStorage.getItem("currentUser");
-    if (!raw) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(raw) as CurrentUserResponse;
-    } catch {
-      return null;
-    }
-  });
+  const [currentUser] = useState(() => getStoredCurrentUser());
 
   const [posts, setPosts] = useState<ForumPost[]>([]);
   const [postsLoading, setPostsLoading] = useState(false);
@@ -194,15 +194,28 @@ function CourseForumPage() {
   const [pinningPostUuid, setPinningPostUuid] = useState<string | null>(null);
   const [deletingPostUuid, setDeletingPostUuid] = useState<string | null>(null);
   const [deletingCommentUuid, setDeletingCommentUuid] = useState<string | null>(null);
+  const [pendingForumDelete, setPendingForumDelete] = useState<PendingForumDelete | null>(null);
   const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
   const postsRequestKeyRef = useRef("");
   const loadingMorePostsRef = useRef(false);
   const postElementRefs = useRef<Record<string, HTMLElement | null>>({});
+  const searchTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const highlightedPostFocusRestoreRef = useRef<(() => void) | null>(null);
 
   const canPinPosts = currentUser?.identity === "Educator" || currentUser?.identity === "Admin";
   const hasMorePosts = postsPagination.page < postsPagination.totalPages;
   const canDeleteAuthoredContent = (authorUserId: number) =>
     currentUser?.identity === "Admin" || currentUser?.id === authorUserId;
+  const closeSearchModal = useCallback((options?: { restoreFocus?: boolean }) => {
+    setIsSearchModalOpen(false);
+    if (options?.restoreFocus === false) {
+      return;
+    }
+
+    window.setTimeout(() => {
+      searchTriggerRef.current?.focus();
+    }, 0);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -264,6 +277,44 @@ function CourseForumPage() {
   }, [course.courseUuid]);
 
   useEffect(() => {
+    if (!pendingForumDelete) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || deletingPostUuid || deletingCommentUuid) {
+        return;
+      }
+
+      setPendingForumDelete(null);
+      setPostsError(null);
+      setCommentsError(null);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [deletingCommentUuid, deletingPostUuid, pendingForumDelete]);
+
+  useEffect(() => {
+    if (!isSearchModalOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeSearchModal();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeSearchModal, isSearchModalOpen]);
+
+  useEffect(() => {
     if (!isSearchModalOpen) {
       return;
     }
@@ -318,16 +369,38 @@ function CourseForumPage() {
       return;
     }
 
+    const focusedPostUuid = pendingScrollPostUuid;
+    const previousTabIndex = target.getAttribute("tabindex");
+    highlightedPostFocusRestoreRef.current?.();
     target.scrollIntoView({ behavior: "smooth", block: "center" });
-    setHighlightedPostUuid(pendingScrollPostUuid);
+    target.setAttribute("tabindex", "-1");
+    target.focus({ preventScroll: true });
+    highlightedPostFocusRestoreRef.current = () => {
+      if (previousTabIndex === null) {
+        target.removeAttribute("tabindex");
+      } else {
+        target.setAttribute("tabindex", previousTabIndex);
+      }
+    };
+    setHighlightedPostUuid(focusedPostUuid);
     setPendingScrollPostUuid(null);
+  }, [pendingScrollPostUuid, posts]);
+
+  useEffect(() => {
+    if (!highlightedPostUuid) {
+      return;
+    }
 
     const timeoutId = window.setTimeout(() => {
-      setHighlightedPostUuid((current) => (current === pendingScrollPostUuid ? null : current));
+      setHighlightedPostUuid((current) => (current === highlightedPostUuid ? null : current));
+      highlightedPostFocusRestoreRef.current?.();
+      highlightedPostFocusRestoreRef.current = null;
     }, 2200);
 
-    return () => window.clearTimeout(timeoutId);
-  }, [pendingScrollPostUuid, posts]);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [highlightedPostUuid]);
 
   useEffect(() => {
     const node = loadMoreTriggerRef.current;
@@ -500,12 +573,40 @@ function CourseForumPage() {
     }
   };
 
-  const handleDeletePost = async (post: ForumPost) => {
-    const confirmed = window.confirm(`Delete "${post.title || "this discussion"}"? This cannot be undone.`);
-    if (!confirmed || deletingPostUuid) {
+  const openPostDelete = (post: ForumPost) => {
+    if (deletingPostUuid) {
       return;
     }
 
+    setPostsError(null);
+    setPendingForumDelete({ kind: "post", post });
+  };
+
+  const openCommentDelete = (post: ForumPost, comment: ForumComment, parentComment?: ForumComment) => {
+    if (deletingCommentUuid) {
+      return;
+    }
+
+    setCommentsError(null);
+    setPendingForumDelete({ kind: "comment", post, comment, parentComment });
+  };
+
+  const closeForumDelete = () => {
+    if (deletingPostUuid || deletingCommentUuid) {
+      return;
+    }
+
+    setPendingForumDelete(null);
+    setPostsError(null);
+    setCommentsError(null);
+  };
+
+  const handleDeletePost = async () => {
+    if (!pendingForumDelete || pendingForumDelete.kind !== "post" || deletingPostUuid) {
+      return;
+    }
+
+    const { post } = pendingForumDelete;
     setDeletingPostUuid(post.postUuid);
     setPostsError(null);
 
@@ -530,6 +631,7 @@ function CourseForumPage() {
         delete next[post.postUuid];
         return next;
       });
+      setPendingForumDelete(null);
     } catch (error) {
       setPostsError(error instanceof Error ? error.message : "Failed to delete forum post.");
     } finally {
@@ -537,12 +639,12 @@ function CourseForumPage() {
     }
   };
 
-  const handleDeleteComment = async (post: ForumPost, comment: ForumComment, parentComment?: ForumComment) => {
-    const confirmed = window.confirm("Delete this comment?");
-    if (!confirmed || deletingCommentUuid) {
+  const handleDeleteComment = async () => {
+    if (!pendingForumDelete || pendingForumDelete.kind !== "comment" || deletingCommentUuid) {
       return;
     }
 
+    const { post, comment, parentComment } = pendingForumDelete;
     setDeletingCommentUuid(comment.commentUuid);
     setCommentsError(null);
 
@@ -595,6 +697,7 @@ function CourseForumPage() {
             },
           };
         });
+        setPendingForumDelete(null);
         return;
       }
 
@@ -627,6 +730,7 @@ function CourseForumPage() {
             : item
         )
       );
+      setPendingForumDelete(null);
     } catch (error) {
       setCommentsError(error instanceof Error ? error.message : "Failed to delete comment.");
     } finally {
@@ -635,7 +739,7 @@ function CourseForumPage() {
   };
 
   const handleSearchResultSelect = (post: ForumPost) => {
-    setIsSearchModalOpen(false);
+    closeSearchModal({ restoreFocus: false });
     setPosts((current) => {
       const exists = current.some((item) => item.postUuid === post.postUuid);
       return exists ? current : sortForumPosts([post, ...current]);
@@ -843,8 +947,7 @@ function CourseForumPage() {
               <span>{formatForumTimestamp(comment.createdAt)}</span>
             </div>
             {comment.replyToAuthorName ? (
-              <p className="course-forum-reply-target">
-                Reply to <strong>@{comment.replyToAuthorName}</strong>
+              <p className="course-forum-reply-target">回复 <strong>@{comment.replyToAuthorName}</strong>
               </p>
             ) : null}
             <p>{comment.content}</p>
@@ -866,7 +969,7 @@ function CourseForumPage() {
                 <button
                   type="button"
                   className="course-secondary-link course-secondary-link-danger"
-                  onClick={() => void handleDeleteComment(post, comment, parentComment)}
+                  onClick={() => openCommentDelete(post, comment, parentComment)}
                   disabled={deletingCommentUuid === comment.commentUuid}
                 >
                   {deletingCommentUuid === comment.commentUuid ? "Deleting..." : "Delete"}
@@ -912,8 +1015,7 @@ function CourseForumPage() {
                 <span>{formatForumTimestamp(comment.createdAt)}</span>
               </div>
               {comment.replyToAuthorName ? (
-                <p className="course-forum-reply-target">
-                  Reply to <strong>@{comment.replyToAuthorName}</strong>
+                <p className="course-forum-reply-target">回复 <strong>@{comment.replyToAuthorName}</strong>
                 </p>
               ) : null}
               <p>{comment.content}</p>
@@ -948,7 +1050,7 @@ function CourseForumPage() {
                   <button
                     type="button"
                     className="course-secondary-link course-secondary-link-danger"
-                    onClick={() => void handleDeleteComment(post, comment)}
+                    onClick={() => openCommentDelete(post, comment)}
                     disabled={deletingCommentUuid === comment.commentUuid}
                   >
                     {deletingCommentUuid === comment.commentUuid ? "Deleting..." : "Delete"}
@@ -988,8 +1090,7 @@ function CourseForumPage() {
               {hasPreviousReplyPage || hasNextReplyPage ? (
                 <div className="course-forum-expand-actions course-forum-reply-pagination">
                   {replyPagination ? (
-                    <span className="course-forum-page-indicator">
-                      Page {replyPagination.page} of {replyPagination.totalPages}
+                    <span className="course-forum-page-indicator">页码 {replyPagination.page}共 {replyPagination.totalPages}
                     </span>
                   ) : null}
                   {hasPreviousReplyPage ? (
@@ -1002,8 +1103,7 @@ function CourseForumPage() {
                           Math.max(1, (replyPagination?.page ?? 1) - 1)
                         )
                       }
-                    >
-                      Previous page
+                    >上一页
                     </button>
                   ) : null}
                   {hasNextReplyPage ? (
@@ -1013,8 +1113,7 @@ function CourseForumPage() {
                       onClick={() =>
                         void handleLoadReplyPage(comment.commentUuid, (replyPagination?.page ?? 1) + 1)
                       }
-                    >
-                      Next page
+                    >下一页
                     </button>
                   ) : null}
                 </div>
@@ -1026,11 +1125,34 @@ function CourseForumPage() {
     );
   };
 
+  const pendingDeleteTitle =
+    pendingForumDelete?.kind === "post"
+      ? pendingForumDelete.post.title || "Untitled discussion"
+      : "this comment";
+  const pendingDeleteDescription =
+    pendingForumDelete?.kind === "post"
+      ? "This will remove the discussion and its comments from the course forum."
+      : pendingForumDelete?.parentComment
+        ? "This will remove the reply from the discussion thread."
+        : "This will remove the comment from the discussion thread.";
+  const pendingDeleteError =
+    pendingForumDelete?.kind === "post"
+      ? postsError
+      : pendingForumDelete?.kind === "comment"
+        ? commentsError
+        : null;
+  const isDeletingPendingForumTarget =
+    pendingForumDelete?.kind === "post"
+      ? deletingPostUuid !== null
+      : pendingForumDelete?.kind === "comment"
+        ? deletingCommentUuid !== null
+        : false;
+
   return (
     <section className="course-detail-page course-forum-page">
       <header className="course-layout-header course-forum-simple-header">
         <div className="course-layout-header-title-group">
-          <span className="course-forum-header-label">Course Forum</span>
+          <span className="course-forum-header-label">课程论坛</span>
           <div className="course-layout-header-title-row">
             <h2>{course.title}</h2>
           </div>
@@ -1038,14 +1160,17 @@ function CourseForumPage() {
 
         <div className="course-layout-header-meta course-forum-header-meta">
           <span>
-            {postsPagination.total} discussion{postsPagination.total === 1 ? "" : "s"}
+            {postsPagination.total}讨论{postsPagination.total === 1 ? "" : "s"}
           </span>
           <button
+            ref={searchTriggerRef}
             type="button"
             className="course-icon-button course-forum-search-trigger"
             onClick={() => setIsSearchModalOpen(true)}
-            aria-label="Search posts"
-            title="Search posts"
+            aria-label="搜索帖子"
+            aria-haspopup="dialog"
+            aria-expanded={isSearchModalOpen}
+            title="搜索帖子"
           >
             <LuSearch aria-hidden="true" />
           </button>
@@ -1053,8 +1178,7 @@ function CourseForumPage() {
             type="button"
             className="course-primary-link course-forum-create-button"
             onClick={() => setIsComposerOpen(true)}
-          >
-            Create post
+          >发布帖子
           </button>
         </div>
       </header>
@@ -1062,7 +1186,7 @@ function CourseForumPage() {
       <div className="course-forum-shell">
         {forumCoursesLoading || forumCoursesError ? (
           <div className="course-forum-status-row">
-            {forumCoursesLoading ? <span>Loading course forums...</span> : null}
+            {forumCoursesLoading ? <span>正在加载课程论坛...</span> : null}
             {forumCoursesError ? <span className="course-forum-inline-error">{forumCoursesError}</span> : null}
           </div>
         ) : null}
@@ -1074,11 +1198,19 @@ function CourseForumPage() {
         ) : null}
 
         {isSearchModalOpen ? (
-          <div className="course-forum-modal-backdrop" onClick={() => setIsSearchModalOpen(false)}>
+          <div className="course-forum-modal-backdrop" role="presentation" onClick={() => closeSearchModal()}>
             <div
               className="course-panel course-forum-search-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="course-forum-search-title"
+              aria-describedby="course-forum-search-description"
               onClick={(event) => event.stopPropagation()}
             >
+              <h3 id="course-forum-search-title" className="course-sr-only">搜索课程论坛帖子
+              </h3>
+              <p id="course-forum-search-description" className="course-sr-only">搜索本课程论坛中的帖子标题和内容。按退出键可关闭搜索窗口。
+              </p>
               <div className="course-forum-search-modal-head">
                 <div className="course-forum-search-input-shell">
                   <LuSearch aria-hidden="true" />
@@ -1086,8 +1218,8 @@ function CourseForumPage() {
                     type="search"
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder="Search posts..."
-                    aria-label="Search posts"
+                    placeholder="搜索帖子..."
+                    aria-label="搜索帖子"
                     autoFocus
                   />
                 </div>
@@ -1096,29 +1228,28 @@ function CourseForumPage() {
                     type="button"
                     className="course-forum-search-clear"
                     onClick={() => setSearchQuery("")}
-                  >
-                    Clear
+                  >清除
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  className="course-forum-search-close"
-                  onClick={() => setIsSearchModalOpen(false)}
-                  aria-label="Close search"
-                >
+                  <button
+                    type="button"
+                    className="course-forum-search-close"
+                    onClick={() => closeSearchModal()}
+                    aria-label="关闭搜索"
+                  >
                   <LuX aria-hidden="true" />
                 </button>
               </div>
-              <div className="course-forum-search-results">
-                {searchResultsLoading ? <p className="course-forum-search-status">Searching posts...</p> : null}
+              <div className="course-forum-search-results" aria-live="polite">
+                {searchResultsLoading ? <p className="course-forum-search-status">正在搜索帖子...</p> : null}
                 {!searchResultsLoading && searchResultsError ? (
                   <p className="course-forum-search-status course-forum-inline-error">{searchResultsError}</p>
                 ) : null}
                 {!searchResultsLoading && !searchResultsError && !searchQuery.trim() ? (
-                  <p className="course-forum-search-status">Search post titles and content for this course.</p>
+                  <p className="course-forum-search-status">搜索本课程的帖子标题和内容。</p>
                 ) : null}
                 {!searchResultsLoading && !searchResultsError && searchQuery.trim() && searchResults.length === 0 ? (
-                  <p className="course-forum-search-status">No matching posts found.</p>
+                  <p className="course-forum-search-status">未找到匹配的帖子。</p>
                 ) : null}
                 {!searchResultsLoading && !searchResultsError && searchResults.length > 0
                   ? searchResults.map((post) => (
@@ -1151,14 +1282,13 @@ function CourseForumPage() {
             >
               <div className="course-forum-modal-header">
                 <div className="course-panel-heading">
-                  <h3>Create post</h3>
+                  <h3>发布帖子</h3>
                 </div>
                 <button
                   type="button"
                   className="course-secondary-link"
                   onClick={() => setIsComposerOpen(false)}
-                >
-                  Close
+                >关闭
                 </button>
               </div>
 
@@ -1172,8 +1302,8 @@ function CourseForumPage() {
                       setPostFormError(null);
                     }
                   }}
-                  placeholder="Post title"
-                  aria-label="Post title"
+                  placeholder="帖子标题"
+                  aria-label="帖子标题"
                   aria-invalid={!postTitle.trim() && Boolean(postFormError)}
                 />
                 <textarea
@@ -1184,16 +1314,16 @@ function CourseForumPage() {
                       setPostFormError(null);
                     }
                   }}
-                  placeholder="Share a question or discussion prompt for this course..."
+                  placeholder="分享本课程的问题或讨论话题..."
                   rows={6}
-                  aria-label="Post content"
+                  aria-label="帖子内容"
                   aria-invalid={!postContent.trim() && Boolean(postFormError)}
                 />
                 {postFormError ? <p className="course-forum-inline-error">{postFormError}</p> : null}
 
                 <div className="course-forum-action-row">
                   <button type="submit" className="course-primary-link" disabled={isPosting}>
-                    {isPosting ? "Posting..." : "Create post"}
+                    {isPosting ? "Posting..." : "发布帖子"}
                   </button>
                 </div>
               </form>
@@ -1205,14 +1335,14 @@ function CourseForumPage() {
           <div className="course-forum-post-list">
               {postsLoading ? (
                 <div className="course-panel course-forum-empty-card">
-                  <strong>Loading discussions...</strong>
+                  <strong>正在加载讨论...</strong>
                 </div>
               ) : null}
 
               {!postsLoading && posts.length === 0 ? (
                 <div className="course-panel course-forum-empty-card">
-                  <strong>No discussions yet</strong>
-                  <p>Click the post button to start the first thread for this course.</p>
+                  <strong>暂无讨论</strong>
+                  <p>点击发布按钮，为这门课程开启第一条讨论。</p>
                 </div>
               ) : null}
 
@@ -1269,8 +1399,8 @@ function CourseForumPage() {
                         ) : post.isPinned ? (
                           <span
                             className="course-forum-pin-icon-indicator is-pinned"
-                            aria-label="Pinned post"
-                            title="Pinned post"
+                            aria-label="置顶帖子"
+                            title="置顶帖子"
                           >
                             <LuPin aria-hidden="true" />
                           </span>
@@ -1287,7 +1417,7 @@ function CourseForumPage() {
                       <button
                         type="button"
                         className="course-secondary-link course-secondary-link-danger course-forum-post-delete-button"
-                        onClick={() => void handleDeletePost(post)}
+                        onClick={() => openPostDelete(post)}
                         disabled={deletingPostUuid === post.postUuid}
                       >
                         {deletingPostUuid === post.postUuid ? "Deleting..." : "Delete"}
@@ -1314,7 +1444,7 @@ function CourseForumPage() {
                       onSubmit={(event) => void handleSubmitComment(event, post)}
                     >
                       <div className="course-panel-heading">
-                        <h3>Comment on this post</h3>
+                        <h3>评论这条帖子</h3>
                       </div>
                       <textarea
                         value={commentDraftsByPost[post.postUuid] ?? ""}
@@ -1324,7 +1454,7 @@ function CourseForumPage() {
                             [post.postUuid]: event.target.value,
                           }))
                         }
-                        placeholder="Write your comment..."
+                        placeholder="写下你的评论..."
                         rows={3}
                       />
                       <div className="course-forum-action-row">
@@ -1339,15 +1469,15 @@ function CourseForumPage() {
                   <div className="course-forum-comment-list">
                     {postCommentLoadingMap[post.postUuid] ? (
                       <div className="course-panel course-forum-empty-card">
-                        <strong>Loading comments...</strong>
+                        <strong>正在加载评论...</strong>
                       </div>
                     ) : null}
 
                     {!postCommentLoadingMap[post.postUuid] &&
                     (commentsByPost[post.postUuid] ?? []).length === 0 ? (
                       <div className="course-panel course-forum-empty-card">
-                        <strong>No comments yet</strong>
-                        <p>Be the first person to respond to this discussion.</p>
+                        <strong>暂无评论</strong>
+                        <p>成为第一个回复这条讨论的人。</p>
                       </div>
                     ) : null}
 
@@ -1374,8 +1504,7 @@ function CourseForumPage() {
                         ) : null}
 
                         {isExpanded && pagination ? (
-                          <span className="course-forum-page-indicator">
-                            Page {pagination.page} of {pagination.totalPages}
+                          <span className="course-forum-page-indicator">页码 {pagination.page}共 {pagination.totalPages}
                           </span>
                         ) : null}
 
@@ -1386,8 +1515,7 @@ function CourseForumPage() {
                             onClick={() =>
                               void handleLoadCommentPage(post, Math.max(1, (pagination?.page ?? 1) - 1))
                             }
-                          >
-                            Previous page
+                          >上一页
                           </button>
                         ) : null}
 
@@ -1398,8 +1526,7 @@ function CourseForumPage() {
                             onClick={() =>
                               void handleLoadCommentPage(post, (pagination?.page ?? 1) + 1)
                             }
-                          >
-                            Next page
+                          >下一页
                           </button>
                         ) : null}
                       </div>
@@ -1407,7 +1534,7 @@ function CourseForumPage() {
                   </div>
                   ) : null}
                   <div className="course-forum-post-footer">
-                    <strong>{post.commentCount} comments</strong>
+                    <strong>{post.commentCount}条评论</strong>
                     <button
                       type="button"
                       className="course-forum-expand-link"
@@ -1439,9 +1566,9 @@ function CourseForumPage() {
               ))}
               {!postsLoading && posts.length > 0 ? (
                 <div className="course-forum-list-status">
-                  {isLoadingMorePosts ? <span>Loading more discussions...</span> : null}
+                  {isLoadingMorePosts ? <span>正在加载更多讨论...</span> : null}
                   {!hasMorePosts && postsPagination.total > postsPagination.pageSize ? (
-                    <span>All discussions loaded.</span>
+                    <span>所有讨论已加载。</span>
                   ) : null}
                 </div>
               ) : null}
@@ -1449,6 +1576,54 @@ function CourseForumPage() {
             </div>
         </div>
       </div>
+
+      {pendingForumDelete ? (
+        <div className="course-confirm-modal-overlay" role="presentation">
+          <div
+            className="course-confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="forum-delete-confirm-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="course-confirm-modal-header">
+              <h3 id="forum-delete-confirm-title">
+                {pendingForumDelete.kind === "post" ? "Delete discussion?" : "Delete comment?"}
+              </h3>
+              <p>{pendingDeleteTitle}</p>
+            </div>
+
+            <p className="course-confirm-modal-copy">{pendingDeleteDescription}</p>
+            {pendingDeleteError ? (
+              <p className="course-confirm-modal-error" role="alert">
+                {pendingDeleteError}
+              </p>
+            ) : null}
+
+            <div className="course-confirm-modal-actions">
+              <button
+                type="button"
+                className="course-secondary-link"
+                onClick={closeForumDelete}
+                disabled={isDeletingPendingForumTarget}
+              >返回
+              </button>
+              <button
+                type="button"
+                className="course-enroll-button"
+                onClick={() =>
+                  pendingForumDelete.kind === "post"
+                    ? void handleDeletePost()
+                    : void handleDeleteComment()
+                }
+                disabled={isDeletingPendingForumTarget}
+              >
+                {isDeletingPendingForumTarget ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

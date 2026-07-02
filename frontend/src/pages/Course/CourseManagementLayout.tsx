@@ -7,6 +7,7 @@ import HomeNotificationsMenu from "../../components/home/HomeNotificationsMenu";
 import ManagementSidebarMeta from "../../components/course-management/ManagementSidebarMeta";
 import ManagementSidebarSummary from "../../components/course-management/ManagementSidebarSummary";
 import { useLocale } from "../../i18n/locale";
+import { getStoredCurrentUser } from "../../services/api";
 import {
   deleteManagedCourse,
   getManagedCourseByUuid,
@@ -14,7 +15,6 @@ import {
   updateManagedCourse,
   uploadManagedCourseCover,
 } from "../../services/course";
-import type { CurrentUserResponse } from "../../types/auth";
 import type { CourseRecord } from "../../types/course";
 import { emitAppRefresh, subscribeAppRefresh } from "../../utils/refreshEvents";
 import "./CoursePages.css";
@@ -27,7 +27,7 @@ export type CourseManagementOutletContext = {
 
 function formatStatusLabel(status?: string) {
   if (!status) {
-    return "Draft";
+    return "草稿";
   }
 
   return status.charAt(0).toUpperCase() + status.slice(1);
@@ -56,9 +56,9 @@ function moduleHasPublishableMaterial(materialCount: number) {
 }
 
 const COURSE_DIFFICULTY_OPTIONS = [
-  { value: "beginner", label: "Beginner" },
-  { value: "intermediate", label: "Intermediate" },
-  { value: "advanced", label: "Advanced" },
+  { value: "beginner", label: "入门" },
+  { value: "intermediate", label: "中级" },
+  { value: "advanced", label: "高级" },
 ] as const;
 
 type CourseEditFormState = {
@@ -132,22 +132,16 @@ function CourseManagementLayout() {
   const { courseUuid } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const currentUser = useMemo(() => {
-    const raw = localStorage.getItem("currentUser");
-    if (!raw) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(raw) as CurrentUserResponse;
-    } catch {
-      return null;
-    }
-  }, []);
+  const currentUser = useMemo(() => getStoredCurrentUser(), []);
   const canUseNotifications =
-    currentUser?.identity === "Learner" || currentUser?.identity === "Educator";
+    currentUser?.identity === "Learner" ||
+    currentUser?.identity === "Educator" ||
+    currentUser?.identity === "Admin";
+  const canAccessCourseManagement =
+    currentUser?.identity === "Educator" || currentUser?.identity === "Admin";
   const [course, setCourse] = useState<CourseRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editForm, setEditForm] = useState<CourseEditFormState | null>(null);
   const [initialEditForm, setInitialEditForm] = useState<CourseEditFormState | null>(null);
@@ -158,6 +152,7 @@ function CourseManagementLayout() {
   const [isPublishingCourse, setIsPublishingCourse] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishToastSuccess, setPublishToastSuccess] = useState<string | null>(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isDeletingCourse, setIsDeletingCourse] = useState(false);
   const [deleteCourseError, setDeleteCourseError] = useState<string | null>(null);
   const searchParams = new URLSearchParams(location.search);
@@ -165,21 +160,26 @@ function CourseManagementLayout() {
   const isAdminCourseManagementSource = source === "course-management";
   const managementSearchSuffix = isAdminCourseManagementSource ? "?from=course-management" : "";
   const backLink = isAdminCourseManagementSource ? "/home/course-management" : "/home/managed-courses";
-  const backLabel = isAdminCourseManagementSource ? "Back to course management" : "Back to managed courses";
+  const backLabel = isAdminCourseManagementSource ? "Back to course management" : "返回管理课程";
 
   const refreshCourse = useCallback(async () => {
-    if (!courseUuid) {
+    if (!courseUuid || !canAccessCourseManagement) {
       return;
     }
 
     const data = await getManagedCourseByUuid(courseUuid);
     setCourse(data);
-  }, [courseUuid]);
+  }, [canAccessCourseManagement, courseUuid]);
 
   useEffect(() => {
     let cancelled = false;
 
     const loadCourse = async () => {
+      if (!canAccessCourseManagement) {
+        setLoading(false);
+        return;
+      }
+
       if (!courseUuid) {
         setLoading(false);
         return;
@@ -189,6 +189,12 @@ function CourseManagementLayout() {
         const data = await getManagedCourseByUuid(courseUuid);
         if (!cancelled) {
           setCourse(data);
+          setLoadError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCourse(null);
+          setLoadError(error instanceof Error ? error.message : "Failed to load managed course.");
         }
       } finally {
         if (!cancelled) {
@@ -202,7 +208,7 @@ function CourseManagementLayout() {
     return () => {
       cancelled = true;
     };
-  }, [courseUuid, refreshCourse]);
+  }, [canAccessCourseManagement, courseUuid, refreshCourse]);
 
   useEffect(() => {
     return subscribeAppRefresh(
@@ -218,11 +224,11 @@ function CourseManagementLayout() {
 
   const activeSectionTitle = useMemo(() => {
     if (location.pathname.endsWith("/modules")) {
-      return "Learning Paths & Modules";
+      return "学习路径与模块";
     }
 
     if (location.pathname.endsWith("/modules/new")) {
-      return "Learning Paths & Modules";
+      return "学习路径与模块";
     }
 
     if (location.pathname.endsWith("/materials")) {
@@ -230,7 +236,7 @@ function CourseManagementLayout() {
     }
 
     if (location.pathname.endsWith("/enrolments")) {
-      return "User Enrolments";
+      return "用户报名";
     }
 
     if (location.pathname.includes("/management/modules/")) {
@@ -241,7 +247,7 @@ function CourseManagementLayout() {
       return "Publishing Control";
     }
 
-    return "Course Overview";
+    return "课程概览";
   }, [location.pathname]);
 
   const shouldHideCourseHeaderActions = location.pathname.includes("/management/modules/");
@@ -256,8 +262,17 @@ function CourseManagementLayout() {
     setPublishError(null);
   };
 
+  const closeDeleteModal = useCallback(() => {
+    if (isDeletingCourse) {
+      return;
+    }
+
+    setIsDeleteModalOpen(false);
+    setDeleteCourseError(null);
+  }, [isDeletingCourse]);
+
   useEffect(() => {
-    if (!isEditModalOpen && !isPublishModalOpen) {
+    if (!isEditModalOpen && !isPublishModalOpen && !isDeleteModalOpen) {
       return;
     }
 
@@ -269,6 +284,9 @@ function CourseManagementLayout() {
         if (isPublishModalOpen) {
           closePublishModal();
         }
+        if (isDeleteModalOpen) {
+          closeDeleteModal();
+        }
       }
     };
 
@@ -276,7 +294,7 @@ function CourseManagementLayout() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isEditModalOpen, isPublishModalOpen]);
+  }, [closeDeleteModal, isDeleteModalOpen, isEditModalOpen, isPublishModalOpen]);
 
   useEffect(() => {
     if (!publishToastSuccess) {
@@ -295,7 +313,24 @@ function CourseManagementLayout() {
   if (loading) {
     return (
       <div className="course-management-shell course-management-shell-loading">
-        <div className="home-loading">Loading managed course...</div>
+        <div className="home-loading">正在加载管理课程...</div>
+      </div>
+    );
+  }
+
+  if (!canAccessCourseManagement) {
+    return <Navigate to="/home" replace />;
+  }
+
+  if (loadError) {
+    return (
+      <div className="course-management-shell course-management-shell-loading">
+        <div className="course-management-inline-alert">
+          <strong>无法加载管理课程。</strong>
+          <span>{loadError}</span>
+          <Link to="/home/managed-courses" className="course-management-back-link">返回管理课程
+          </Link>
+        </div>
       </div>
     );
   }
@@ -405,11 +440,13 @@ function CourseManagementLayout() {
     }
   };
 
+  const openDeleteModal = () => {
+    setDeleteCourseError(null);
+    setIsDeleteModalOpen(true);
+  };
+
   const handleDeleteCourse = async () => {
-    const confirmed = window.confirm(
-      `Delete "${course.title}"? This will permanently remove the course, modules, materials, and related course data.`
-    );
-    if (!confirmed || isDeletingCourse) {
+    if (isDeletingCourse) {
       return;
     }
 
@@ -418,6 +455,7 @@ function CourseManagementLayout() {
 
     try {
       await deleteManagedCourse(course.courseUuid);
+      setIsDeleteModalOpen(false);
       navigate(backLink, { replace: true });
     } catch (error) {
       setDeleteCourseError(error instanceof Error ? error.message : "Failed to delete course.");
@@ -430,7 +468,7 @@ function CourseManagementLayout() {
     <>
       {publishToastSuccess ? (
         <div className="course-management-toast course-management-toast-success" role="status" aria-live="polite">
-          <strong>Publish complete</strong>
+          <strong>发布完成</strong>
           <span>{publishToastSuccess}</span>
         </div>
       ) : null}
@@ -448,12 +486,12 @@ function CourseManagementLayout() {
 
           <ManagementSidebarMeta
             items={[
-              { label: "Course status", value: formatStatusLabel(course.status), valueClassName: publishedTextClassName },
-              { label: "Modules", value: String(course.moduleCount ?? course.modules.length) },
+              { label: "课程状态", value: formatStatusLabel(course.status), valueClassName: publishedTextClassName },
+              { label: "模块", value: String(course.moduleCount ?? course.modules.length) },
             ]}
           />
 
-          <nav className="course-management-nav" aria-label="Course management navigation">
+          <nav className="course-management-nav" aria-label="课程管理导航">
             <NavLink
               to={`/course/${course.courseUuid}/management${managementSearchSuffix}`}
               end
@@ -461,8 +499,8 @@ function CourseManagementLayout() {
                 isActive ? "course-management-nav-item course-management-nav-item-active" : "course-management-nav-item"
               }
             >
-              <span>Course Info</span>
-              <small>Metadata and learning path</small>
+              <span>课程信息</span>
+              <small>元数据和学习路径</small>
             </NavLink>
 
             <NavLink
@@ -471,8 +509,8 @@ function CourseManagementLayout() {
                 isActive ? "course-management-nav-item course-management-nav-item-active" : "course-management-nav-item"
               }
             >
-              <span>Modules</span>
-              <small>Structure and readiness</small>
+              <span>模块</span>
+              <small>结构和发布准备度</small>
             </NavLink>
 
             <NavLink
@@ -481,8 +519,8 @@ function CourseManagementLayout() {
                 isActive ? "course-management-nav-item course-management-nav-item-active" : "course-management-nav-item"
               }
             >
-              <span>User enrolments</span>
-              <small>Current learner roster</small>
+              <span>用户报名</span>
+              <small>当前学生名单</small>
             </NavLink>
 
             <NavLink
@@ -491,8 +529,8 @@ function CourseManagementLayout() {
                 isActive ? "course-management-nav-item course-management-nav-item-active" : "course-management-nav-item"
               }
             >
-              <span>Materials</span>
-              <small>Attached learning assets</small>
+              <span>资料</span>
+              <small>已关联学习资源</small>
             </NavLink>
 
             {!isAdminCourseManagementSource ? (
@@ -502,8 +540,8 @@ function CourseManagementLayout() {
                   isActive ? "course-management-nav-item course-management-nav-item-active" : "course-management-nav-item"
                 }
               >
-                <span>Forum</span>
-                <small>Open the course discussion board</small>
+                <span>论坛</span>
+                <small>打开课程讨论区</small>
               </NavLink>
             ) : null}
 
@@ -513,8 +551,8 @@ function CourseManagementLayout() {
                 isActive ? "course-management-nav-item course-management-nav-item-active" : "course-management-nav-item"
               }
             >
-              <span>Publishing</span>
-              <small>Status checks and release</small>
+              <span>发布</span>
+              <small>状态检查和发布</small>
             </NavLink>
           </nav>
         </aside>
@@ -522,7 +560,7 @@ function CourseManagementLayout() {
         <div className="course-management-main">
           <header className="course-management-header">
             <div className="course-management-header-title-group">
-              <span className="home-topbar-label">Managed Course</span>
+              <span className="home-topbar-label">管理课程</span>
               <div className="course-management-header-title-row">
                 <h2>{activeSectionTitle}</h2>
                 {!location.pathname.includes("/management/modules/") ? (
@@ -539,13 +577,12 @@ function CourseManagementLayout() {
                 <button
                   type="button"
                   className="course-management-action-button course-management-action-button-danger"
-                  onClick={handleDeleteCourse}
+                  onClick={openDeleteModal}
                   disabled={isDeletingCourse}
                 >
-                  {isDeletingCourse ? "Deleting..." : "Delete Course"}
+                  {isDeletingCourse ? "Deleting..." : "删除课程"}
                 </button>
-                <button type="button" className="course-management-action-button" onClick={openEditModal}>
-                  Edit Course
+                <button type="button" className="course-management-action-button" onClick={openEditModal}>编辑课程
                 </button>
                 <span
                   className="course-management-tooltip-wrapper"
@@ -560,8 +597,7 @@ function CourseManagementLayout() {
                     className="course-management-action-button course-management-action-button-primary"
                     disabled={isPublished}
                     onClick={openPublishModal}
-                  >
-                    Publish
+                  >发布
                   </button>
                 </span>
               </div>
@@ -572,7 +608,7 @@ function CourseManagementLayout() {
             <div className="course-management-content-scroll">
               {deleteCourseError ? (
                 <div className="course-management-inline-alert">
-                  <strong>Unable to delete course.</strong>
+                  <strong>无法删除课程。</strong>
                   <span>{deleteCourseError}</span>
                 </div>
               ) : null}
@@ -581,6 +617,68 @@ function CourseManagementLayout() {
           </main>
         </div>
       </div>
+
+      {isDeleteModalOpen ? (
+        <div className="course-management-modal-overlay" role="presentation">
+          <div
+            className="course-management-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-course-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="course-management-modal-header">
+              <div>
+                <span className="course-surface-badge">删除课程</span>
+                <h3 id="delete-course-title">删除这门课程？</h3>
+                <p className="course-management-modal-status">这将永久删除课程、模块、资料和相关课程数据。
+                </p>
+              </div>
+              <button
+                type="button"
+                className="course-management-modal-close"
+                onClick={closeDeleteModal}
+                aria-label="关闭删除课程窗口"
+                disabled={isDeletingCourse}
+              >
+                <LuX size={18} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="course-management-form course-management-form-single">
+              <div className="course-management-inline-alert course-management-field-full">
+                <strong>{course.title}</strong>
+                <span>此操作无法撤销。学生将无法再访问该课程空间。</span>
+              </div>
+
+              {deleteCourseError ? (
+                <div className="course-management-inline-alert course-management-field-full">
+                  <strong>无法删除课程。</strong>
+                  <span>{deleteCourseError}</span>
+                </div>
+              ) : null}
+
+              <div className="course-management-form-actions course-management-field-full">
+                <button
+                  type="button"
+                  className="course-management-action-button"
+                  onClick={closeDeleteModal}
+                  disabled={isDeletingCourse}
+                >保留课程
+                </button>
+                <button
+                  type="button"
+                  className="course-management-action-button course-management-action-button-danger"
+                  onClick={() => void handleDeleteCourse()}
+                  disabled={isDeletingCourse}
+                >
+                  {isDeletingCourse ? "Deleting..." : "永久删除"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {isEditModalOpen && editForm ? (
         <div className="course-management-modal-overlay" role="presentation">
@@ -593,15 +691,15 @@ function CourseManagementLayout() {
           >
             <div className="course-management-modal-header">
               <div>
-                <span className="course-surface-badge">Edit Course</span>
-                <h3 id="edit-course-title">Update course information</h3>
-                {hasUnsavedChanges ? <p className="course-management-modal-status">Unsaved changes</p> : null}
+                <span className="course-surface-badge">编辑课程</span>
+                <h3 id="edit-course-title">更新课程信息</h3>
+                {hasUnsavedChanges ? <p className="course-management-modal-status">未保存的更改</p> : null}
               </div>
               <button
                 type="button"
                 className="course-management-modal-close"
                 onClick={closeEditModal}
-                aria-label="Close edit course dialog"
+                aria-label="关闭编辑课程窗口"
               >
                 <LuX size={18} aria-hidden="true" />
               </button>
@@ -609,7 +707,7 @@ function CourseManagementLayout() {
 
             <form className="course-management-form" onSubmit={handleEditSubmit}>
               <label className="course-management-field">
-                <span>Title</span>
+                <span>标题</span>
                 <input
                   value={editForm.title}
                   onChange={(event) => handleEditFieldChange("title", event.target.value)}
@@ -618,7 +716,7 @@ function CourseManagementLayout() {
               </label>
 
               <label className="course-management-field">
-                <span>Subtitle</span>
+                <span>副标题</span>
                 <input
                   value={editForm.subtitle}
                   onChange={(event) => handleEditFieldChange("subtitle", event.target.value)}
@@ -626,7 +724,7 @@ function CourseManagementLayout() {
               </label>
 
               <label className="course-management-field course-management-field-full">
-                <span>Description</span>
+                <span>描述</span>
                 <textarea
                   value={editForm.description}
                   onChange={(event) => handleEditFieldChange("description", event.target.value)}
@@ -635,7 +733,7 @@ function CourseManagementLayout() {
               </label>
 
               <label className="course-management-field">
-                <span>Category</span>
+                <span>分类</span>
                 <input
                   value={editForm.category}
                   onChange={(event) => handleEditFieldChange("category", event.target.value)}
@@ -643,12 +741,12 @@ function CourseManagementLayout() {
               </label>
 
               <label className="course-management-field">
-                <span>Difficulty</span>
+                <span>难度</span>
                 <select
                   value={editForm.difficultyLevel}
                   onChange={(event) => handleEditFieldChange("difficultyLevel", event.target.value)}
                 >
-                  <option value="">Select difficulty</option>
+                  <option value="">选择难度</option>
                   {COURSE_DIFFICULTY_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
@@ -658,7 +756,7 @@ function CourseManagementLayout() {
               </label>
 
               <label className="course-management-field">
-                <span>Language</span>
+                <span>语言</span>
                 <input
                   value={editForm.languageCode}
                   onChange={(event) => handleEditFieldChange("languageCode", event.target.value)}
@@ -666,7 +764,7 @@ function CourseManagementLayout() {
               </label>
 
               <label className="course-management-field">
-                <span>Estimated minutes</span>
+                <span>预计分钟数</span>
                 <input
                   type="number"
                   min="1"
@@ -676,7 +774,7 @@ function CourseManagementLayout() {
               </label>
 
               <label className="course-management-field course-management-field-full">
-                <span>Learning path title</span>
+                <span>学习路径标题</span>
                 <input
                   value={editForm.learningPathTitle}
                   onChange={(event) => handleEditFieldChange("learningPathTitle", event.target.value)}
@@ -684,7 +782,7 @@ function CourseManagementLayout() {
               </label>
 
               <label className="course-management-field course-management-field-full">
-                <span>Learning path description</span>
+                <span>学习路径描述</span>
                 <textarea
                   value={editForm.learningPathDescription}
                   onChange={(event) => handleEditFieldChange("learningPathDescription", event.target.value)}
@@ -703,21 +801,20 @@ function CourseManagementLayout() {
 
               {editError ? (
                 <div className="course-management-inline-alert course-management-field-full">
-                  <strong>Unable to update course.</strong>
+                  <strong>无法更新课程。</strong>
                   <span>{editError}</span>
                 </div>
               ) : null}
 
               <div className="course-management-form-actions course-management-field-full">
-                <button type="button" className="course-management-action-button" onClick={closeEditModal}>
-                  Cancel
+                <button type="button" className="course-management-action-button" onClick={closeEditModal}>取消
                 </button>
                 <button
                   type="submit"
                   className="course-management-action-button course-management-action-button-primary"
                   disabled={isSavingEdit}
                 >
-                  {isSavingEdit ? "Saving..." : "Save changes"}
+                  {isSavingEdit ? "保存中..." : "保存修改"}
                 </button>
               </div>
             </form>
@@ -736,17 +833,16 @@ function CourseManagementLayout() {
           >
             <div className="course-management-modal-header">
               <div>
-                <span className="course-surface-badge">Publish Course</span>
-                <h3 id="publish-course-title">Choose modules to publish</h3>
-                <p className="course-management-modal-status">
-                  Selected modules will be published together with this course.
+                <span className="course-surface-badge">发布课程</span>
+                <h3 id="publish-course-title">选择要发布的模块</h3>
+                <p className="course-management-modal-status">所选模块会随课程一起发布。
                 </p>
               </div>
               <button
                 type="button"
                 className="course-management-modal-close"
                 onClick={closePublishModal}
-                aria-label="Close publish course dialog"
+                aria-label="关闭发布课程窗口"
               >
                 <LuX size={18} aria-hidden="true" />
               </button>
@@ -757,8 +853,8 @@ function CourseManagementLayout() {
               onSubmit={handlePublishSubmit}
             >
               <div className="course-management-inline-note course-management-field-full">
-                <strong>Publishing rule</strong>
-                <span>Each selected module must have content and at least one attached material before publishing.</span>
+                <strong>发布规则</strong>
+                <span>每个选中模块在发布前都必须有内容，并至少关联一份资料。</span>
               </div>
 
               <div className="course-management-module-selection course-management-field-full">
@@ -780,12 +876,11 @@ function CourseManagementLayout() {
                     <div className="course-management-module-selection-copy">
                       <strong>{module.title}</strong>
                       <span>
-                        {module.materials.length} material{module.materials.length === 1 ? "" : "s"} •{" "}
+                        {module.materials.length}份资料{module.materials.length === 1 ? "" : "s"} •{" "}
                         {formatStatusLabel(module.status)}
                       </span>
                       {!moduleHasPublishableMaterial(module.materials.length) ? (
-                        <em className="course-management-module-selection-warning">
-                          Upload at least one material before this module can be published.
+                        <em className="course-management-module-selection-warning">请至少上传一份资料后再发布该模块。
                         </em>
                       ) : null}
                     </div>
@@ -795,14 +890,13 @@ function CourseManagementLayout() {
 
               {publishError ? (
                 <div className="course-management-inline-alert course-management-field-full">
-                  <strong>Unable to publish course.</strong>
+                  <strong>无法发布课程。</strong>
                   <span>{publishError}</span>
                 </div>
               ) : null}
 
               <div className="course-management-form-actions course-management-field-full">
-                <button type="button" className="course-management-action-button" onClick={closePublishModal}>
-                  Cancel
+                <button type="button" className="course-management-action-button" onClick={closePublishModal}>取消
                 </button>
                 <button
                   type="submit"

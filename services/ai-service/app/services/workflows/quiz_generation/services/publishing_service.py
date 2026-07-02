@@ -17,9 +17,11 @@ class QuizGenerationPublishingService:
         course_uuid: str,
         module_uuid: str,
         candidate_set: QuizGenerationCandidateSetRead,
+        purpose: str = "authoring",
     ) -> list[CreatedQuizQuestionRead]:
         return self.learning.batch_create_questions(
             course_uuid=course_uuid,
             module_uuid=module_uuid,
             candidate_set=candidate_set,
+            purpose=purpose,
         )

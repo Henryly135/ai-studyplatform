@@ -1,10 +1,10 @@
 const PASSWORD_RULE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
 
-export const PASSWORD_HINT = "Min 8 chars, A-Z, a-z, 0-9, special character";
+export const PASSWORD_HINT = "至少 8 位，包含大小写字母、数字和特殊字符";
 
 export function validatePassword(password: string): string {
   if (!PASSWORD_RULE.test(password)) {
-    return "Password must be at least 8 characters and include uppercase, lowercase, a number, and a special character.";
+    return "密码至少 8 位，并且需要包含大写字母、小写字母、数字和特殊字符。";
   }
   return "";
 }

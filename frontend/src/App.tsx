@@ -3,58 +3,52 @@ import { useEffect } from "react";
 import { matchPath, useLocation } from "react-router-dom";
 import AppRoutes from "./routes/route";
 
-const DEFAULT_APP_TITLE = "Learning Hub";
+const DEFAULT_APP_TITLE = "学习平台";
 
 function getPageTitle(pathname: string) {
   if (pathname === "/") {
-    return `Home | ${DEFAULT_APP_TITLE}`;
+    return `首页 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (pathname === "/login") {
-    return `Login | ${DEFAULT_APP_TITLE}`;
+    return `登录 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (pathname.startsWith("/register")) {
-    return `Register | ${DEFAULT_APP_TITLE}`;
+    return `注册 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (pathname === "/forgot-password") {
-    return `Forgot Password | ${DEFAULT_APP_TITLE}`;
+    return `忘记密码 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (pathname === "/reset-password") {
-    return `Reset Password | ${DEFAULT_APP_TITLE}`;
+    return `重置密码 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (pathname === "/change-password") {
-    return `Change Password | ${DEFAULT_APP_TITLE}`;
+    return `修改密码 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (pathname === "/verify-email") {
-    return `Verify Email | ${DEFAULT_APP_TITLE}`;
+    return `邮箱验证 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (pathname === "/terms") {
-    return `Terms | ${DEFAULT_APP_TITLE}`;
-  }
-
-  if (pathname === "/ai-demo" || pathname.startsWith("/ai-demo/")) {
-    return `AI Demo | ${DEFAULT_APP_TITLE}`;
+    return `服务条款 | ${DEFAULT_APP_TITLE}`;
   }
 
   const homeTitles: Record<string, string> = {
-    "/home": "Dashboard",
-    "/home/course-center": "Course Center",
-    "/home/my-courses": "My Courses",
-    "/home/managed-courses": "Managed Courses",
-    "/home/communication": "Notifications",
-    "/home/progress": "Progress",
-    "/home/ai": "AI Workspace",
-    "/home/analytics": "Analytics",
-    "/home/course-management": "Course Management",
-    "/home/user-management": "User Management",
-    "/home/educator-requests": "Educator Requests",
-    "/home/communication-management": "Notification Management",
+    "/home": "工作台",
+    "/home/course-center": "课程大厅",
+    "/home/my-courses": "我的课程",
+    "/home/managed-courses": "管理课程",
+    "/home/communication": "通知",
+    "/home/progress": "学习进度",
+    "/home/ai": "智能工作区",
+    "/home/analytics": "教学分析",
+    "/home/course-management": "课程管理",
+    "/home/user-management": "用户管理",
   };
 
   if (homeTitles[pathname]) {
@@ -62,59 +56,59 @@ function getPageTitle(pathname: string) {
   }
 
   if (pathname === "/courses/join") {
-    return `Join Course | ${DEFAULT_APP_TITLE}`;
+    return `加入课程 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid/forum/:postUuid", pathname) || matchPath("/course/:courseUuid/forum", pathname)) {
-    return `Course Forum | ${DEFAULT_APP_TITLE}`;
+    return `课程论坛 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid/modules/:moduleUuid/materials/:materialUuid", pathname)) {
-    return `Course Material | ${DEFAULT_APP_TITLE}`;
+    return `课程资料 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid/modules/:moduleUuid/quiz", pathname)) {
-    return `Course Quiz | ${DEFAULT_APP_TITLE}`;
+    return `课程测验 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid/modules/:moduleUuid", pathname)) {
-    return `Course Module | ${DEFAULT_APP_TITLE}`;
+    return `课程模块 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid/management/modules/new", pathname)) {
-    return `Create Module | ${DEFAULT_APP_TITLE}`;
+    return `创建模块 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid/management/modules/:moduleUuid/quiz", pathname)) {
-    return `Module Quiz Management | ${DEFAULT_APP_TITLE}`;
+    return `模块测验管理 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid/management/modules/:moduleUuid", pathname)) {
-    return `Module Management | ${DEFAULT_APP_TITLE}`;
+    return `模块管理 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid/management/modules", pathname)) {
-    return `Course Modules | ${DEFAULT_APP_TITLE}`;
+    return `课程模块 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid/management/enrolments", pathname)) {
-    return `Course Enrolments | ${DEFAULT_APP_TITLE}`;
+    return `课程报名 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid/management/materials", pathname)) {
-    return `Course Materials | ${DEFAULT_APP_TITLE}`;
+    return `课程资料 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid/management/publishing", pathname)) {
-    return `Course Publishing | ${DEFAULT_APP_TITLE}`;
+    return `课程发布 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid/management", pathname)) {
-    return `Course Management | ${DEFAULT_APP_TITLE}`;
+    return `课程管理 | ${DEFAULT_APP_TITLE}`;
   }
 
   if (matchPath("/course/:courseUuid", pathname)) {
-    return `Course Overview | ${DEFAULT_APP_TITLE}`;
+    return `课程概览 | ${DEFAULT_APP_TITLE}`;
   }
 
   return DEFAULT_APP_TITLE;

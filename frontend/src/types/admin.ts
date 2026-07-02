@@ -87,6 +87,17 @@ export interface SendEducatorInviteEmailRequest {
   inviteUrl: string;
 }
 
+export interface EducatorInviteEmailDelivery {
+  attempted: boolean;
+  delivered: boolean;
+  reason: string | null;
+}
+
+export interface SendEducatorInviteEmailResponse {
+  detail: string;
+  emailDelivery: EducatorInviteEmailDelivery;
+}
+
 export interface CourseInviteLinkResponse {
   inviteUuid: string;
   courseUuid: string;

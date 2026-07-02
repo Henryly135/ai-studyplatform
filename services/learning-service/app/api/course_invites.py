@@ -1,14 +1,28 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from app.core.public_url import resolve_public_frontend_base_url
+from app.core.public_url import PublicFrontendUrlNotConfiguredError, resolve_trusted_public_frontend_base_url
 from app.core.deps import require_identity_permission, require_identity_user
 from app.db.session import get_db_session
 from app.services.course_invite_service import CourseInviteService, CourseInviteServiceError
 from platform_common.permissions.codes import COURSE_ENROLLMENT_MANAGE, COURSE_ENROL
 
+logger = logging.getLogger(__name__)
+
+_COURSE_INVITE_LINK_CONFIGURATION_UNAVAILABLE = "Course invite link generation is temporarily unavailable."
+
 
 router = APIRouter(tags=["course-invites"])
+
+
+def _trusted_frontend_base_url(request: Request) -> str | None:
+    try:
+        return resolve_trusted_public_frontend_base_url(request)
+    except PublicFrontendUrlNotConfiguredError as exc:
+        logger.error("Trusted public frontend URL is unavailable for course invite link generation")
+        raise HTTPException(status_code=500, detail=_COURSE_INVITE_LINK_CONFIGURATION_UNAVAILABLE) from exc
 
 
 @router.post(
@@ -26,7 +40,7 @@ def generate_course_invite_link(
         return CourseInviteService(session).generate_invite_link(
             course_uuid=course_uuid,
             current_user=current_user,
-            public_frontend_base_url=resolve_public_frontend_base_url(request),
+            public_frontend_base_url=_trusted_frontend_base_url(request),
         )
     except CourseInviteServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
@@ -47,7 +61,7 @@ def list_course_invite_links(
         return CourseInviteService(session).list_invite_links(
             course_uuid=course_uuid,
             current_user=current_user,
-            public_frontend_base_url=resolve_public_frontend_base_url(request),
+            public_frontend_base_url=_trusted_frontend_base_url(request),
         )
     except CourseInviteServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

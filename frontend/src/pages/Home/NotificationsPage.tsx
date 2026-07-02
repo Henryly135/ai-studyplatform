@@ -35,41 +35,27 @@ import {
 import type { CurrentUserResponse } from "../../types/auth";
 import type { AdminUserResponse } from "../../types/admin";
 import type {
-  NotificationCreateRequest,
   NotificationRead,
   NotificationRecipientRead,
-  NotificationUpdateRequest,
 } from "../../types/notification";
 import { emitAppRefresh, subscribeAppRefresh } from "../../utils/refreshEvents";
+import {
+  INITIAL_COMPOSER_STATE,
+  buildNotificationCreatePayload,
+  buildNotificationUpdatePayload,
+  type NotificationComposerState,
+} from "./notificationComposer";
 
 type NotificationsPageProps = {
   mode: "recipient" | "admin";
   currentUser: CurrentUserResponse;
 };
 
-type NotificationComposerState = {
-  notificationType: string;
-  title: string;
-  body: string;
-  targetType: string;
-  targetId: string;
-  metadataJson: string;
-};
-
 const PAGE_SIZE = 12;
 const PAGE_POLL_INTERVAL_MS = 15000;
 
-const INITIAL_COMPOSER_STATE: NotificationComposerState = {
-  notificationType: "",
-  title: "",
-  body: "",
-  targetType: "",
-  targetId: "",
-  metadataJson: "",
-};
-
 function formatDateTime(value: string | null) {
-  if (!value) return "Not available";
+  if (!value) return "不可用";
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -98,7 +84,7 @@ function formatRelativeTime(value: string | null) {
   if (Number.isNaN(timestamp.getTime())) return value;
 
   const differenceMinutes = Math.max(0, Math.floor((Date.now() - timestamp.getTime()) / 60000));
-  if (differenceMinutes < 1) return "Just now";
+  if (differenceMinutes < 1) return "刚刚";
   if (differenceMinutes < 60) return `${differenceMinutes} minutes ago`;
 
   const differenceHours = Math.floor(differenceMinutes / 60);
@@ -129,7 +115,7 @@ function getNotificationAction(metadataJson: Record<string, unknown> | null) {
     frontendPath,
     actionLabel: typeof actionLabel === "string" && actionLabel.trim()
       ? actionLabel
-      : "Open",
+      : "打开",
   };
 }
 
@@ -137,37 +123,6 @@ function isRecipientNotification(
   item: NotificationRead | NotificationRecipientRead
 ): item is NotificationRecipientRead {
   return "isRead" in item;
-}
-
-function buildNotificationPayload(
-  composer: NotificationComposerState,
-  recipients: AdminUserResponse[]
-): NotificationCreateRequest | NotificationUpdateRequest {
-  const metadataJson = composer.metadataJson.trim()
-    ? (JSON.parse(composer.metadataJson) as Record<string, unknown>)
-    : null;
-
-  const basePayload = {
-    notificationType: composer.notificationType.trim(),
-    title: composer.title.trim(),
-    body: composer.body.trim(),
-    targetType: composer.targetType.trim() || null,
-    targetId: composer.targetId.trim() || null,
-    metadataJson,
-  };
-
-  if (recipients.length === 0) {
-    return basePayload;
-  }
-
-  return {
-    ...basePayload,
-    recipients: recipients.map((recipient) => ({
-      recipientUserUuid: recipient.userUuid,
-      recipientEmail: recipient.email,
-      recipientName: recipient.userName,
-    })),
-  };
 }
 
 function NotificationComposerModal({
@@ -199,25 +154,63 @@ function NotificationComposerModal({
   onToggleRecipient: (user: AdminUserResponse) => void;
   onSubmit: () => void;
 }) {
+  const titleId = "notification-composer-title";
+  const descriptionId = "notification-composer-description";
+  const requestClose = useCallback(() => {
+    if (!submitting) {
+      onClose();
+    }
+  }, [onClose, submitting]);
+
+  useEffect(() => {
+    if (!open || submitting) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        requestClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open, requestClose, submitting]);
+
   if (!open) return null;
 
   const selectedRecipientUuids = new Set(recipients.map((item) => item.userUuid));
 
   return (
-    <div className="notifications-modal-backdrop" onClick={onClose}>
-      <div className="notifications-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="notifications-modal-backdrop" onClick={requestClose}>
+      <div
+        className="notifications-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="notifications-modal-header">
           <div>
             <span className="notifications-panel-kicker">
-              {mode === "create" ? "Create notification" : "Edit notification"}
+              {mode === "create" ? "Create notification" : "编辑通知"}
             </span>
-            <h2>{mode === "create" ? "New Notification" : "Update Notification"}</h2>
+            <h2 id={titleId}>{mode === "create" ? "New Notification" : "Update Notification"}</h2>
+            <p id={descriptionId} className="notifications-modal-description">
+              {mode === "create"
+                ? "Compose a platform notification and choose the users who should receive it."
+                : "Update the notification content while keeping its recipient list unchanged."}
+            </p>
           </div>
           <button
             type="button"
             className="notifications-modal-close"
-            onClick={onClose}
-            aria-label="Close notification modal"
+            onClick={requestClose}
+            disabled={submitting}
+            aria-label="关闭通知窗口"
           >
             <LuX size={18} aria-hidden="true" />
           </button>
@@ -226,62 +219,63 @@ function NotificationComposerModal({
         <div className="notifications-modal-body">
           <div className="notifications-form-grid">
             <label className="notifications-field notifications-field-full">
-              <span>Notification type</span>
+              <span>通知类型</span>
               <input
                 type="text"
                 value={composer.notificationType}
                 onChange={(event) =>
                   onComposerChange("notificationType", event.target.value)
                 }
-                placeholder="e.g. educator_approval_request_created"
+                placeholder="例如：教师审批请求"
+                autoFocus
               />
             </label>
 
             <label className="notifications-field notifications-field-full">
-              <span>Title</span>
+              <span>标题</span>
               <input
                 type="text"
                 value={composer.title}
                 onChange={(event) => onComposerChange("title", event.target.value)}
-                placeholder="Notification title"
+                placeholder="通知标题"
               />
             </label>
 
             <label className="notifications-field notifications-field-full">
-              <span>Body</span>
+              <span>正文</span>
               <textarea
                 value={composer.body}
                 onChange={(event) => onComposerChange("body", event.target.value)}
-                placeholder="Write the notification content shown to users."
+                placeholder="填写展示给用户的通知内容。"
               />
             </label>
 
             <label className="notifications-field">
-              <span>Target type</span>
+              <span>目标类型</span>
               <input
                 type="text"
                 value={composer.targetType}
                 onChange={(event) => onComposerChange("targetType", event.target.value)}
-                placeholder="Optional target type"
+                placeholder="可选目标类型"
               />
             </label>
 
             <label className="notifications-field">
-              <span>Target id</span>
+              <span>目标编号</span>
               <input
                 type="text"
                 value={composer.targetId}
                 onChange={(event) => onComposerChange("targetId", event.target.value)}
-                placeholder="Optional target identifier"
+                placeholder="可选目标标识符"
               />
             </label>
 
             <label className="notifications-field notifications-field-full">
-              <span>Metadata JSON</span>
+              <span>元数据</span>
               <textarea
                 value={composer.metadataJson}
                 onChange={(event) => onComposerChange("metadataJson", event.target.value)}
-                placeholder='Optional JSON, e.g. { "courseUuid": "..." }'
+                placeholder="可选：填写课程编号、模块编号或其他补充信息"
               />
             </label>
           </div>
@@ -290,10 +284,10 @@ function NotificationComposerModal({
             <section className="notifications-recipient-picker">
               <div className="notifications-recipient-picker-header">
                 <div>
-                  <h3>Recipients</h3>
-                  <p>Select one or more users who should receive this notification.</p>
+                  <h3>接收人</h3>
+                  <p>选择一个或多个应接收该通知的用户。</p>
                 </div>
-                <span className="notifications-pill-count">{recipients.length} selected</span>
+                <span className="notifications-pill-count">{recipients.length}已选择</span>
               </div>
 
               <label className="notifications-recipient-search">
@@ -302,7 +296,7 @@ function NotificationComposerModal({
                   type="text"
                   value={recipientSearch}
                   onChange={(event) => onRecipientSearchChange(event.target.value)}
-                  placeholder="Search users by name or email"
+                  placeholder="按姓名或邮箱搜索用户"
                 />
               </label>
 
@@ -345,10 +339,9 @@ function NotificationComposerModal({
             </section>
           ) : (
             <section className="notifications-modal-note">
-              <h3>Recipients</h3>
+              <h3>接收人</h3>
               <p>
-                Recipient membership is fixed after creation. This edit form updates the
-                notification content only.
+                创建后接收人不可更改。此编辑表单仅更新通知内容。
               </p>
             </section>
           )}
@@ -364,10 +357,9 @@ function NotificationComposerModal({
           <button
             type="button"
             className="notifications-secondary-button"
-            onClick={onClose}
+            onClick={requestClose}
             disabled={submitting}
-          >
-            Cancel
+          >取消
           </button>
           <button
             type="button"
@@ -377,11 +369,11 @@ function NotificationComposerModal({
           >
             {submitting
               ? mode === "create"
-                ? "Creating..."
-                : "Saving..."
+                ? "创建中..."
+                : "保存中..."
               : mode === "create"
                 ? "Create notification"
-                : "Save changes"}
+                : "保存修改"}
           </button>
         </div>
       </div>
@@ -426,6 +418,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
   const lastAutoReadNotificationUuidRef = useRef<string | null>(null);
   const autoReadRequestIdRef = useRef(0);
   const pollInFlightRef = useRef(false);
+  const composerTriggerRef = useRef<HTMLElement | null>(null);
 
   const accessToken = localStorage.getItem("accessToken") ?? "";
   const isAdminMode = mode === "admin";
@@ -479,29 +472,12 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
     setUnreadCount(countData.unreadCount);
   }, [accessToken, isAdminMode]);
 
-  const updateRecipientItemState = useCallback(
-    (
-      notificationUuid: string,
-      updater: (item: NotificationRecipientRead) => NotificationRecipientRead
-    ) => {
-      setRecipientItems((current) =>
-        current.map((item) =>
-          item.notificationUuid === notificationUuid ? updater(item) : item
-        )
-      );
-      setSelectedRecipientDetail((current) =>
-        current && current.notificationUuid === notificationUuid ? updater(current) : current
-      );
-    },
-    []
-  );
-
   useEffect(() => {
     let cancelled = false;
 
     const loadNotifications = async () => {
       if (!accessToken) {
-        setErrorMessage("Missing access token. Please log in again.");
+        setErrorMessage("缺少访问令牌，请重新登录。");
         setLoading(false);
         return;
       }
@@ -532,9 +508,9 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
             return Array.from(next).sort();
           });
 
-          setSelectedNotificationUuid((current) =>
-            current || notificationsData.items[0]?.notificationUuid || current
-          );
+          if (!selectedNotificationUuid && notificationsData.items.length > 0) {
+            setSelectedNotificationUuid(notificationsData.items[0].notificationUuid);
+          }
         } else {
           const [notificationsData] = await Promise.all([
             listMyNotifications(accessToken, {
@@ -558,14 +534,14 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
             return Array.from(next).sort();
           });
 
-          setSelectedNotificationUuid((current) =>
-            current || notificationsData.items[0]?.notificationUuid || current
-          );
+          if (!selectedNotificationUuid && notificationsData.items.length > 0) {
+            setSelectedNotificationUuid(notificationsData.items[0].notificationUuid);
+          }
         }
       } catch (error) {
         if (!cancelled) {
           setErrorMessage(
-            error instanceof Error ? error.message : "Failed to load notifications."
+            error instanceof Error ? error.message : "通知加载失败。"
           );
         }
       } finally {
@@ -580,15 +556,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [
-    accessToken,
-    isAdminMode,
-    page,
-    refreshUnreadCount,
-    showHidden,
-    typeFilter,
-    unreadOnly,
-  ]);
+  }, [accessToken, isAdminMode, page, refreshUnreadCount, showHidden, typeFilter, unreadOnly, selectedNotificationUuid]);
 
   useEffect(() => {
     if (!accessToken) {
@@ -783,7 +751,6 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
     activeRecipientNotificationUuid,
     isAdminMode,
     refreshUnreadCount,
-    updateRecipientItemState,
   ]);
 
   useEffect(() => {
@@ -824,6 +791,20 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
     }
   };
 
+  const updateRecipientItemState = (
+    notificationUuid: string,
+    updater: (item: NotificationRecipientRead) => NotificationRecipientRead
+  ) => {
+    setRecipientItems((current) =>
+      current.map((item) =>
+        item.notificationUuid === notificationUuid ? updater(item) : item
+      )
+    );
+    setSelectedRecipientDetail((current) =>
+      current && current.notificationUuid === notificationUuid ? updater(current) : current
+    );
+  };
+
   const handleMarkAllRead = async () => {
     if (!accessToken) return;
 
@@ -855,7 +836,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
       emitAppRefresh({ scope: "notifications" });
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : "Failed to mark all notifications as read."
+        error instanceof Error ? error.message : "全部标记为已读失败。"
       );
     } finally {
       setSubmitting(false);
@@ -881,7 +862,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
           isRead: true,
           readAt: new Date().toISOString(),
         }));
-        setSuccessMessage("Notification marked as read.");
+        setSuccessMessage("通知已标记为已读。");
       } else if (action === "unread") {
         lastAutoReadNotificationUuidRef.current = item.notificationUuid;
         await markNotificationUnread(accessToken, item.notificationUuid);
@@ -890,7 +871,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
           isRead: false,
           readAt: null,
         }));
-        setSuccessMessage("Notification marked as unread.");
+        setSuccessMessage("通知已标记为未读。");
       } else if (action === "hide") {
         await hideNotification(accessToken, item.notificationUuid);
         updateRecipientItemState(item.notificationUuid, (current) => ({
@@ -898,7 +879,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
           isHidden: true,
           hiddenAt: new Date().toISOString(),
         }));
-        setSuccessMessage("Notification hidden.");
+        setSuccessMessage("通知已隐藏。");
       } else {
         await restoreNotification(accessToken, item.notificationUuid);
         updateRecipientItemState(item.notificationUuid, (current) => ({
@@ -906,7 +887,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
           isHidden: false,
           hiddenAt: null,
         }));
-        setSuccessMessage("Notification restored.");
+        setSuccessMessage("通知已恢复。");
       }
 
       await refreshUnreadCount();
@@ -928,6 +909,8 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
   };
 
   const openCreateModal = () => {
+    composerTriggerRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setComposerMode("create");
     setComposerState(INITIAL_COMPOSER_STATE);
     setSelectedRecipients([]);
@@ -939,6 +922,8 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
   const openEditModal = () => {
     if (!activeAdminDetail) return;
 
+    composerTriggerRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setComposerMode("edit");
     setComposerState({
       notificationType: activeAdminDetail.notificationType,
@@ -960,6 +945,11 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
     setSelectedRecipients([]);
     setRecipientSearch("");
     setComposerState(INITIAL_COMPOSER_STATE);
+    const trigger = composerTriggerRef.current;
+    composerTriggerRef.current = null;
+    if (trigger?.isConnected) {
+      window.setTimeout(() => trigger.focus(), 0);
+    }
   };
 
   const handleComposerChange = (
@@ -1001,15 +991,12 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
     try {
       setSubmitting(true);
       setComposerError("");
-      const payload = buildNotificationPayload(
-        composerState,
-        isCreateMode ? selectedRecipients : []
-      );
 
       if (isCreateMode) {
+        const payload = buildNotificationCreatePayload(composerState, selectedRecipients);
         const createdNotification = await createNotification(
           accessToken,
-          payload as NotificationCreateRequest
+          payload
         );
         setAdminItems((current) => [createdNotification, ...current]);
         setSelectedNotificationUuid(createdNotification.notificationUuid);
@@ -1018,12 +1005,13 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
           Array.from(new Set([...current, createdNotification.notificationType])).sort()
         );
         emitAppRefresh({ scope: "notifications" });
-        setSuccessMessage("Notification created successfully.");
+        setSuccessMessage("通知创建成功。");
       } else if (activeAdminDetail) {
+        const payload = buildNotificationUpdatePayload(composerState);
         const updatedNotification = await updateNotification(
           accessToken,
           activeAdminDetail.notificationUuid,
-          payload as NotificationUpdateRequest
+          payload
         );
         setAdminItems((current) =>
           current.map((item) =>
@@ -1034,7 +1022,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
         );
         setSelectedAdminDetail(updatedNotification);
         emitAppRefresh({ scope: "notifications" });
-        setSuccessMessage("Notification updated successfully.");
+        setSuccessMessage("通知更新成功。");
       }
 
       closeComposer();
@@ -1061,7 +1049,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
       setSelectedAdminDetail(null);
       setSelectedNotificationUuid(remainingItems[0]?.notificationUuid ?? null);
       emitAppRefresh({ scope: "notifications" });
-      setSuccessMessage("Notification deleted.");
+      setSuccessMessage("通知已删除。");
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Failed to delete notification."
@@ -1074,34 +1062,34 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
   const summaryCards = isAdminMode
     ? [
         {
-          label: "Visible notifications",
+          label: "可见通知",
           value: total,
           icon: <LuBell size={18} aria-hidden="true" />,
         },
         {
-          label: "Notification types",
+          label: "通知类型",
           value: notificationTypes.length,
           icon: <LuInbox size={18} aria-hidden="true" />,
         },
         {
-          label: "Available recipients",
+          label: "可选接收人",
           value: recipientUsers.length,
           icon: <LuUsers size={18} aria-hidden="true" />,
         },
       ]
     : [
         {
-          label: "Unread notifications",
+          label: "未读通知",
           value: unreadCount,
           icon: <LuBellRing size={18} aria-hidden="true" />,
         },
         {
-          label: "Loaded this page",
+          label: "本页已加载",
           value: visibleRecipientItems.length,
           icon: <LuInbox size={18} aria-hidden="true" />,
         },
         {
-          label: "Hidden view",
+          label: "隐藏视图",
           value: showHidden ? "On" : "Off",
           icon: <LuEyeOff size={18} aria-hidden="true" />,
         },
@@ -1112,7 +1100,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
       <section className="notifications-page notifications-page-recipient">
         {successMessage ? (
           <div className="notifications-toast" role="status" aria-live="polite">
-            <strong>Success</strong>
+            <strong>成功</strong>
             <span>{successMessage}</span>
           </div>
         ) : null}
@@ -1135,18 +1123,17 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
               onClick={() => void handleMarkAllRead()}
               disabled={submitting || unreadCount === 0}
             >
-              <LuMailCheck size={16} aria-hidden="true" />
-              Mark all as read
+              <LuMailCheck size={16} aria-hidden="true" />全部标记为已读
             </button>
           </header>
 
           <section className="notifications-recipient-board">
             <div className="notifications-recipient-titlebar">
-              <p>{unreadCount} unread updates waiting for you.</p>
+              <p>{unreadCount}条未读更新等待查看。</p>
             </div>
 
             {loading ? (
-              <p className="notifications-feedback">Loading notifications...</p>
+              <p className="notifications-feedback">正在加载通知...</p>
             ) : errorMessage ? (
               <p className="notifications-feedback notifications-feedback-error">
                 {errorMessage}
@@ -1157,8 +1144,8 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                   {recipientItems.length === 0 ? (
                     <div className="notifications-empty-state">
                       <LuInbox size={20} aria-hidden="true" />
-                      <strong>No notifications yet</strong>
-                      <span>New course and platform updates will appear here.</span>
+                      <strong>暂无通知</strong>
+                      <span>新的课程和平台更新会显示在这里。</span>
                     </div>
                   ) : (
                     recipientItems.map((item) => {
@@ -1186,7 +1173,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
 
                 <section className="notifications-recipient-detail">
                   {detailLoading ? (
-                    <p className="notifications-feedback">Loading details...</p>
+                    <p className="notifications-feedback">正在加载详情...</p>
                   ) : detailError ? (
                     <p className="notifications-feedback notifications-feedback-error">
                       {detailError}
@@ -1204,12 +1191,11 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                       </div>
 
                       <div className="notifications-recipient-message-body">
-                        <p className="notifications-recipient-greeting">Hi {currentUser.userName},</p>
+                        <p className="notifications-recipient-greeting">你好 {currentUser.userName},</p>
                         <p>{activeRecipientDetail.body}</p>
 
                         <div className="notifications-recipient-summary">
-                          <span>
-                            From{" "}
+                          <span>来自{" "}
                             <strong>
                               {activeRecipientDetail.actorName ??
                                 activeRecipientDetail.actorEmail ??
@@ -1247,7 +1233,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                             }
                             disabled={submitting}
                           >
-                            {activeRecipientDetail.isRead ? "Mark unread" : "Mark read"}
+                            {activeRecipientDetail.isRead ? "标为未读" : "标为已读"}
                           </button>
                         </div>
                       </div>
@@ -1255,8 +1241,8 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                   ) : (
                     <div className="notifications-empty-detail">
                       <LuBell size={18} aria-hidden="true" />
-                      <strong>Select a notification</strong>
-                      <span>Choose an item on the left to read the full message.</span>
+                      <strong>选择一条通知</strong>
+                      <span>选择左侧项目以阅读完整消息。</span>
                     </div>
                   )}
                 </section>
@@ -1272,7 +1258,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
     <section className="notifications-page">
       {successMessage ? (
         <div className="notifications-toast" role="status" aria-live="polite">
-          <strong>Success</strong>
+          <strong>成功</strong>
           <span>{successMessage}</span>
         </div>
       ) : null}
@@ -1330,7 +1316,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                     setPage(1);
                   }}
                 >
-                  <option value="">All types</option>
+                  <option value="">全部类型</option>
                   {notificationTypes.map((type) => (
                     <option key={type} value={type}>
                       {formatNotificationType(type)}
@@ -1347,8 +1333,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                         setUnreadOnly((current) => !current);
                         setPage(1);
                       }}
-                    >
-                      Unread only
+                    >仅未读
                     </button>
                     <button
                       type="button"
@@ -1357,8 +1342,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                         setShowHidden((current) => !current);
                         setPage(1);
                       }}
-                    >
-                      Show hidden
+                    >显示隐藏项
                     </button>
                     <button
                       type="button"
@@ -1366,8 +1350,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                       onClick={() => void handleMarkAllRead()}
                       disabled={submitting || unreadCount === 0}
                     >
-                      <LuMailCheck size={16} aria-hidden="true" />
-                      Mark all read
+                      <LuMailCheck size={16} aria-hidden="true" />全部标为已读
                     </button>
                   </>
                 ) : (
@@ -1376,15 +1359,14 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                     className="notifications-primary-button"
                     onClick={openCreateModal}
                   >
-                    <LuPlus size={16} aria-hidden="true" />
-                    New notification
+                    <LuPlus size={16} aria-hidden="true" />新建通知
                   </button>
                 )}
               </div>
             </div>
 
             {loading ? (
-              <p className="notifications-feedback">Loading notifications...</p>
+              <p className="notifications-feedback">正在加载通知...</p>
             ) : null}
 
             {!loading && errorMessage ? (
@@ -1396,12 +1378,10 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
             {!loading && !errorMessage ? (
               <>
                 <div className="notifications-list-meta">
-                  <span>
-                    Showing{" "}
-                    {isAdminMode ? visibleAdminItems.length : visibleRecipientItems.length} of {total}
+                  <span>显示{" "}
+                    {isAdminMode ? visibleAdminItems.length : visibleRecipientItems.length}共 {total}
                   </span>
-                  <span>
-                    Page {page} of {totalPages}
+                  <span>页码 {page}共 {totalPages}
                   </span>
                 </div>
 
@@ -1444,7 +1424,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                   {(isAdminMode ? visibleAdminItems : visibleRecipientItems).length === 0 ? (
                     <div className="notifications-empty-state">
                       <LuInbox size={20} aria-hidden="true" />
-                      <strong>No notifications found</strong>
+                      <strong>未找到通知</strong>
                       <span>
                         {isAdminMode
                           ? "Try a different type filter or create a new notification."
@@ -1460,16 +1440,14 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                     className="notifications-secondary-button"
                     onClick={() => setPage((current) => Math.max(1, current - 1))}
                     disabled={page <= 1}
-                  >
-                    Previous
+                  >上一页
                   </button>
                   <button
                     type="button"
                     className="notifications-secondary-button"
                     onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
                     disabled={page >= totalPages}
-                  >
-                    Next
+                  >下一页
                   </button>
                 </div>
               </>
@@ -1478,7 +1456,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
 
           <aside className="notifications-detail-panel">
             {detailLoading ? (
-              <p className="notifications-feedback">Loading details...</p>
+              <p className="notifications-feedback">正在加载详情...</p>
             ) : detailError ? (
               <p className="notifications-feedback notifications-feedback-error">
                 {detailError}
@@ -1499,7 +1477,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                         type="button"
                         className="notifications-icon-button"
                         onClick={openEditModal}
-                        aria-label="Edit notification"
+                        aria-label="编辑通知"
                       >
                         <LuPencil size={16} aria-hidden="true" />
                       </button>
@@ -1507,7 +1485,7 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                         type="button"
                         className="notifications-icon-button notifications-icon-button-danger"
                         onClick={() => void handleDeleteNotification()}
-                        aria-label="Delete notification"
+                        aria-label="删除通知"
                         disabled={submitting}
                       >
                         <LuTrash2 size={16} aria-hidden="true" />
@@ -1517,19 +1495,19 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
 
                   <dl className="notifications-detail-grid">
                     <div>
-                      <dt>Actor</dt>
+                      <dt>操作者</dt>
                       <dd>{activeAdminDetail.actorName ?? activeAdminDetail.actorEmail ?? "System"}</dd>
                     </div>
                     <div>
-                      <dt>Created</dt>
+                      <dt>创建时间</dt>
                       <dd>{formatDateTime(activeAdminDetail.createdAt)}</dd>
                     </div>
                     <div>
-                      <dt>Updated</dt>
+                      <dt>更新时间</dt>
                       <dd>{formatDateTime(activeAdminDetail.updatedAt)}</dd>
                     </div>
                     <div>
-                      <dt>Target</dt>
+                      <dt>目标</dt>
                       <dd>
                         {activeAdminDetail.targetType
                           ? `${activeAdminDetail.targetType}${activeAdminDetail.targetId ? ` • ${activeAdminDetail.targetId}` : ""}`
@@ -1539,17 +1517,17 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                   </dl>
 
                   <section className="notifications-detail-section">
-                    <h3>Metadata</h3>
+                    <h3>元数据</h3>
                     <pre>
-                      {toMetadataText(activeAdminDetail.metadataJson) || "No metadata attached."}
+                      {toMetadataText(activeAdminDetail.metadataJson) || "未附加元数据。"}
                     </pre>
                   </section>
                 </div>
               ) : (
                 <div className="notifications-empty-detail">
                   <LuBell size={18} aria-hidden="true" />
-                  <strong>Select a notification</strong>
-                  <span>Choose an item from the left to inspect its content and metadata.</span>
+                  <strong>选择一条通知</strong>
+                  <span>选择左侧项目查看内容和元数据。</span>
                 </div>
               )
             ) : activeRecipientDetail ? (
@@ -1566,19 +1544,19 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
 
                 <dl className="notifications-detail-grid">
                   <div>
-                    <dt>From</dt>
+                    <dt>来自</dt>
                     <dd>{activeRecipientDetail.actorName ?? activeRecipientDetail.actorEmail ?? "System"}</dd>
                   </div>
                   <div>
-                    <dt>Received</dt>
+                    <dt>接收时间</dt>
                     <dd>{formatDateTime(activeRecipientDetail.receivedAt)}</dd>
                   </div>
                   <div>
-                    <dt>Status</dt>
+                    <dt>状态</dt>
                     <dd>{activeRecipientDetail.isRead ? "Read" : "Unread"}</dd>
                   </div>
                   <div>
-                    <dt>Target</dt>
+                    <dt>目标</dt>
                     <dd>
                       {activeRecipientDetail.targetType
                         ? `${activeRecipientDetail.targetType}${activeRecipientDetail.targetId ? ` • ${activeRecipientDetail.targetId}` : ""}`
@@ -1613,30 +1591,28 @@ function NotificationsPage({ mode, currentUser }: NotificationsPageProps) {
                   >
                     {activeRecipientDetail.isRead ? (
                       <>
-                        <LuMailOpen size={16} aria-hidden="true" />
-                        Mark unread
+                        <LuMailOpen size={16} aria-hidden="true" />标为未读
                       </>
                     ) : (
                       <>
-                        <LuMailCheck size={16} aria-hidden="true" />
-                        Mark read
+                        <LuMailCheck size={16} aria-hidden="true" />标为已读
                       </>
                     )}
                   </button>
                 </div>
 
                 <section className="notifications-detail-section">
-                  <h3>Metadata</h3>
+                  <h3>元数据</h3>
                   <pre>
-                    {toMetadataText(activeRecipientDetail.metadataJson) || "No metadata attached."}
+                    {toMetadataText(activeRecipientDetail.metadataJson) || "未附加元数据。"}
                   </pre>
                 </section>
               </div>
             ) : (
               <div className="notifications-empty-detail">
                 <LuBell size={18} aria-hidden="true" />
-                <strong>Select a notification</strong>
-                <span>Choose an item from the left to read the full message.</span>
+                <strong>选择一条通知</strong>
+                <span>选择左侧项目阅读完整消息。</span>
               </div>
             )}
           </aside>

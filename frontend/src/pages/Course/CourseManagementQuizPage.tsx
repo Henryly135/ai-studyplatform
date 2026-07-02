@@ -2,17 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate, useOutletContext, useParams } from "react-router-dom";
 
 import ManagementPanel from "../../components/course-management/ManagementPanel";
-import type {
-  EducatorQuizDraftDifficulty,
-  EducatorQuizDraftPreview,
-  EducatorQuizQuestionType,
-  QuizOptionDraft,
-  QuizQuestionDraft,
-  QuizRecord,
-} from "../../types/course";
+import type { QuizOptionDraft, QuizQuestionDraft, QuizRecord } from "../../types/course";
 import {
-  acceptEducatorQuizDraft,
-  generateEducatorQuizDraftPreview,
+  generateQuizAuthoringQuestions,
   getQuizAuthoring,
   listQuizAuthoringQuestions,
   publishQuiz,
@@ -40,7 +32,6 @@ function makeEmptyQuestion(sortOrder: number): QuizQuestionDraft {
     questionUuid: null,
     questionText: "",
     explanationText: "",
-    sourceGrounding: "",
     sortOrder,
     isActive: true,
     options: [0, 1, 2, 3].map((i) => makeEmptyOption(i + 1, i)),
@@ -54,9 +45,9 @@ function getStatusPillClass(status: QuizRecord["status"]) {
 }
 
 function formatStatus(status: QuizRecord["status"]) {
-  if (status === "published") return "Published";
-  if (status === "archived") return "Archived";
-  return "Draft";
+  if (status === "published") return "已发布";
+  if (status === "archived") return "已归档";
+  return "草稿";
 }
 
 // ---------------------------------------------------------------------------
@@ -70,20 +61,9 @@ type QuestionEditorProps = {
   onDelete: () => void;
   isOnly: boolean;
   defaultExpanded?: boolean;
-  showLifecycleControls?: boolean;
-  radioGroupPrefix?: string;
 };
 
-function QuestionEditor({
-  question,
-  index,
-  onChange,
-  onDelete,
-  isOnly,
-  defaultExpanded = false,
-  showLifecycleControls = true,
-  radioGroupPrefix = "quiz-question",
-}: QuestionEditorProps) {
+function QuestionEditor({ question, index, onChange, onDelete, isOnly, defaultExpanded = false }: QuestionEditorProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   const setOptionField = (
@@ -134,10 +114,10 @@ function QuestionEditor({
           <span className="quiz-question-number">Q{index + 1}</span>
           <span className="quiz-question-preview">{preview}</span>
           {!question.isActive && (
-            <span className="quiz-question-badge quiz-question-badge-inactive">Inactive</span>
+            <span className="quiz-question-badge quiz-question-badge-inactive">停用</span>
           )}
           {correctCount !== 1 && hasText && (
-            <span className="quiz-question-badge quiz-question-badge-warn">No correct answer</span>
+            <span className="quiz-question-badge quiz-question-badge-warn">未设置正确答案</span>
           )}
         </div>
         <div className="quiz-question-header-right">
@@ -154,40 +134,39 @@ function QuestionEditor({
       {expanded && (
         <div className="quiz-question-body">
           <label className="course-management-field course-management-field-full">
-            <span>Question text</span>
+            <span>题目文本</span>
             <textarea
               value={question.questionText}
               onChange={(e) => onChange({ ...question, questionText: e.target.value })}
               rows={3}
-              placeholder="Enter the question…"
+              placeholder="请输入题目..."
               required
             />
           </label>
 
           <label className="course-management-field course-management-field-full">
-            <span>
-              Explanation <small style={{ fontWeight: 400, color: "#64748b" }}>(shown after attempt)</small>
+            <span>解析 <small style={{ fontWeight: 400, color: "#64748b" }}>（提交后显示）</small>
             </span>
             <textarea
               value={question.explanationText}
               onChange={(e) => onChange({ ...question, explanationText: e.target.value })}
               rows={2}
-              placeholder="Optional: explain the correct answer…"
+              placeholder="可选：解释正确答案..."
             />
           </label>
 
           <div className="quiz-options-section">
             <div className="quiz-options-header">
-              <span>Answer options</span>
-              <small style={{ color: "#64748b" }}>Select the correct option</small>
+              <span>答案选项</span>
+              <small style={{ color: "#64748b" }}>选择正确选项</small>
             </div>
 
             {question.options.map((opt, optIndex) => (
               <div key={optIndex} className={`quiz-option-row${opt.isCorrect ? " quiz-option-row-correct" : ""}`}>
-                <label className="quiz-option-radio" title="Mark as correct answer">
+                <label className="quiz-option-radio" title="标记为正确答案">
                   <input
                     type="radio"
-                    name={`${radioGroupPrefix}-correct-${question.sortOrder}`}
+                    name={`correct-${question.sortOrder}`}
                     checked={opt.isCorrect}
                     onChange={() => setCorrectOption(optIndex)}
                   />
@@ -198,7 +177,7 @@ function QuestionEditor({
                   onChange={(e) => setOptionField(optIndex, "optionLabel", e.target.value)}
                   placeholder="A"
                   maxLength={10}
-                  title="Option label (e.g. A, B, C)"
+                  title="选项标签（如 A、B、C）"
                 />
                 <input
                   className="quiz-option-text-input"
@@ -211,7 +190,7 @@ function QuestionEditor({
                   className="quiz-option-remove"
                   onClick={() => removeOption(optIndex)}
                   disabled={question.options.length <= 2}
-                  title="Remove option"
+                  title="移除选项"
                 >
                   ✕
                 </button>
@@ -219,44 +198,30 @@ function QuestionEditor({
             ))}
 
             {question.options.length < 6 && (
-              <button type="button" className="quiz-add-option-btn" onClick={addOption}>
-                + Add option
+              <button type="button" className="quiz-add-option-btn" onClick={addOption}>+ 添加选项
               </button>
             )}
           </div>
 
-          <label className="course-management-field course-management-field-full">
-            <span>Source grounding</span>
-            <textarea
-              value={question.sourceGrounding}
-              onChange={(e) => onChange({ ...question, sourceGrounding: e.target.value })}
-              rows={2}
-              placeholder="Optional: material, heading, or retrieved chunk supporting this question"
-            />
-          </label>
-
-          {showLifecycleControls && (
-            <div className="quiz-question-actions">
-              <label className="course-management-checkbox">
-                <input
-                  type="checkbox"
-                  checked={question.isActive}
-                  onChange={(e) => onChange({ ...question, isActive: e.target.checked })}
-                />
-                <span>Active (included in question pool)</span>
-              </label>
-              <button
-                type="button"
-                className="course-management-action-button"
-                onClick={onDelete}
-                disabled={isOnly}
-                title={isOnly ? "Quiz must have at least one question" : "Delete this question"}
-                style={{ marginLeft: "auto", color: "#dc2626", borderColor: "#fca5a5" }}
-              >
-                Delete question
-              </button>
-            </div>
-          )}
+          <div className="quiz-question-actions">
+            <label className="course-management-checkbox">
+              <input
+                type="checkbox"
+                checked={question.isActive}
+                onChange={(e) => onChange({ ...question, isActive: e.target.checked })}
+              />
+              <span>启用（加入题库）</span>
+            </label>
+            <button
+              type="button"
+              className="course-management-action-button"
+              onClick={onDelete}
+              disabled={isOnly}
+              title={isOnly ? "Quiz must have at least one question" : "Delete this question"}
+              style={{ marginLeft: "auto", color: "#dc2626", borderColor: "#fca5a5" }}
+            >删除题目
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -303,22 +268,15 @@ function CourseManagementQuizPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
-  // AI draft generation state
-  const [draftQuestionCount, setDraftQuestionCount] = useState("5");
-  const [draftDifficulty, setDraftDifficulty] = useState<EducatorQuizDraftDifficulty>("mixed");
-  const [draftQuestionTypes, setDraftQuestionTypes] = useState<EducatorQuizQuestionType[]>(["multiple_choice"]);
-  const [draftLearningObjectives, setDraftLearningObjectives] = useState("");
-  const [draftMaterialScope, setDraftMaterialScope] = useState("");
-  const [draftInstructions, setDraftInstructions] = useState("");
-  const [replaceExistingQuestions, setReplaceExistingQuestions] = useState(true);
-  const [draftPreview, setDraftPreview] = useState<EducatorQuizDraftPreview | null>(null);
-  const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
-  const [isAcceptingDraft, setIsAcceptingDraft] = useState(false);
-  const [draftError, setDraftError] = useState<string | null>(null);
-
   // Publish state
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+
+  // AI authoring state
+  const [generationInstructions, setGenerationInstructions] = useState("");
+  const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [generationSuccess, setGenerationSuccess] = useState<string | null>(null);
 
   const loadQuestionPage = useCallback(
     async (page: number, query: string) => {
@@ -357,8 +315,6 @@ function CourseManagementQuizPage() {
     setQuestionSearch("");
     setAppliedQuestionSearch("");
     setQuestionLoadError(null);
-    setDraftPreview(null);
-    setDraftError(null);
 
     getQuizAuthoring(course.courseUuid, module.moduleUuid, { includeQuestions: false })
       .then((loaded) => {
@@ -373,7 +329,6 @@ function CourseManagementQuizPage() {
             setTimeLimitSecs("");
           }
           setQuestionCountPerAttempt(String(loaded.questionCountPerAttempt));
-          setDraftQuestionCount(String(Math.max(1, loaded.questionCountPerAttempt)));
           setShuffleQuestions(loaded.shuffleQuestions);
           setShuffleOptions(loaded.shuffleOptions);
           setQuestionTotal(loaded.availableQuestionCount);
@@ -385,7 +340,7 @@ function CourseManagementQuizPage() {
         }
       })
       .catch((err) => {
-        setLoadError(err instanceof Error ? err.message : "Failed to load quiz.");
+        setLoadError(err instanceof Error ? err.message : "测验加载失败。");
       })
       .finally(() => setIsLoading(false));
   }, [course.courseUuid, loadQuestionPage, module]);
@@ -436,36 +391,13 @@ function CourseManagementQuizPage() {
     void loadQuestionPage(safePage, appliedQuestionSearch);
   };
 
-  const toggleDraftQuestionType = (type: EducatorQuizQuestionType) => {
-    setDraftQuestionTypes((current) => {
-      if (current.includes(type)) {
-        return current.filter((existing) => existing !== type);
-      }
-      return [...current, type];
-    });
-  };
-
-  const updateDraftPreviewQuestion = (index: number, updates: Partial<QuizQuestionDraft>) => {
-    setDraftPreview((current) => {
-      if (!current) return current;
-      const questions = current.candidateSet.questions.map((question, questionIndex) =>
-        questionIndex === index ? { ...question, ...updates } : question
-      );
-      return {
-        ...current,
-        candidateSet: {
-          ...current.candidateSet,
-          questions,
-        },
-      };
-    });
-  };
-
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaveError(null);
     setSaveSuccess(null);
     setPublishError(null);
+    setGenerationError(null);
+    setGenerationSuccess(null);
 
     // Frontend validation
     for (let i = 0; i < questions.length; i++) {
@@ -495,7 +427,7 @@ function CourseManagementQuizPage() {
 
     try {
       const saved = await upsertQuiz(course.courseUuid, module.moduleUuid, {
-        title: title.trim() || "Quiz",
+        title: title.trim() || "测验",
         description: null,
         timeLimitSeconds: totalSeconds,
         questionCountPerAttempt: Number(questionCountPerAttempt) || 1,
@@ -515,101 +447,38 @@ function CourseManagementQuizPage() {
     }
   };
 
-  const handleGenerateDraft = async () => {
-    setDraftError(null);
-    setSaveError(null);
-    setSaveSuccess(null);
-    setPublishError(null);
-
-    const questionCount = Number(draftQuestionCount) || 0;
-    if (questionCount < 1 || questionCount > 20) {
-      setDraftError("Choose between 1 and 20 generated questions.");
+  const handleGenerateDraftQuestions = async () => {
+    if (!quiz) {
+      setGenerationError("Create and save a quiz before generating draft questions.");
       return;
     }
-    if (draftQuestionTypes.length === 0) {
-      setDraftError("Choose at least one question type.");
-      return;
-    }
-
-    const mins = Number(timeLimitMinutes) || 0;
-    const secs = Number(timeLimitSecs) || 0;
-    const totalSeconds = mins * 60 + secs || null;
-    const learningObjectives = draftLearningObjectives
-      .split("\n")
-      .map((objective) => objective.trim())
-      .filter(Boolean);
 
     setIsGeneratingDraft(true);
-    try {
-      const preview = await generateEducatorQuizDraftPreview(
-        course.courseUuid,
-        module.moduleUuid,
-        {
-          title: title.trim() || null,
-          questionCount,
-          difficulty: draftDifficulty,
-          questionTypes: draftQuestionTypes,
-          learningObjectives,
-          materialScope: draftMaterialScope.trim() || null,
-          additionalInstructions: draftInstructions.trim() || null,
-          replaceExistingQuestions,
-          timeLimitSeconds: totalSeconds,
-          shuffleQuestions,
-          shuffleOptions,
-        }
-      );
-      setDraftPreview(preview);
-      setDraftQuestionCount(String(preview.questionCount));
-      setSaveSuccess("AI quiz draft preview generated. Accept it to save it to the question pool.");
-    } catch (err) {
-      setDraftError(err instanceof Error ? err.message : "Failed to generate quiz draft.");
-    } finally {
-      setIsGeneratingDraft(false);
-    }
-  };
-
-  const handleDiscardDraft = () => {
-    setDraftPreview(null);
-    setDraftError(null);
-    setSaveSuccess(null);
-  };
-
-  const handleAcceptDraft = async () => {
-    if (!draftPreview) return;
-    setDraftError(null);
-    setSaveError(null);
+    setGenerationError(null);
+    setGenerationSuccess(null);
     setSaveSuccess(null);
     setPublishError(null);
 
-    const missingSourceIndex = draftPreview.candidateSet.questions.findIndex((question) => !question.sourceGrounding.trim());
-    if (missingSourceIndex >= 0) {
-      setDraftError(`Question ${missingSourceIndex + 1} is missing source grounding.`);
-      return;
-    }
-
-    setIsAcceptingDraft(true);
     try {
-      const accepted = await acceptEducatorQuizDraft(course.courseUuid, module.moduleUuid, draftPreview, { includeQuestions: true });
-      setQuiz(accepted);
-      setTitle(accepted.title);
-      setQuestionCountPerAttempt(String(accepted.questionCountPerAttempt));
-      setDraftQuestionCount(String(accepted.questionCountPerAttempt));
-      setShuffleQuestions(accepted.shuffleQuestions);
-      setShuffleOptions(accepted.shuffleOptions);
-      setQuestions(accepted.questions);
-      setQuestionPage(1);
-      setQuestionTotal(accepted.availableQuestionCount);
-      setQuestionTotalPages(Math.max(1, Math.ceil(accepted.availableQuestionCount / QUESTIONS_PAGE_SIZE)));
-      setAppliedQuestionSearch("");
+      const result = await generateQuizAuthoringQuestions(course.courseUuid, module.moduleUuid, {
+        additionalInstructions: generationInstructions,
+      });
+      const refreshedQuiz = await getQuizAuthoring(course.courseUuid, module.moduleUuid, { includeQuestions: false });
+      if (refreshedQuiz) {
+        setQuiz(refreshedQuiz);
+        setQuestionTotal(refreshedQuiz.availableQuestionCount);
+      }
       setQuestionSearch("");
-      setPendingDeletions([]);
-      setDraftPreview(null);
+      setAppliedQuestionSearch("");
+      await loadQuestionPage(1, "");
       emitAppRefresh({ scope: "course:quiz", courseUuid: course.courseUuid, moduleUuid: module.moduleUuid });
-      setSaveSuccess("AI quiz draft accepted as an unpublished quiz draft.");
+      setGenerationSuccess(
+        `Generated ${result.createdQuestionCount} draft question${result.createdQuestionCount === 1 ? "" : "s"}. Review, edit, then publish when ready.`
+      );
     } catch (err) {
-      setDraftError(err instanceof Error ? err.message : "Failed to accept quiz draft.");
+      setGenerationError(err instanceof Error ? err.message : "Failed to generate quiz draft questions.");
     } finally {
-      setIsAcceptingDraft(false);
+      setIsGeneratingDraft(false);
     }
   };
 
@@ -650,13 +519,12 @@ function CourseManagementQuizPage() {
       <Link
         to={`/course/${course.courseUuid}/management/modules/${module.moduleUuid}${managementSearchSuffix}`}
         className="course-management-back-link"
-      >
-        Back to module
+      >返回模块
       </Link>
 
       <div className="course-management-section-heading">
         <div>
-          <span className="course-surface-badge">Quiz Editor</span>
+          <span className="course-surface-badge">测验编辑器</span>
           <div className="course-management-title-row">
             <h1>{module.title}</h1>
             {quiz && (
@@ -665,201 +533,37 @@ function CourseManagementQuizPage() {
               </span>
             )}
           </div>
-          <p>Create and manage multiple-choice questions for this module's quiz.</p>
+          <p>为本模块测验创建和管理选择题。</p>
         </div>
       </div>
 
-      {isLoading && <p style={{ padding: "1rem", color: "#64748b" }}>Loading quiz…</p>}
+      {isLoading && <p style={{ padding: "1rem", color: "#64748b" }}>正在加载测验...</p>}
 
       {loadError && (
         <div className="course-management-inline-alert">
-          <strong>Failed to load quiz.</strong>
+          <strong>测验加载失败。</strong>
           <span>{loadError}</span>
         </div>
       )}
 
       {!isLoading && (
         <form onSubmit={handleSave}>
-          <ManagementPanel title="AI quiz draft" style={{ marginBottom: "1.25rem" }}>
-            <div className="course-management-form">
-              <div className="course-management-inline-note course-management-field-full">
-                <strong>Generate editable draft questions from module materials.</strong>
-                <span>Generation creates a preview first. Accept the preview to save it as an unpublished quiz draft.</span>
-              </div>
-
-              <label className="course-management-field">
-                <span>Generated question count</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="20"
-                  value={draftQuestionCount}
-                  onChange={(e) => setDraftQuestionCount(e.target.value)}
-                />
-              </label>
-
-              <label className="course-management-field">
-                <span>Difficulty</span>
-                <select
-                  value={draftDifficulty}
-                  onChange={(e) => setDraftDifficulty(e.target.value as EducatorQuizDraftDifficulty)}
-                >
-                  <option value="mixed">Mixed</option>
-                  <option value="easy">Easy</option>
-                  <option value="medium">Medium</option>
-                  <option value="hard">Hard</option>
-                </select>
-              </label>
-
-              <div className="course-management-field">
-                <span>Question types</span>
-                <label className="course-management-checkbox" style={{ marginTop: "0.45rem" }}>
-                  <input
-                    type="checkbox"
-                    checked={draftQuestionTypes.includes("multiple_choice")}
-                    onChange={() => toggleDraftQuestionType("multiple_choice")}
-                  />
-                  <span>Multiple choice</span>
-                </label>
-                <label className="course-management-checkbox" style={{ marginTop: "0.45rem" }}>
-                  <input
-                    type="checkbox"
-                    checked={draftQuestionTypes.includes("true_false")}
-                    onChange={() => toggleDraftQuestionType("true_false")}
-                  />
-                  <span>True/false</span>
-                </label>
-              </div>
-
-              <label className="course-management-checkbox">
-                <input
-                  type="checkbox"
-                  checked={replaceExistingQuestions}
-                  onChange={(e) => setReplaceExistingQuestions(e.target.checked)}
-                />
-                <span>Replace existing draft question pool</span>
-              </label>
-
-              <label className="course-management-field course-management-field-full">
-                <span>Learning objectives</span>
-                <textarea
-                  value={draftLearningObjectives}
-                  onChange={(e) => setDraftLearningObjectives(e.target.value)}
-                  rows={3}
-                  placeholder="One objective per line"
-                />
-              </label>
-
-              <label className="course-management-field course-management-field-full">
-                <span>Material scope</span>
-                <textarea
-                  value={draftMaterialScope}
-                  onChange={(e) => setDraftMaterialScope(e.target.value)}
-                  rows={2}
-                  placeholder="Optional: focus on uploaded lecture notes, tutorial 3, or a concept range"
-                />
-              </label>
-
-              <label className="course-management-field course-management-field-full">
-                <span>Additional instructions</span>
-                <textarea
-                  value={draftInstructions}
-                  onChange={(e) => setDraftInstructions(e.target.value)}
-                  rows={3}
-                  placeholder="Optional: avoid trick questions, include one applied scenario, etc."
-                />
-              </label>
-
-              {draftError && (
-                <div className="course-management-inline-alert course-management-field-full">
-                  <strong>Unable to generate draft.</strong>
-                  <span>{draftError}</span>
-                </div>
-              )}
-
-              <div className="course-management-form-actions course-management-field-full">
-                <button
-                  type="button"
-                  className="course-management-action-button course-management-action-button-primary"
-                  onClick={handleGenerateDraft}
-                  disabled={isGeneratingDraft || isAcceptingDraft}
-                >
-                  {isGeneratingDraft ? "Generating preview…" : draftPreview ? "Regenerate preview" : "Generate preview"}
-                </button>
-              </div>
-
-              {draftPreview && (
-                <div className="course-management-field-full" style={{ display: "grid", gap: "0.85rem" }}>
-                  <div className="course-management-inline-note">
-                    <strong>
-                      Preview: {draftPreview.candidateSet.questionCount} question
-                      {draftPreview.candidateSet.questionCount === 1 ? "" : "s"}
-                    </strong>
-                    <span>
-                      {draftPreview.replaceExistingQuestions ? "Accepting will replace the current draft question pool." : "Accepting will append to the current draft question pool."}
-                      {" "}
-                      {draftPreview.retrievalUsed
-                        ? `${draftPreview.sourceChunkCount} source chunk${draftPreview.sourceChunkCount === 1 ? "" : "s"} used.`
-                        : "No retrieved source chunks were returned."}
-                    </span>
-                  </div>
-
-                  <div className="quiz-questions-list">
-                    {draftPreview.candidateSet.questions.map((question, questionIndex) => (
-                      <QuestionEditor
-                        key={questionIndex}
-                        question={question}
-                        index={questionIndex}
-                        onChange={(updatedQuestion) => updateDraftPreviewQuestion(questionIndex, updatedQuestion)}
-                        onDelete={() => undefined}
-                        isOnly
-                        defaultExpanded
-                        showLifecycleControls={false}
-                        radioGroupPrefix={`ai-draft-preview-${questionIndex}`}
-                      />
-                    ))}
-                  </div>
-
-                  <div className="course-management-form-actions">
-                    <button
-                      type="button"
-                      className="course-management-action-button course-management-action-button-primary"
-                      onClick={handleAcceptDraft}
-                      disabled={isGeneratingDraft || isAcceptingDraft}
-                    >
-                      {isAcceptingDraft ? "Accepting…" : "Accept preview"}
-                    </button>
-                    <button
-                      type="button"
-                      className="course-management-action-button"
-                      onClick={handleDiscardDraft}
-                      disabled={isGeneratingDraft || isAcceptingDraft}
-                    >
-                      Discard preview
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </ManagementPanel>
-
           {/* Settings panel — full width single row */}
-          <ManagementPanel title="Quiz settings" style={{ marginBottom: "1.25rem" }}>
+          <ManagementPanel title="测验设置" style={{ marginBottom: "1.25rem" }}>
             <div className="course-management-form">
               <label className="course-management-field course-management-field-full">
-                <span>Quiz title</span>
+                <span>测验标题</span>
                 <input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Module 1 Knowledge Check"
+                  placeholder="例如：模块 1 知识检查"
                   required
                 />
               </label>
 
               <div className="course-management-field">
-                <span>
-                  Time limit{" "}
-                  <small style={{ fontWeight: 400, color: "#64748b" }}>(leave blank for no limit)</small>
+                <span>时间限制{" "}
+                  <small style={{ fontWeight: 400, color: "#64748b" }}>（留空表示不限制）</small>
                 </span>
                 <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
                   <input
@@ -870,7 +574,7 @@ function CourseManagementQuizPage() {
                     placeholder="0"
                     style={{ width: "5rem" }}
                   />
-                  <span style={{ color: "#64748b", fontSize: "0.875rem" }}>min</span>
+                  <span style={{ color: "#64748b", fontSize: "0.875rem" }}>分钟</span>
                   <input
                     type="number"
                     min="0"
@@ -880,12 +584,12 @@ function CourseManagementQuizPage() {
                     placeholder="0"
                     style={{ width: "5rem" }}
                   />
-                  <span style={{ color: "#64748b", fontSize: "0.875rem" }}>sec</span>
+                  <span style={{ color: "#64748b", fontSize: "0.875rem" }}>秒</span>
                 </div>
               </div>
 
               <label className="course-management-field">
-                <span>Number of questions randomly selected for quiz per attempt</span>
+                <span>每次测验随机抽取的题目数量</span>
                 <input
                   type="number"
                   min="1"
@@ -901,7 +605,7 @@ function CourseManagementQuizPage() {
                   checked={shuffleQuestions}
                   onChange={(e) => setShuffleQuestions(e.target.checked)}
                 />
-                <span>Shuffle question order each attempt</span>
+                <span>每次尝试随机打乱题目顺序</span>
               </label>
             </div>
           </ManagementPanel>
@@ -919,7 +623,7 @@ function CourseManagementQuizPage() {
               }}
             >
               <label className="course-management-field" style={{ flex: "1 1 18rem", margin: 0 }}>
-                <span>Search question pool</span>
+                <span>搜索题库</span>
                 <input
                   value={questionSearch}
                   onChange={(e) => setQuestionSearch(e.target.value)}
@@ -929,12 +633,11 @@ function CourseManagementQuizPage() {
                       handleQuestionSearch();
                     }
                   }}
-                  placeholder="Search question text or explanation"
+                  placeholder="搜索题目文本或解析"
                 />
               </label>
               <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "1.55rem" }}>
-                <button type="button" className="course-management-action-button" disabled={isLoadingQuestions} onClick={handleQuestionSearch}>
-                  Search
+                <button type="button" className="course-management-action-button" disabled={isLoadingQuestions} onClick={handleQuestionSearch}>搜索
                 </button>
                 {appliedQuestionSearch && (
                   <button
@@ -942,8 +645,7 @@ function CourseManagementQuizPage() {
                     className="course-management-action-button"
                     onClick={clearQuestionSearch}
                     disabled={isLoadingQuestions}
-                  >
-                    Clear
+                  >清除
                   </button>
                 )}
               </div>
@@ -951,13 +653,13 @@ function CourseManagementQuizPage() {
 
             {questionLoadError && (
               <div className="course-management-inline-alert" style={{ marginBottom: "1rem" }}>
-                <strong>Failed to load questions.</strong>
+                <strong>题目加载失败。</strong>
                 <span>{questionLoadError}</span>
               </div>
             )}
 
             {isLoadingQuestions && (
-              <p style={{ padding: "0.5rem 0", color: "#64748b" }}>Loading questions...</p>
+              <p style={{ padding: "0.5rem 0", color: "#64748b" }}>正在加载题目...</p>
             )}
 
             <div className="quiz-questions-list">
@@ -979,14 +681,12 @@ function CourseManagementQuizPage() {
                 />
               ))}
 
-              <button type="button" className="quiz-add-question-btn" onClick={addQuestion}>
-                + Add question
+              <button type="button" className="quiz-add-question-btn" onClick={addQuestion}>+ 添加题目
               </button>
             </div>
 
             <div className="course-pagination" style={{ marginTop: "1rem" }}>
-              <span className="course-pagination-summary">
-                Page {questionPage} of {questionTotalPages} · {questionTotal} question{questionTotal === 1 ? "" : "s"}
+              <span className="course-pagination-summary">页码 {questionPage}共 {questionTotalPages} · {questionTotal}题{questionTotal === 1 ? "" : "s"}
               </span>
               <div className="course-pagination-nav">
                 <button
@@ -994,16 +694,14 @@ function CourseManagementQuizPage() {
                   className="course-pagination-button"
                   onClick={() => goToQuestionPage(questionPage - 1)}
                   disabled={isLoadingQuestions || questionPage <= 1}
-                >
-                  Previous
+                >上一页
                 </button>
                 <button
                   type="button"
                   className="course-pagination-button"
                   onClick={() => goToQuestionPage(questionPage + 1)}
                   disabled={isLoadingQuestions || questionPage >= questionTotalPages}
-                >
-                  Next
+                >下一页
                 </button>
               </div>
             </div>
@@ -1011,7 +709,7 @@ function CourseManagementQuizPage() {
             <div className="course-management-form-actions" style={{ marginTop: "1.25rem" }}>
               {saveError && (
                 <div className="course-management-inline-alert" style={{ flex: 1 }}>
-                  <strong>Unable to save quiz.</strong>
+                  <strong>无法保存测验。</strong>
                   <span>{saveError}</span>
                 </div>
               )}
@@ -1025,38 +723,83 @@ function CourseManagementQuizPage() {
                 className="course-management-action-button course-management-action-button-primary"
                 disabled={isSaving}
               >
-                {isSaving ? "Saving…" : quiz ? "Save changes" : "Create quiz"}
+                {isSaving ? "保存中..." : quiz ? "保存修改" : "创建测验"}
               </button>
             </div>
           </ManagementPanel>
 
+          <ManagementPanel title="智能草稿生成" style={{ marginBottom: "1.25rem" }}>
+            <div className="course-management-form course-management-form-single">
+              <label className="course-management-field course-management-field-full">
+                <span>生成指引</span>
+                <textarea
+                  value={generationInstructions}
+                  onChange={(e) => setGenerationInstructions(e.target.value)}
+                  rows={3}
+                  maxLength={2000}
+                  placeholder="可选：填写重点、难度或需要强调的主题"
+                />
+              </label>
+
+              {!quiz && (
+                <div className="course-management-inline-alert course-management-field-full">
+                  <strong>测验尚未保存。</strong>
+                  <span>请先手动创建测验，再将草稿题目生成到题库中。</span>
+                </div>
+              )}
+
+              {generationError && (
+                <div className="course-management-inline-alert course-management-field-full">
+                  <strong>无法生成草稿题目。</strong>
+                  <span>{generationError}</span>
+                </div>
+              )}
+
+              {generationSuccess && (
+                <p className="course-management-inline-success course-management-field-full">
+                  {generationSuccess}
+                </p>
+              )}
+
+              <div className="course-management-form-actions course-management-field-full">
+                <button
+                  type="button"
+                  className="course-management-action-button course-management-action-button-primary"
+                  onClick={() => void handleGenerateDraftQuestions()}
+                  disabled={isGeneratingDraft || !quiz}
+                  title={quiz ? undefined : "请先创建并保存测验，再生成草稿题目"}
+                >
+                  {isGeneratingDraft ? "正在生成草稿..." : "生成草稿题目"}
+                </button>
+              </div>
+            </div>
+          </ManagementPanel>
+
           {/* Publish panel — at the bottom */}
-          <ManagementPanel title="Publishing">
+          <ManagementPanel title="发布">
             <div className="course-management-form course-management-form-single">
               <div className="course-management-inline-note course-management-field-full">
-                <strong>Active questions: {activeCount} / {questions.length}</strong>
-                <span>
-                  To publish, you need at least {qcpa} active question{qcpa !== 1 ? "s" : ""} (matching
-                  &quot;questions per attempt&quot;), each with ≥2 options and exactly 1 correct answer.
+                <strong>启用题目数： {activeCount} / {questions.length}</strong>
+                <span>发布前至少需要 {qcpa} 道启用题目（需要匹配“每次抽题数”），且每题至少 2 个选项并且只有 1 个正确答案。
                 </span>
               </div>
 
               {!isCoursePublished && !isPublished && (
                 <div className="course-management-inline-alert course-management-field-full">
-                  <strong>Course not published.</strong>
-                  <span>The course must be published before this quiz can be published.</span>
+                  <strong>课程尚未发布。</strong>
+                  <span>课程发布后才能发布该测验。</span>
                 </div>
               )}
               {isCoursePublished && !isModulePublished && !isPublished && (
                 <div className="course-management-inline-alert course-management-field-full">
-                  <strong>Module not published.</strong>
-                  <span>The module must be published before this quiz can be published.</span>
+                  <strong>模块尚未发布。</strong>
+                  <span>模块发布后才能发布该测验。</span>
                 </div>
               )}
 
               {publishError && (
                 <div className="course-management-inline-alert course-management-field-full">
-                  <strong>Unable to update status.</strong>
+                  <strong>无法更新状态。</strong>
                   <span>{publishError}</span>
                 </div>
               )}
@@ -1068,9 +811,9 @@ function CourseManagementQuizPage() {
                     className="course-management-action-button course-management-action-button-primary"
                     onClick={() => handlePublish("published")}
                     disabled={isPublishing || !canPublish}
-                    title={canPublish ? undefined : "Save quiz and ensure enough active questions first"}
+                    title={canPublish ? undefined : "请先保存测验，并确保启用题目数量足够"}
                   >
-                    {isPublishing ? "Publishing…" : "Publish quiz"}
+                    {isPublishing ? "发布中..." : "发布测验"}
                   </button>
                 ) : (
                   <button
@@ -1079,7 +822,7 @@ function CourseManagementQuizPage() {
                     onClick={() => handlePublish("draft")}
                     disabled={isPublishing}
                   >
-                    {isPublishing ? "Unpublishing…" : "Unpublish quiz"}
+                    {isPublishing ? "取消发布中..." : "取消发布测验"}
                   </button>
                 )}
               </div>

@@ -11,6 +11,10 @@ from google.genai import types
 from app.core.config import settings
 from app.models.ai_prompt_logs import AIPromptStatus
 from app.services.indexing.langchain_embedding_service import LangChainEmbeddingService
+from app.services.provider_error_messages import (
+    AI_EMBEDDING_PROVIDER_UNAVAILABLE,
+    AI_EMBEDDING_PROVIDER_UNSUPPORTED,
+)
 from platform_common.errors import invalid_request_error
 
 
@@ -40,17 +44,10 @@ class TokenCountResult:
 class EmbeddingService:
     def __init__(self) -> None:
         if settings.ai_embedding_provider.strip().lower() != "gemini":
-            raise invalid_request_error(
-                f"Unsupported AI_EMBEDDING_PROVIDER '{settings.ai_embedding_provider}'. "
-                "Only Gemini embeddings are currently configured. Use AI_EMBEDDING_PROVIDER=gemini "
-                "or add a provider-specific embedding adapter before reindexing materials."
-            )
-        if not settings.ai_embedding_api_key:
-            raise invalid_request_error(
-                "AI_EMBEDDING_API_KEY or GEMINI_API_KEY is not configured for Gemini embeddings. "
-                "Configure the embedding key and reindex affected materials."
-            )
-        self.client = genai.Client(api_key=settings.ai_embedding_api_key)
+            raise invalid_request_error(AI_EMBEDDING_PROVIDER_UNSUPPORTED)
+        if not settings.gemini_api_key:
+            raise invalid_request_error(AI_EMBEDDING_PROVIDER_UNAVAILABLE)
+        self.client = genai.Client(api_key=settings.gemini_api_key)
         self.langchain_embeddings = LangChainEmbeddingService()
 
     def count_document_tokens(self, *, text: str) -> TokenCountResult:

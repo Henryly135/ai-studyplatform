@@ -7,7 +7,7 @@ INSERT INTO users (
 )
 VALUES (
     'Educator@gmail.com',
-    '8aff21bf359603d3250c021d6300519db3aea68e106ee54de66ba4a872169dcc',
+    'pbkdf2_sha256$600000$Ym9vdHN0cmFwLWVkdWNhdG9yLXYx$SVlKtRSDTm/5/2d3Kwwjq6N3042exx7vG2eZPLkrwGA=',
     'System Educator',
     'active',
     TRUE

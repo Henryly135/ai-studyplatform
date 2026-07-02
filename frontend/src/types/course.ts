@@ -28,8 +28,6 @@ export type CourseModule = {
   hasPublishedQuiz?: boolean;
   quizTitle?: string | null;
   quizTimeLimitSeconds?: number | null;
-  hasPublishedShortAnswer?: boolean;
-  shortAnswerTitle?: string | null;
   progressStatus?: string | null;
   isCompleted?: boolean;
   completedAt?: string | null;
@@ -64,6 +62,63 @@ export type CourseRecord = {
   modules: CourseModule[];
 };
 
+export type LearnerProgressQuizSummary = {
+  totalQuizzes: number;
+  attemptedQuizzes: number;
+  passedQuizzes: number;
+  totalAttempts: number;
+  averageBestScorePercent: number | null;
+  latestScorePercent: number | null;
+  latestSubmittedAt: string | null;
+};
+
+export type LearnerProgressNextModule = {
+  moduleId: number;
+  moduleUuid: string;
+  title: string;
+};
+
+export type LearnerProgressCourseItem = {
+  courseId: number;
+  courseUuid: string;
+  title: string;
+  courseCode: string | null;
+  category: string | null;
+  enrollmentStatus: string;
+  progressPercent: number;
+  completedModuleCount: number;
+  totalModuleCount: number;
+  lastAccessedAt: string | null;
+  completedAt: string | null;
+  nextModule: LearnerProgressNextModule | null;
+  quiz: LearnerProgressQuizSummary;
+};
+
+export type LearnerProgressActivityItem = {
+  activityType: string;
+  occurredAt: string;
+  courseId: number;
+  courseUuid: string;
+  courseTitle: string;
+  moduleId: number | null;
+  moduleUuid: string | null;
+  moduleTitle: string | null;
+  title: string;
+  detail: string | null;
+  scorePercent: number | null;
+  isPassed: boolean | null;
+};
+
+export type LearnerProgressOverview = {
+  totalCourses: number;
+  totalModules: number;
+  completedModules: number;
+  averageProgressPercent: number;
+  quiz: LearnerProgressQuizSummary;
+  courses: LearnerProgressCourseItem[];
+  recentActivity: LearnerProgressActivityItem[];
+};
+
 export type QuizOptionDraft = {
   optionUuid: string | null;
   optionLabel: string;
@@ -76,7 +131,6 @@ export type QuizQuestionDraft = {
   questionUuid: string | null;
   questionText: string;
   explanationText: string;
-  sourceGrounding: string;
   sortOrder: number;
   isActive: boolean;
   options: QuizOptionDraft[];
@@ -93,118 +147,6 @@ export type QuizRecord = {
   shuffleQuestions: boolean;
   shuffleOptions: boolean;
   questions: QuizQuestionDraft[];
-};
-
-export type EducatorQuizDraftDifficulty = "easy" | "medium" | "hard" | "mixed";
-export type EducatorQuizQuestionType = "multiple_choice" | "true_false";
-
-export type EducatorQuizDraftPayload = {
-  title?: string | null;
-  questionCount: number;
-  difficulty: EducatorQuizDraftDifficulty;
-  questionTypes: EducatorQuizQuestionType[];
-  learningObjectives: string[];
-  materialScope?: string | null;
-  additionalInstructions?: string | null;
-  replaceExistingQuestions: boolean;
-  timeLimitSeconds?: number | null;
-  shuffleQuestions: boolean;
-  shuffleOptions: boolean;
-};
-
-export type EducatorQuizDraftPreview = {
-  title: string;
-  questionCount: number;
-  difficulty: EducatorQuizDraftDifficulty;
-  questionTypes: EducatorQuizQuestionType[];
-  replaceExistingQuestions: boolean;
-  timeLimitSeconds: number | null;
-  shuffleQuestions: boolean;
-  shuffleOptions: boolean;
-  retrievalUsed: boolean;
-  sourceChunkCount: number;
-  candidateSet: {
-    questionCount: number;
-    questions: QuizQuestionDraft[];
-  };
-};
-
-export type EducatorContentDraftType =
-  | "summary"
-  | "learning_objectives"
-  | "activity_suggestions"
-  | "differentiated_explanation"
-  | "slide_outline";
-
-export type EducatorContentDraftGrounding = {
-  sourceTitle: string;
-  sourceType: string;
-  reference: string;
-  rationale: string;
-};
-
-export type EducatorContentDraftRecord = {
-  draftUuid: string;
-  moduleUuid: string;
-  contentType: EducatorContentDraftType;
-  title: string;
-  teacherPrompt: string | null;
-  materialScope: string | null;
-  structuredContent: Record<string, unknown>;
-  grounding: EducatorContentDraftGrounding[];
-  confidenceScore: number;
-  isFallback: boolean;
-  fallbackReason: string | null;
-  provider: string | null;
-  model: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type ShortAnswerAssessmentStatus = "draft" | "published" | "archived";
-export type ShortAnswerSubmissionStatus = "submitted" | "ai_suggested" | "reviewed";
-
-export type ShortAnswerAssessmentRecord = {
-  assessmentUuid: string;
-  moduleUuid: string;
-  title: string;
-  promptText: string;
-  rubricText: string;
-  maxScore: number;
-  status: ShortAnswerAssessmentStatus;
-  publishedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type ShortAnswerSuggestion = {
-  scoreSuggestion: number | null;
-  feedbackText: string | null;
-  strengths: string[];
-  improvements: string[];
-  provider: string | null;
-  model: string | null;
-};
-
-export type ShortAnswerSubmissionRecord = {
-  submissionUuid: string;
-  assessmentUuid: string;
-  learnerId: number;
-  answerText: string;
-  status: ShortAnswerSubmissionStatus;
-  aiSuggestion: ShortAnswerSuggestion;
-  finalScore: number | null;
-  finalFeedbackText: string | null;
-  reviewNotes: string | null;
-  reviewerId: number | null;
-  reviewedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type ShortAnswerLearnerAssessment = {
-  assessment: ShortAnswerAssessmentRecord;
-  latestSubmission: ShortAnswerSubmissionRecord | null;
 };
 
 export type QuizQuestionPage = {
@@ -260,6 +202,15 @@ export type QuizGenerationRun = {
   error: string | null;
   attemptStartResponse: QuizAttemptSession | null;
   events: QuizGenerationProgressEvent[];
+};
+
+export type QuizAuthoringGenerationResult = {
+  createdQuestionCount: number;
+  createdQuestionUuids: string[];
+  plannedQuestionCount: number;
+  usedRetrieval: boolean;
+  retrievalChunkCount: number;
+  planOverview: string;
 };
 
 export type QuizAttemptAnswerResult = {
@@ -369,60 +320,49 @@ export type EducatorQuizAnalytics = {
   items: QuizModuleStatsItem[];
 };
 
-export type ModuleBottleneckInsightItem = {
-  courseUuid: string;
-  courseTitle: string;
-  moduleUuid: string;
-  moduleTitle: string;
-  enrolledLearnerCount: number;
-  startedLearnerCount: number;
-  completedLearnerCount: number;
-  completionRate: number | null;
-  avgProgressPercent: number | null;
-  signals: string[];
-};
-
-export type AtRiskLearnerInsightItem = {
-  courseUuid: string;
-  courseTitle: string;
-  learnerId: number;
-  learnerUuid: string;
-  progressPercent: number;
-  completedModuleCount: number;
-  totalModuleCount: number;
-  incompleteModuleCount: number;
-  lastAccessedAt: string | null;
-  riskReasons: string[];
-};
-
-export type CompletionTrendInsightItem = {
-  courseUuid: string;
-  courseTitle: string;
-  bucketDate: string;
-  completedCount: number;
-};
-
-export type AssessmentSignalInsightItem = {
-  courseUuid: string;
-  courseTitle: string;
-  moduleUuid: string;
-  moduleTitle: string;
-  quizTitle: string | null;
-  quizAttemptCount: number;
-  quizAvgScorePercent: number | null;
-  quizPassRate: number | null;
-  shortAnswerTitle: string | null;
-  shortAnswerSubmissionCount: number;
-  shortAnswerAvgAiScore: number | null;
-  shortAnswerAvgFinalScore: number | null;
-  shortAnswerMaxScore: number | null;
-  shortAnswerPendingReviewCount: number;
-  signals: string[];
+export type TeachingInsightItem = {
+  insightId: string;
+  priority: "high" | "medium" | "low" | string;
+  category: string;
+  title: string;
+  detail: string;
+  actionLabel: string;
+  courseUuid: string | null;
+  courseTitle: string | null;
+  moduleUuid: string | null;
+  moduleTitle: string | null;
+  metricLabel: string | null;
+  metricValue: string | null;
 };
 
 export type EducatorTeachingInsights = {
-  moduleBottlenecks: ModuleBottleneckInsightItem[];
-  atRiskLearners: AtRiskLearnerInsightItem[];
-  completionTrends: CompletionTrendInsightItem[];
-  assessmentSignals: AssessmentSignalInsightItem[];
+  generatedAt: string;
+  totalInsights: number;
+  highPriorityCount: number;
+  items: TeachingInsightItem[];
+};
+
+export type EducatorMaterialBriefItem = {
+  briefId: string;
+  priority: "high" | "medium" | "low" | string;
+  courseUuid: string;
+  courseTitle: string;
+  moduleUuid: string;
+  moduleTitle: string;
+  moduleStatus: string;
+  materialCount: number;
+  materialTypes: string[];
+  quizTitle: string | null;
+  passRate: number | null;
+  averageScorePercent: number | null;
+  summary: string;
+  difficultySignal: string;
+  recommendedAction: string;
+};
+
+export type EducatorMaterialBriefs = {
+  generatedAt: string;
+  totalBriefs: number;
+  highPriorityCount: number;
+  items: EducatorMaterialBriefItem[];
 };

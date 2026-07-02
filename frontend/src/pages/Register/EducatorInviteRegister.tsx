@@ -29,7 +29,7 @@ function EducatorInviteRegister() {
   useEffect(() => {
     if (!inviteToken) {
       setTokenValid(false);
-      setTokenError("No invite token provided. Please use the link from your invitation email.");
+      setTokenError("缺少邀请令牌，请使用邀请邮件中的链接。");
       return;
     }
 
@@ -39,7 +39,7 @@ function EducatorInviteRegister() {
         setTokenValid(true);
       } catch (err) {
         setTokenValid(false);
-        setTokenError(err instanceof Error ? err.message : "Invalid or expired invite link.");
+        setTokenError(err instanceof Error ? err.message : "邀请链接无效或已过期。");
       }
     };
 
@@ -55,12 +55,12 @@ function EducatorInviteRegister() {
     setError("");
 
     if (!form.usrName || !form.email || !form.password || !form.confirmPassword) {
-      setError("Please fill in all fields.");
+      setError("请填写所有字段。");
       return;
     }
 
     if (!agreedToTerms) {
-      setError("Please agree to the Terms of Service to continue.");
+      setError("请先同意服务条款。");
       return;
     }
 
@@ -71,12 +71,12 @@ function EducatorInviteRegister() {
     }
 
     if (form.password !== form.confirmPassword) {
-      setError("Passwords do not match.");
+      setError("两次输入的密码不一致。");
       return;
     }
 
     if (!inviteToken) {
-      setError("Missing invite information. Please use the link from your invitation email.");
+      setError("缺少邀请信息，请使用邀请邮件中的链接。");
       return;
     }
 
@@ -90,7 +90,7 @@ function EducatorInviteRegister() {
       });
       setRegisteredEmail(form.email);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Registration failed.");
+      setError(err instanceof Error ? err.message : "注册失败。");
     } finally {
       setLoading(false);
     }
@@ -101,9 +101,9 @@ function EducatorInviteRegister() {
     setResendLoading(true);
     try {
       await resendVerification(registeredEmail);
-      setResendMessage("Verification email resent. Please check your inbox.");
+      setResendMessage("验证邮件已重新发送，请检查收件箱。");
     } catch (err) {
-      setResendMessage(err instanceof Error ? err.message : "Failed to resend email.");
+      setResendMessage(err instanceof Error ? err.message : "邮件重新发送失败。");
     } finally {
       setResendLoading(false);
     }
@@ -112,7 +112,7 @@ function EducatorInviteRegister() {
   if (tokenValid === null) {
     return (
       <AuthLayout>
-        <AuthHeader title="Validating invite link" description="Please wait..." badge="" />
+        <AuthHeader title="正在验证邀请链接" description="请稍候..." badge="" />
       </AuthLayout>
     );
   }
@@ -121,13 +121,13 @@ function EducatorInviteRegister() {
     return (
       <AuthLayout>
         <AuthHeader
-          title="Invalid invite link"
-          description="This invite link is invalid, expired, or has already been used."
+          title="邀请链接无效"
+          description="该邀请链接无效、已过期或已被使用。"
         />
         <div style={{ textAlign: "center", padding: "0.5rem 0" }}>
-          <AuthMessage tone="error" message={tokenError || "Please contact your administrator for a new invite."} />
+          <AuthMessage tone="error" message={tokenError || "请联系管理员获取新的邀请链接。"} />
           <div className="auth-footer-links" style={{ marginTop: "1rem" }}>
-            <Link to="/login" className="text-link">Back to Login</Link>
+            <Link to="/login" className="text-link">返回登录</Link>
           </div>
         </div>
       </AuthLayout>
@@ -138,28 +138,28 @@ function EducatorInviteRegister() {
     return (
       <AuthLayout>
         <AuthHeader
-          title="Check your email"
-          description={`We've sent a verification link to ${registeredEmail}. Click the link to activate your account and access all educator features.`}
+          title="请检查邮箱"
+          description={`我们已向 ${registeredEmail} 发送验证链接。请点击链接激活账号并使用教师功能。`}
         />
         <div style={{ textAlign: "center", padding: "0.5rem 0" }}>
           {resendMessage && (
             <AuthMessage
-              tone={resendMessage.startsWith("Verification email resent") ? "success" : "error"}
+              tone={resendMessage.startsWith("验证邮件已重新发送") ? "success" : "error"}
               message={resendMessage}
             />
           )}
           <p style={{ marginBottom: "1rem", color: "var(--color-text-muted, #6b7280)", fontSize: "0.9rem" }}>
-            Didn't receive it?
+            没有收到邮件？
           </p>
           <button
             className="primary-btn auth-submit-btn"
             onClick={handleResend}
             disabled={resendLoading}
           >
-            {resendLoading ? "Resending..." : "Resend verification email"}
+            {resendLoading ? "发送中..." : "重新发送验证邮件"}
           </button>
           <div className="auth-footer-links" style={{ marginTop: "1rem" }}>
-            <Link to="/login" className="text-link">Back to Login</Link>
+            <Link to="/login" className="text-link">返回登录</Link>
           </div>
         </div>
       </AuthLayout>
@@ -169,9 +169,9 @@ function EducatorInviteRegister() {
   return (
     <AuthLayout>
       <AuthHeader
-        badge="Invited"
-        title="Create educator account"
-        description="You've been invited to join as an educator. Set up your account to get started — no approval required."
+        badge="邀请注册"
+        title="创建教师账号"
+        description="你已受邀以教师身份加入。完成账号设置后即可开始使用，无需再次审批。"
       />
       <RegisterForm
         form={form}
