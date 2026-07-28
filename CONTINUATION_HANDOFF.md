@@ -16,7 +16,7 @@ Draft PR：`https://github.com/Henryly135/ai-studyplatform/pull/26`
 
 目标是把 AI 能力收敛为 Gemini、GLM、OpenRouter 三个 Provider，移除 DeepSeek 的运行时适配与前端选项；用户切换聊天模型时，由后端目录自动选择对应向量模型，不允许前端或业务流程硬编码向量模型。
 
-主体代码已完成，当前单元、组件、真实 PostgreSQL/pgvector 并发测试和隔离 Compose 启动均已通过。尚未完成的是依赖真实 Gemini、GLM、OpenRouter Key 的 contract smoke、三套真实向量回填与完整 Demo 验收，以及本次新增 PostgreSQL CI 测试推送后的远端检查，因此本分支应继续保持 Draft，暂不要合并到 `develop`。
+主体代码已完成，当前单元、组件、真实 PostgreSQL/pgvector 并发测试、隔离 Compose 启动和新增测试后的远端 CI 均已通过。尚未完成的是依赖真实 Gemini、GLM、OpenRouter Key 的 contract smoke、三套真实向量回填与完整 Demo 验收，因此本分支应继续保持 Draft，暂不要合并到 `develop`。
 
 ## 2. 已完成的实现
 
@@ -177,7 +177,7 @@ $env:DEMO_TRIGGER_BACKFILL = "true"
 ### D. 远端 CI 与依赖收口
 
 - 检查本分支 Draft PR 的全部 GitHub Actions；本次已把 learning-service 与 AI 全量测试纳入 CI。
-- 原提交 `0df0990` 的 13 项 PR 检查全部通过；新增真实 PostgreSQL CI 测试尚未提交和推送，推送后必须重新确认远端检查。
+- 包含真实 PostgreSQL CI 测试的提交 `1dd6bbd` 已通过 GitHub Actions run `30333176428`，13 项 PR 检查全部成功。
 - 若 CI 失败，优先区分 Linux/Windows 换行差异、真实 Compose 启动、依赖安装与业务回归。
 - 在 2026-09-30 前处理 React Router advisory，删除 `frontend/scripts/audit-policy.mjs` 中对应临时豁免。
 

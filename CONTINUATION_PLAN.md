@@ -160,12 +160,12 @@ AI 测验使用任务启动时固定的管理员默认聊天模型及配对向�
 
 - [x] platform_common、identity、communication、learning、AI 全量测试通过。
 - [x] 前端 lint、test、build、`audit:ci` 全部通过。
-- [ ] GitHub Actions 所有必需检查通过。
+- [x] GitHub Actions 所有必需检查通过。
 - [x] `git diff --check`、Compose config、脚本语法和敏感信息扫描通过。
 - [x] 处理审查新发现的 blocker/high-risk；中低风险记录到正式 issue 或文档。
 
-原提交 `0df0990` 的远端 PR 检查为 13 项全绿；本次新增 PostgreSQL 测试与 CI
-配置尚未推送，因此必须在新提交上重新完成远端检查后才能勾选 GitHub Actions。
+包含新增 PostgreSQL 测试与 CI 配置的提交 `1dd6bbd` 已通过 GitHub Actions run
+`30333176428`，13 项 PR 检查全部成功。
 
 ## 五、完成判定
 
