@@ -16,7 +16,7 @@ Draft PR：`https://github.com/Henryly135/ai-studyplatform/pull/26`
 
 目标是把 AI 能力收敛为 Gemini、GLM、OpenRouter 三个 Provider，移除 DeepSeek 的运行时适配与前端选项；用户切换聊天模型时，由后端目录自动选择对应向量模型，不允许前端或业务流程硬编码向量模型。
 
-主体代码已完成，当前单元与组件测试通过。尚未完成的是依赖真实 PostgreSQL、真实 Provider Key 和完整 Compose 环境的最终验收，因此本分支应继续保持 Draft，暂不要合并到 `develop`。
+主体代码已完成，当前单元、组件、真实 PostgreSQL/pgvector 并发测试和隔离 Compose 启动均已通过。尚未完成的是依赖真实 Gemini、GLM、OpenRouter Key 的 contract smoke、三套真实向量回填与完整 Demo 验收，以及本次新增 PostgreSQL CI 测试推送后的远端检查，因此本分支应继续保持 Draft，暂不要合并到 `develop`。
 
 ## 2. 已完成的实现
 
@@ -88,11 +88,15 @@ AI 测验不继承某个学生的前端选择，而是在一次生成任务开�
 本分支最新代码已执行：
 
 - AI 服务全量：`263 passed`，另有 1 个 Starlette/httpx 弃用警告。
+- AI 服务接入真实 PostgreSQL DSN 后：`267 passed`，其中新增 4 个 material advisory lock、回填、删除和 broker 重发并发集成测试。
 - 最终写栅栏、删除锁和 Embedding 错误分类聚焦回归：`44 passed`。
 - 前一轮同一工作树验证：learning-service 71、identity-service 72、communication-service 19、platform_common 27，全部通过。
 - 前端当前验证：74 项测试与生产构建通过；lint 为 0 error、37 warnings。
 - `npm run audit:ci` 当前通过。React Router 的临时精确豁免截止 2026-09-30，届时必须升级或重新评估，不能扩大豁免范围。
 - Compose 配置解析与 `git diff --check` 当前通过；Python compileall、CI YAML、SQL 静态解析、Bash/PowerShell 预检脚本语法在前一轮通过。
+- 全新 1024 维 pgvector 数据库、旧 1536 维单向量数据库升级、011/012 重跑幂等、约束负例和三模型覆盖统计已在隔离容器通过。
+- 独立 Compose project 已完成全栈构建与启动：四个 API、MySQL、PostgreSQL、Redis、Redis Quiz、MinIO 健康，三个 worker 在线，nginx 六个入口均返回 HTTP 200；验证资源已单独清理，未触碰原有数据卷。
+- 管理员浏览器登录与治理页只读验收通过：只显示 Gemini、GLM、OpenRouter，Gemini 配对向量为 1024 维，缺少 Key 时明确显示未配置状态，不显示 DeepSeek。
 
 AI 服务本地复现命令：
 
@@ -121,7 +125,9 @@ npm run audit:ci
 
 ### A. 在真实 PostgreSQL/pgvector 上验证迁移与并发
 
-当前仅完成 SQL 静态解析；本机 Docker daemon 不稳定，未完成真实数据库执行。
+本项的迁移、约束、幂等和并发数据库门槛已在隔离 pgvector 容器完成，并新增
+`services/ai-service/tests/indexing/test_postgres_material_index_concurrency.py`。
+无 Key 的合成回填覆盖统计已经通过；真实 Provider 产生的三套向量仍需在 B、C 项完成。
 
 1. 在全新、可丢弃的数据卷上完整运行 `database/ai-init`。
 2. 再在含旧单向量资料、旧 DeepSeek 配置的数据库副本上运行 011、012。
@@ -147,6 +153,9 @@ Key 只在管理员页面录入，不写入 `.env`、测试、日志、截图或
 
 ### C. 完整 Compose 与 Demo 验收
 
+隔离 Compose 的构建、启动、服务健康、worker ping、nginx 路由和缺少预检参数时的
+fail-closed 已完成。下面需要真实 Key、管理员 token 和演示课程的步骤仍未完成。
+
 ```powershell
 Copy-Item .env.example .env
 docker compose --env-file .env -f infra/docker-compose.yml config --quiet
@@ -168,6 +177,7 @@ $env:DEMO_TRIGGER_BACKFILL = "true"
 ### D. 远端 CI 与依赖收口
 
 - 检查本分支 Draft PR 的全部 GitHub Actions；本次已把 learning-service 与 AI 全量测试纳入 CI。
+- 原提交 `0df0990` 的 13 项 PR 检查全部通过；新增真实 PostgreSQL CI 测试尚未提交和推送，推送后必须重新确认远端检查。
 - 若 CI 失败，优先区分 Linux/Windows 换行差异、真实 Compose 启动、依赖安装与业务回归。
 - 在 2026-09-30 前处理 React Router advisory，删除 `frontend/scripts/audit-policy.mjs` 中对应临时豁免。
 
@@ -188,7 +198,7 @@ git switch agent/multi-provider-vector-handoff
 git pull --ff-only
 ```
 
-然后从上面的 A 项开始。模型与回填说明见 `docs/operations/多向量迁移与回填.md`，演示流程见 `docs/operations/Demo演示指南.md`，CI 命令见 `docs/operations/持续集成与部署.md`。
+然后从上面的 B 项真实 Provider contract smoke 开始，并复核 C 项的真实回填与 Demo。模型与回填说明见 `docs/operations/多向量迁移与回填.md`，演示流程见 `docs/operations/Demo演示指南.md`，CI 命令见 `docs/operations/持续集成与部署.md`。
 
 ## 6. 续作时的边界
 

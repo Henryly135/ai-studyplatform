@@ -1041,10 +1041,25 @@ jobs:
 
   ai-service-check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: ai_test_g2_concurrency_ci
+          POSTGRES_USER: ai_test_user
+          POSTGRES_PASSWORD: ai_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ai_test_user -d ai_test_g2_concurrency_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: services/ai-service
     env:
+      AI_TEST_POSTGRES_DSN: postgresql+psycopg://ai_test_user:ai_test_password@127.0.0.1:5432/ai_test_g2_concurrency_ci
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_INTERNAL_PORT: "6379"
@@ -1076,6 +1091,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -e ../../packages/platform_common
+
+      - name: Apply AI PostgreSQL schema
+        run: |
+          docker run --rm --network host \
+            -e PGPASSWORD=ai_test_password \
+            -v "${GITHUB_WORKSPACE}/database/ai-init:/bootstrap/ai-init:ro" \
+            pgvector/pgvector:pg17 \
+            sh -c '
+              for f in /bootstrap/ai-init/*.sql; do
+                psql -v ON_ERROR_STOP=1 \
+                  -v AI_EMBEDDING_DIMENSION=1024 \
+                  -h 127.0.0.1 \
+                  -U ai_test_user \
+                  -d ai_test_g2_concurrency_ci \
+                  -f "$f"
+              done
+            '
 
       - name: Import check
         run: python -c "from app.main import app; print('ai-service import ok')"

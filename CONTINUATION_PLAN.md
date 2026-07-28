@@ -115,21 +115,25 @@ AI 测验使用任务启动时固定的管理员默认聊天模型及配对向�
 
 ### G1：真实 PostgreSQL/pgvector 迁移
 
-- [ ] 在全新可丢弃数据库完整执行 `database/ai-init/*.sql`。
-- [ ] 在包含旧单向量、Gemini 默认和 DeepSeek 配置的数据副本执行 011、012。
-- [ ] 确认旧配置清理、默认组合修正、1024 维约束、外键、唯一键正确。
-- [ ] 重启 schema apply，确认迁移脚本可重复执行。
-- [ ] 验证历史资料回填后，三套向量的 chunk 数和 status 覆盖一致。
+- [x] 在全新可丢弃数据库完整执行 `database/ai-init/*.sql`。
+- [x] 在包含旧单向量、Gemini 默认和 DeepSeek 配置的数据副本执行 011、012。
+- [x] 确认旧配置清理、默认组合修正、1024 维约束、外键、唯一键正确。
+- [x] 重启 schema apply，确认迁移脚本可重复执行。
+- [ ] 验证历史资料回填后，三套向量的 chunk 数和 status 覆盖一致。（无 Key 合成数据的 2 chunks × 3 models 覆盖已通过；真实 Provider worker 回填并入 G3/G4。）
 
 验收证据：保存不含 Key 和隐私数据的命令、行数统计与 schema 查询结果。
 
 ### G2：PostgreSQL 并发一致性
 
-- [ ] 旧索引 worker 运行时创建同一 material 的新上传任务，旧任务必须 superseded。
-- [ ] worker 最终提交前触发全量回填，新任务必须具有最终写入权。
-- [ ] worker 等待锁时删除 material，worker 恢复后不得重建 source/chunk/vector。
-- [ ] broker 首次 dispatch 失败后重新排队，不能形成永久 queued 孤儿任务。
-- [ ] 将以上场景至少补成一组真实 PostgreSQL 集成测试，不能只依赖 mock 调用顺序。
+- [x] 旧索引 worker 运行时创建同一 material 的新上传任务，旧任务必须 superseded。
+- [x] worker 最终提交前触发全量回填，新任务必须具有最终写入权。
+- [x] worker 等待锁时删除 material，worker 恢复后不得重建 source/chunk/vector。
+- [x] broker 首次 dispatch 失败后重新排队，不能形成永久 queued 孤儿任务。
+- [x] 将以上场景至少补成一组真实 PostgreSQL 集成测试，不能只依赖 mock 调用顺序。
+
+验收证据：`services/ai-service/tests/indexing/test_postgres_material_index_concurrency.py`
+在真实 pgvector DSN 下 `4 passed`；AI 全量为 `267 passed`。CI 的
+`ai-service-check` 已增加独立 pgvector service 和完整迁移步骤。
 
 ### G3：三 Provider 真实 contract smoke
 
@@ -144,8 +148,8 @@ AI 测验使用任务启动时固定的管理员默认聊天模型及配对向�
 
 ### G4：Compose、前端与 Demo 端到端
 
-- [ ] `docker compose ... config --quiet` 通过。
-- [ ] 全栈 `up -d --build` 后服务和 worker 健康。
+- [x] `docker compose ... config --quiet` 通过。
+- [x] 全栈 `up -d --build` 后服务和 worker 健康。
 - [ ] 运行 `scripts/demo-preflight.ps1` 或 `.sh`，三套组合均健康且课程覆盖率为 100%。
 - [ ] 不手动触碰下拉框，确认页面自动选择的模型就是实际请求模型。
 - [ ] 按 Gemini -> GLM -> OpenRouter 切换，确认聊天与配对向量模型同步变化。
@@ -154,11 +158,14 @@ AI 测验使用任务启动时固定的管理员默认聊天模型及配对向�
 
 ### G5：完整回归与远端 CI
 
-- [ ] platform_common、identity、communication、learning、AI 全量测试通过。
-- [ ] 前端 lint、test、build、`audit:ci` 全部通过。
+- [x] platform_common、identity、communication、learning、AI 全量测试通过。
+- [x] 前端 lint、test、build、`audit:ci` 全部通过。
 - [ ] GitHub Actions 所有必需检查通过。
-- [ ] `git diff --check`、Compose config、脚本语法和敏感信息扫描通过。
-- [ ] 处理审查新发现的 blocker/high-risk；中低风险记录到正式 issue 或文档。
+- [x] `git diff --check`、Compose config、脚本语法和敏感信息扫描通过。
+- [x] 处理审查新发现的 blocker/high-risk；中低风险记录到正式 issue 或文档。
+
+原提交 `0df0990` 的远端 PR 检查为 13 项全绿；本次新增 PostgreSQL 测试与 CI
+配置尚未推送，因此必须在新提交上重新完成远端检查后才能勾选 GitHub Actions。
 
 ## 五、完成判定
 
