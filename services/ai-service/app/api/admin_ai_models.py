@@ -18,7 +18,11 @@ from app.schemas.ai_models import (
 from app.services.providers.credentials import ProviderCredentialService, redact_secret_text
 from app.services.indexing.index_job_service import IndexJobService
 from app.services.providers.model_registry import SUPPORTED_PROVIDER_KEYS
-from app.services.providers.model_service import AIModelCatalogService, AIModelInvocationService
+from app.services.providers.model_service import (
+    AIEmbeddingInvocationService,
+    AIModelCatalogService,
+    AIModelInvocationService,
+)
 from app.services.providers.types import ProviderConfigurationError, ProviderInvocationError, ProviderQuotaError
 from platform_common.permissions.codes import AI_GOVERNANCE_MANAGE
 
@@ -151,17 +155,36 @@ def health_check_admin_ai_provider(
     ]
     if not provider_models:
         raise _http_error(status.HTTP_400_BAD_REQUEST, "AI_PROVIDER_UNSUPPORTED", "该供应商没有可用的聊天模型。")
-    model_id = provider_models[0].model_id
+    chat_model = provider_models[0]
+    model_id = chat_model.model_id
     try:
         AIModelInvocationService(db).generate_text(
             prompt="Reply with OK.",
             system_instruction="You are checking whether an AI provider is reachable.",
             model_id=model_id,
-            max_output_tokens=16,
+            max_output_tokens=64,
             temperature=0,
+            bypass_health_status_for_health_check=True,
         )
+        embedding_model_id = chat_model.paired_embedding_model_id
+        if not embedding_model_id:
+            raise ProviderConfigurationError(
+                "The provider chat model has no paired embedding model."
+            )
+        embedding_result = AIEmbeddingInvocationService(db).embed_text(
+            text="AI provider embedding health check.",
+            model_id=embedding_model_id,
+            task_type="RETRIEVAL_QUERY",
+            bypass_health_status_for_health_check=True,
+        )
+        if embedding_result.output_dimension != 1024:
+            raise ProviderInvocationError(
+                "AI provider health check returned an unexpected embedding dimension.",
+                provider_error_type="invalid_provider_response",
+            )
         repo.update_credential_health(provider_key=provider_key, health_status="ready", last_error=None)
         db.commit()
+        IndexJobService(db).reindex_all_materials()
         return AdminAIProviderHealthCheckResponse(provider=provider_key, status="ready", message="供应商连接正常。")
     except ProviderQuotaError as exc:
         repo.update_credential_health(provider_key=provider_key, health_status="quota", last_error="供应商额度已受限。")

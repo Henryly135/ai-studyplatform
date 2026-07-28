@@ -1099,6 +1099,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}/database/ai-init:/bootstrap/ai-init:ro" \
             pgvector/pgvector:pg17 \
             sh -c '
+              set -eu
               for f in /bootstrap/ai-init/*.sql; do
                 psql -v ON_ERROR_STOP=1 \
                   -v AI_EMBEDDING_DIMENSION=1024 \
@@ -1107,6 +1108,91 @@ jobs:
                   -d ai_test_g2_concurrency_ci \
                   -f "$f"
               done
+            '
+
+      - name: Verify AI schema reapply preserves provider health
+        run: |
+          docker run --rm --network host \
+            -e PGPASSWORD=ai_test_password \
+            -v "${GITHUB_WORKSPACE}/database/ai-init:/bootstrap/ai-init:ro" \
+            pgvector/pgvector:pg17 \
+            sh -c '
+              set -eu
+              cleanup() {
+                cleanup_status=$?
+                set +e
+                psql -v ON_ERROR_STOP=1 \
+                  -h 127.0.0.1 \
+                  -U ai_test_user \
+                  -d ai_test_g2_concurrency_ci \
+                  -c "UPDATE ai_model_catalog
+                      SET is_enabled = TRUE
+                      WHERE model_id = \$\$gemini:gemini-3.6-flash\$\$;
+                      DELETE FROM ai_provider_credentials
+                      WHERE provider_key IN (\$\$gemini\$\$, \$\$glm\$\$);" \
+                  >/dev/null
+                exit "$cleanup_status"
+              }
+              trap cleanup EXIT
+              psql -v ON_ERROR_STOP=1 \
+                -h 127.0.0.1 \
+                -U ai_test_user \
+                -d ai_test_g2_concurrency_ci \
+                -c "INSERT INTO ai_provider_credentials
+                      (provider_key, encrypted_api_key, api_key_hint, is_enabled, health_status, last_checked_at)
+                    VALUES
+                      (\$\$gemini\$\$, \$\$ci-placeholder\$\$, \$\$****test\$\$, TRUE, \$\$ready\$\$, CURRENT_TIMESTAMP),
+                      (\$\$glm\$\$, \$\$ci-placeholder\$\$, \$\$****test\$\$, TRUE, \$\$ready\$\$, CURRENT_TIMESTAMP);
+                    UPDATE ai_model_catalog
+                    SET is_enabled = FALSE
+                    WHERE model_id = \$\$gemini:gemini-3.6-flash\$\$;"
+              for f in /bootstrap/ai-init/*.sql; do
+                psql -v ON_ERROR_STOP=1 \
+                  -v AI_EMBEDDING_DIMENSION=1024 \
+                  -h 127.0.0.1 \
+                  -U ai_test_user \
+                  -d ai_test_g2_concurrency_ci \
+                  -f "$f"
+              done
+              unhealthy_count="$(
+                psql -At \
+                  -h 127.0.0.1 \
+                  -U ai_test_user \
+                  -d ai_test_g2_concurrency_ci \
+                  -c "SELECT COUNT(*)
+                      FROM ai_provider_credentials
+                      WHERE provider_key IN (\$\$gemini\$\$, \$\$glm\$\$)
+                        AND health_status <> \$\$ready\$\$;"
+              )"
+              retired_count="$(
+                psql -At \
+                  -h 127.0.0.1 \
+                  -U ai_test_user \
+                  -d ai_test_g2_concurrency_ci \
+                  -c "SELECT COUNT(*)
+                      FROM ai_model_catalog
+                      WHERE model_id IN (
+                        \$\$gemini:gemini-2.5-flash-lite\$\$,
+                        \$\$gemini:gemini-2.5-flash\$\$,
+                        \$\$gemini:gemini-2.5-pro\$\$,
+                        \$\$gemini:gemini-embedding-001\$\$,
+                        \$\$glm:glm-4.5-air\$\$,
+                        \$\$openrouter:google/gemini-2.5-flash\$\$
+                      );"
+              )"
+              reenabled_count="$(
+                psql -At \
+                  -h 127.0.0.1 \
+                  -U ai_test_user \
+                  -d ai_test_g2_concurrency_ci \
+                  -c "SELECT COUNT(*)
+                      FROM ai_model_catalog
+                      WHERE model_id = \$\$gemini:gemini-3.6-flash\$\$
+                        AND is_enabled IS NOT FALSE;"
+              )"
+              test "$unhealthy_count" = "0"
+              test "$retired_count" = "0"
+              test "$reenabled_count" = "0"
             '
 
       - name: Import check

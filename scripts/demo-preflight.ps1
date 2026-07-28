@@ -2,7 +2,9 @@
 param(
   [string]$BaseUrl = $(if ($env:DEMO_BASE_URL) { $env:DEMO_BASE_URL } else { "http://localhost:8080" }),
   [string]$AccessToken = $env:DEMO_ACCESS_TOKEN,
+  [string]$AdminAccessToken = $env:DEMO_ADMIN_ACCESS_TOKEN,
   [string]$CourseUuid = $env:DEMO_COURSE_UUID,
+  [string]$ModuleUuid = $env:DEMO_MODULE_UUID,
   [int]$Attempts = $(if ($env:DEMO_PREFLIGHT_ATTEMPTS) { [int]$env:DEMO_PREFLIGHT_ATTEMPTS } else { 30 }),
   [int]$IntervalSeconds = $(if ($env:DEMO_PREFLIGHT_INTERVAL_SECONDS) { [int]$env:DEMO_PREFLIGHT_INTERVAL_SECONDS } else { 2 })
 )
@@ -11,11 +13,19 @@ $ErrorActionPreference = "Stop"
 $BaseUrl = $BaseUrl.TrimEnd("/")
 
 if ([string]::IsNullOrWhiteSpace($AccessToken)) {
-  throw "DEMO_ACCESS_TOKEN or -AccessToken must contain an administrator access token"
+  throw "DEMO_ACCESS_TOKEN or -AccessToken must contain an educator or learner access token with course access and AI_CHAT_USE"
+}
+
+if ([string]::IsNullOrWhiteSpace($AdminAccessToken)) {
+  throw "DEMO_ADMIN_ACCESS_TOKEN or -AdminAccessToken must contain an administrator access token with AI governance access"
 }
 
 if ([string]::IsNullOrWhiteSpace($CourseUuid)) {
   throw "DEMO_COURSE_UUID or -CourseUuid must contain the course UUID to verify RAG coverage"
+}
+
+if ([string]::IsNullOrWhiteSpace($ModuleUuid)) {
+  throw "DEMO_MODULE_UUID or -ModuleUuid must contain an accessible published module UUID to verify RAG coverage"
 }
 
 function Invoke-HealthCheck {
@@ -43,20 +53,24 @@ Write-Output "Checking service health..."
   "$BaseUrl/api/ai/health"
 ) | ForEach-Object { Invoke-HealthCheck -Url $_ }
 
-$headers = @{ Authorization = "Bearer $AccessToken" }
+$courseHeaders = @{ Authorization = "Bearer $AccessToken" }
+$adminHeaders = @{ Authorization = "Bearer $AdminAccessToken" }
 if ($env:DEMO_TRIGGER_BACKFILL -eq "true") {
   Write-Output "Queuing multi-embedding backfill..."
   Invoke-RestMethod `
     -Method Post `
     -Uri "$BaseUrl/api/ai/admin/telemetry/index-jobs/reindex-all" `
-    -Headers $headers | Out-Null
+    -Headers $adminHeaders | Out-Null
 }
 $catalogUrl = "$BaseUrl/api/ai/models"
-$catalogUrl = "${catalogUrl}?courseUuid=$([Uri]::EscapeDataString($CourseUuid))"
+$catalogUrl = (
+  "${catalogUrl}?courseUuid=$([Uri]::EscapeDataString($CourseUuid))" +
+  "&moduleUuid=$([Uri]::EscapeDataString($ModuleUuid))"
+)
 
 $catalog = $null
 for ($attempt = 1; $attempt -le $Attempts; $attempt += 1) {
-  $catalog = Invoke-RestMethod -Method Get -Uri $catalogUrl -Headers $headers
+  $catalog = Invoke-RestMethod -Method Get -Uri $catalogUrl -Headers $courseHeaders
   $availableChatModels = @(
     $catalog.items | Where-Object {
       $_.available -eq $true -and (
@@ -81,11 +95,11 @@ for ($attempt = 1; $attempt -le $Attempts; $attempt += 1) {
     break
   }
   if ($attempt -eq $Attempts) {
-    throw "Course multi-embedding coverage did not become ready"
+    throw "Course module multi-embedding coverage did not become ready"
   }
   Start-Sleep -Seconds $IntervalSeconds
 }
-$providerState = Invoke-RestMethod -Method Get -Uri "$BaseUrl/api/ai/admin/ai/providers" -Headers $headers
+$providerState = Invoke-RestMethod -Method Get -Uri "$BaseUrl/api/ai/admin/ai/providers" -Headers $adminHeaders
 
 $expectedProviders = "gemini,glm,openrouter"
 $catalogProviders = (@($catalog.items | ForEach-Object { $_.provider } | Sort-Object -Unique) -join ",")

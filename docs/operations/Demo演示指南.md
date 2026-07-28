@@ -41,23 +41,33 @@ Key 只能在管理员界面录入，不应出现在截图、终端历史、浏�
 
 ### 4. 执行预检
 
-获取管理员访问令牌后，在 Linux/macOS 确认已安装 `curl` 与 `jq`，然后执行：
+预检需要两种权限边界不同的访问令牌：
+
+- `DEMO_ADMIN_ACCESS_TOKEN`：管理员令牌，用于 Provider 治理状态和可选的全量回填。
+- `DEMO_ACCESS_TOKEN`：能访问演示课程且拥有 `AI_CHAT_USE` 权限的教师或学习者令牌，用于课程与模块范围的模型目录和 RAG 覆盖检查。默认角色下推荐使用已报名学习者令牌；教师只有在明确拥有 `AI_CHAT_USE` 时才适用。
+- `DEMO_MODULE_UUID`：该账号可访问的已发布演示模块。学习者的 AI 权限校验要求模块上下文，因此预检不会只用课程 UUID 猜测范围。
+
+在 Linux/macOS 确认已安装 `curl` 与 `jq`，然后执行：
 
 ```bash
-export DEMO_ACCESS_TOKEN='replace-with-admin-access-token'
+export DEMO_ADMIN_ACCESS_TOKEN='replace-with-admin-access-token'
+export DEMO_ACCESS_TOKEN='replace-with-course-access-ai-chat-token'
 export DEMO_COURSE_UUID='replace-with-demo-course-uuid'
+export DEMO_MODULE_UUID='replace-with-accessible-published-module-uuid'
 bash scripts/demo-preflight.sh
 ```
 
 Windows PowerShell：
 
 ```powershell
-$env:DEMO_ACCESS_TOKEN = "replace-with-admin-access-token"
+$env:DEMO_ADMIN_ACCESS_TOKEN = "replace-with-admin-access-token"
+$env:DEMO_ACCESS_TOKEN = "replace-with-course-access-ai-chat-token"
 $env:DEMO_COURSE_UUID = "replace-with-demo-course-uuid"
+$env:DEMO_MODULE_UUID = "replace-with-accessible-published-module-uuid"
 .\scripts\demo-preflight.ps1
 ```
 
-管理员令牌与课程 UUID 都是必填项；缺少课程 UUID 时预检会直接失败，避免跳过 RAG 覆盖检查后误报 Demo 已就绪。
+管理员令牌、课程访问令牌、课程 UUID 与模块 UUID 都是必填项。预检不会打印令牌；缺少任一项时会直接失败，避免绕过 RBAC 或跳过 RAG 覆盖检查后误报 Demo 已就绪。
 
 远程 Demo 环境可额外设置：
 
@@ -68,10 +78,11 @@ export DEMO_BASE_URL='https://demo.example.com'
 预检验证：
 
 - 身份、学习、通信、AI 服务健康。
+- 管理员令牌可读取治理状态，课程令牌可在自身课程与模块权限范围内读取模型目录。
 - 模型目录恰好包含 Gemini、GLM、OpenRouter。
 - 三个 Provider 已配置且健康。
 - 所有聊天模型都有 1024 维配对向量模型。
-- 指定课程的可用模型均达到 RAG 就绪和 100% 索引覆盖。
+- 指定课程模块的可用模型均达到 RAG 就绪和 100% 索引覆盖。
 
 预检失败时不要继续对外演示。先查看 Provider 健康状态、索引任务错误和 worker 日志。
 

@@ -43,7 +43,7 @@ def test_registry_only_exposes_supported_paired_providers() -> None:
     assert all(model.provider_key != "deepseek" for model in MODEL_DEFINITIONS)
 
     expected_pairs = {
-        "gemini": "gemini:gemini-embedding-001",
+        "gemini": "gemini:gemini-embedding-2",
         "glm": "glm:embedding-3",
         "openrouter": "openrouter:openai/text-embedding-3-small",
     }
@@ -53,6 +53,28 @@ def test_registry_only_exposes_supported_paired_providers() -> None:
             paired = MODEL_DEFINITION_BY_ID[model.paired_embedding_model_id]
             assert paired.supports_embedding is True
             assert paired.embedding_dimension == 1024
+
+    assert {
+        model.model_id
+        for model in MODEL_DEFINITIONS
+        if model.provider_key == "gemini" and model.supports_chat
+    } == {
+        "gemini:gemini-3.5-flash-lite",
+        "gemini:gemini-3.6-flash",
+    }
+    assert MODEL_DEFINITION_BY_ID[
+        "gemini:gemini-3.5-flash-lite"
+    ].display_name == "Gemini 3.5 Flash-Lite"
+    assert {
+        model.model_id
+        for model in MODEL_DEFINITIONS
+        if model.provider_key == "glm" and model.supports_chat
+    } == {"glm:glm-4.7"}
+    assert {
+        model.model_id
+        for model in MODEL_DEFINITIONS
+        if model.provider_key == "openrouter" and model.supports_chat
+    } == {"openrouter:openrouter/auto"}
 
 
 def test_adapter_factories_use_adapter_type_not_provider_key() -> None:
@@ -125,7 +147,9 @@ def test_openai_compatible_adapter_parses_chat_completion(monkeypatch) -> None:
     assert result.text == "hello"
     assert result.usage.total_tokens == 5
     assert captured["payload"]["model"] == "glm-4.7"
+    assert captured["payload"]["thinking"] == {"type": "disabled"}
     assert captured["payload"]["response_format"] == {"type": "json_object"}
+    assert result.request_json["thinkingDisabled"] is True
     assert "secret-key" not in str(result.request_json)
     assert captured["timeout"] == 12
 
@@ -166,7 +190,7 @@ def test_openrouter_json_request_requires_parameter_support(monkeypatch) -> None
         SimpleNamespace(ai_chat_timeout_seconds=12),
     )
 
-    OpenAICompatibleChatAdapter().generate_text(
+    result = OpenAICompatibleChatAdapter().generate_text(
         TextGenerationRequest(
             provider_key="openrouter",
             model_name="openrouter/auto",
@@ -184,6 +208,8 @@ def test_openrouter_json_request_requires_parameter_support(monkeypatch) -> None
     assert captured["payload"]["provider"] == {
         "require_parameters": True
     }
+    assert "thinking" not in captured["payload"]
+    assert result.request_json["thinkingDisabled"] is False
 
 
 def test_openai_compatible_adapter_uses_safe_error_summary(monkeypatch) -> None:
@@ -301,8 +327,75 @@ def test_openai_compatible_chat_adapter_classifies_nested_numeric_error(
         )
 
 
-def test_gemini_embedding_adapter_applies_task_title_dimension_and_normalization(
+def test_gemini_chat_adapter_omits_deprecated_temperature(
     monkeypatch,
+) -> None:
+    captured = {}
+
+    class FakeModels:
+        def generate_content(self, *, model, contents, config):
+            captured["model"] = model
+            captured["contents"] = contents
+            captured["config"] = config
+            return SimpleNamespace(
+                text="OK",
+                usage_metadata=SimpleNamespace(
+                    prompt_token_count=2,
+                    candidates_token_count=1,
+                    total_token_count=3,
+                ),
+            )
+
+    monkeypatch.setattr(
+        "app.services.providers.adapters.genai.Client",
+        lambda **_: SimpleNamespace(models=FakeModels()),
+    )
+
+    result = GeminiChatAdapter().generate_text(
+        TextGenerationRequest(
+            provider_key="gemini",
+            model_name="gemini-3.5-flash-lite",
+            api_key="secret-key",
+            base_url=None,
+            prompt="Reply with OK.",
+            temperature=0.8,
+            max_output_tokens=16,
+        )
+    )
+
+    assert result.text == "OK"
+    assert captured["model"] == "gemini-3.5-flash-lite"
+    assert "temperature" not in captured["config"].model_dump(
+        exclude_none=True
+    )
+    assert "temperature" not in result.request_json
+
+
+@pytest.mark.parametrize(
+    ("task_type", "title", "expected_contents"),
+    [
+        (
+            "RETRIEVAL_QUERY",
+            None,
+            "task: search result | query: document",
+        ),
+        (
+            "RETRIEVAL_DOCUMENT",
+            "Lesson",
+            "title: Lesson | text: document",
+        ),
+        (
+            "RETRIEVAL_DOCUMENT",
+            None,
+            "title: none | text: document",
+        ),
+    ],
+)
+def test_gemini_embedding_2_adapter_formats_content_and_only_sends_dimension(
+    monkeypatch,
+    task_type,
+    title,
+    expected_contents,
 ) -> None:
     captured = {}
 
@@ -327,22 +420,22 @@ def test_gemini_embedding_adapter_applies_task_title_dimension_and_normalization
     result = GeminiEmbeddingAdapter().embed(
         EmbeddingRequest(
             provider_key="gemini",
-            model_name="gemini-embedding-001",
+            model_name="gemini-embedding-2",
             api_key="secret-key",
             base_url=None,
             text="document",
             output_dimension=2,
-            task_type="RETRIEVAL_DOCUMENT",
-            title="Lesson",
+            task_type=task_type,
+            title=title,
         )
     )
 
     assert result.vector == pytest.approx([0.6, 0.8])
-    assert captured["model"] == "gemini-embedding-001"
-    assert captured["contents"] == "document"
-    assert captured["config"].task_type == "RETRIEVAL_DOCUMENT"
-    assert captured["config"].title == "Lesson"
-    assert captured["config"].output_dimensionality == 2
+    assert captured["model"] == "gemini-embedding-2"
+    assert captured["contents"] == expected_contents
+    assert captured["config"].model_dump(exclude_none=True) == {
+        "output_dimensionality": 2
+    }
 
 
 def test_openai_compatible_embedding_adapter_parses_and_normalizes_vector(monkeypatch) -> None:

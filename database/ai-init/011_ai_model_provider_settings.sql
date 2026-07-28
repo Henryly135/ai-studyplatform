@@ -81,15 +81,12 @@ INSERT INTO ai_model_catalog
         embedding_dimension, paired_embedding_model_id, display_order, unavailable_reason
     )
 VALUES
-    ('gemini:gemini-2.5-flash-lite', 'gemini', 'gemini-2.5-flash-lite', 'Gemini 2.5 Flash Lite', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'gemini:gemini-embedding-001', 10, NULL),
-    ('gemini:gemini-2.5-flash', 'gemini', 'gemini-2.5-flash', 'Gemini 2.5 Flash', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'gemini:gemini-embedding-001', 11, NULL),
-    ('gemini:gemini-2.5-pro', 'gemini', 'gemini-2.5-pro', 'Gemini 2.5 Pro', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'gemini:gemini-embedding-001', 12, NULL),
-    ('gemini:gemini-embedding-001', 'gemini', 'gemini-embedding-001', 'Gemini Embedding 001', TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, TRUE, 1024, NULL, 19, NULL),
-    ('glm:glm-4.5-air', 'glm', 'glm-4.5-air', 'GLM 4.5 Air', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'glm:embedding-3', 20, NULL),
+    ('gemini:gemini-3.5-flash-lite', 'gemini', 'gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'gemini:gemini-embedding-2', 10, NULL),
+    ('gemini:gemini-3.6-flash', 'gemini', 'gemini-3.6-flash', 'Gemini 3.6 Flash', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'gemini:gemini-embedding-2', 11, NULL),
+    ('gemini:gemini-embedding-2', 'gemini', 'gemini-embedding-2', 'Gemini Embedding 2', TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, TRUE, 1024, NULL, 19, NULL),
     ('glm:glm-4.7', 'glm', 'glm-4.7', 'GLM 4.7', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'glm:embedding-3', 21, NULL),
     ('glm:embedding-3', 'glm', 'embedding-3', 'GLM Embedding-3', TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, TRUE, 1024, NULL, 29, NULL),
     ('openrouter:openrouter/auto', 'openrouter', 'openrouter/auto', 'OpenRouter Auto', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'openrouter:openai/text-embedding-3-small', 30, NULL),
-    ('openrouter:google/gemini-2.5-flash', 'openrouter', 'google/gemini-2.5-flash', 'Gemini 2.5 Flash via OpenRouter', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'openrouter:openai/text-embedding-3-small', 31, NULL),
     ('openrouter:openai/text-embedding-3-small', 'openrouter', 'openai/text-embedding-3-small', 'OpenAI Text Embedding 3 Small via OpenRouter', TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, TRUE, 1024, NULL, 39, NULL)
 ON CONFLICT (model_id) DO UPDATE SET
     provider_key = EXCLUDED.provider_key,
@@ -109,12 +106,12 @@ ON CONFLICT (model_id) DO UPDATE SET
     updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO ai_model_defaults (scope_key, default_chat_model_id, default_embedding_model_id)
-VALUES ('global', 'gemini:gemini-2.5-flash-lite', 'gemini:gemini-embedding-001')
+VALUES ('global', 'gemini:gemini-3.5-flash-lite', 'gemini:gemini-embedding-2')
 ON CONFLICT (scope_key) DO NOTHING;
 
 UPDATE ai_model_defaults AS defaults
-SET default_chat_model_id = 'gemini:gemini-2.5-flash-lite',
-    default_embedding_model_id = 'gemini:gemini-embedding-001',
+SET default_chat_model_id = 'gemini:gemini-3.5-flash-lite',
+    default_embedding_model_id = 'gemini:gemini-embedding-2',
     updated_at = CURRENT_TIMESTAMP
 WHERE defaults.default_chat_model_id LIKE 'deepseek:%';
 

@@ -133,8 +133,8 @@ def test_embedding_status_upsert_preserves_running_start_time_on_success() -> No
 
     row = repository.upsert(
         source_id=1,
-        embedding_model_id="gemini:gemini-embedding-001",
-        embedding_version="gemini:gemini-embedding-001@1024",
+        embedding_model_id="gemini:gemini-embedding-2",
+        embedding_version="gemini:gemini-embedding-2@1024",
         status="success",
         expected_chunk_count=2,
         indexed_chunk_count=2,

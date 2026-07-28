@@ -19,6 +19,7 @@ from app.models.ai_model_catalog import (
     AIUserModelPreference,
 )
 from app.schemas.ai_models import AdminAIProviderCredentialRequest
+from app.services.providers.types import ProviderQuotaError
 
 
 def test_saving_enabled_provider_key_queues_historical_vector_backfill(
@@ -119,6 +120,211 @@ def test_admin_provider_list_filters_legacy_removed_provider(
         "glm",
         "openrouter",
     ]
+
+
+def test_admin_provider_health_check_requires_chat_and_paired_1024_embedding(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+    chat_model = SimpleNamespace(
+        model_id="glm:glm-4.7",
+        provider_key="glm",
+        supports_chat=True,
+        paired_embedding_model_id="glm:embedding-3",
+    )
+    repository = SimpleNamespace(
+        list_models=lambda: [chat_model],
+        update_credential_health=lambda **kwargs: calls.append(
+            ("health", kwargs)
+        ),
+    )
+    db = SimpleNamespace(commit=lambda: calls.append(("commit", None)))
+
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIModelCatalogService",
+        lambda _db: SimpleNamespace(ensure_seeded=lambda: None),
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIModelCatalogRepository",
+        lambda _db: repository,
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIModelInvocationService",
+        lambda _db: SimpleNamespace(
+            generate_text=lambda **kwargs: calls.append(("chat", kwargs))
+        ),
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIEmbeddingInvocationService",
+        lambda _db: SimpleNamespace(
+            embed_text=lambda **kwargs: (
+                calls.append(("embedding", kwargs))
+                or SimpleNamespace(output_dimension=1024)
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "IndexJobService",
+        lambda _db: SimpleNamespace(
+            reindex_all_materials=lambda: calls.append(("backfill", None))
+        ),
+    )
+
+    response = admin_ai_models.health_check_admin_ai_provider(
+        provider_key="glm",
+        current_user={"id": 1},
+        db=db,
+    )
+
+    assert response.status == "ready"
+    assert [name for name, _ in calls] == [
+        "chat",
+        "embedding",
+        "health",
+        "commit",
+        "backfill",
+    ]
+    assert calls[1][1] == {
+        "text": "AI provider embedding health check.",
+        "model_id": "glm:embedding-3",
+        "task_type": "RETRIEVAL_QUERY",
+        "bypass_health_status_for_health_check": True,
+    }
+    assert calls[0][1]["max_output_tokens"] == 64
+    assert (
+        calls[0][1]["bypass_health_status_for_health_check"]
+        is True
+    )
+
+
+def test_admin_provider_health_check_rejects_non_1024_embedding(
+    monkeypatch,
+) -> None:
+    health_updates: list[dict] = []
+    backfill_calls: list[str] = []
+    chat_model = SimpleNamespace(
+        model_id="glm:glm-4.7",
+        provider_key="glm",
+        supports_chat=True,
+        paired_embedding_model_id="glm:embedding-3",
+    )
+    repository = SimpleNamespace(
+        list_models=lambda: [chat_model],
+        update_credential_health=lambda **kwargs: health_updates.append(
+            kwargs
+        ),
+    )
+
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIModelCatalogService",
+        lambda _db: SimpleNamespace(ensure_seeded=lambda: None),
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIModelCatalogRepository",
+        lambda _db: repository,
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIModelInvocationService",
+        lambda _db: SimpleNamespace(generate_text=lambda **_: None),
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIEmbeddingInvocationService",
+        lambda _db: SimpleNamespace(
+            embed_text=lambda **_: SimpleNamespace(output_dimension=768)
+        ),
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "IndexJobService",
+        lambda _db: SimpleNamespace(
+            reindex_all_materials=lambda: backfill_calls.append("queued")
+        ),
+    )
+
+    response = admin_ai_models.health_check_admin_ai_provider(
+        provider_key="glm",
+        current_user={"id": 1},
+        db=SimpleNamespace(commit=lambda: None),
+    )
+
+    assert response.status == "failed"
+    assert health_updates[-1]["health_status"] == "failed"
+    assert "dimension" in response.message.lower()
+    assert backfill_calls == []
+
+
+def test_admin_provider_health_check_quota_does_not_queue_backfill(
+    monkeypatch,
+) -> None:
+    health_updates: list[dict] = []
+    backfill_calls: list[str] = []
+    chat_model = SimpleNamespace(
+        model_id="glm:glm-4.7",
+        provider_key="glm",
+        supports_chat=True,
+        paired_embedding_model_id="glm:embedding-3",
+    )
+    repository = SimpleNamespace(
+        list_models=lambda: [chat_model],
+        update_credential_health=lambda **kwargs: health_updates.append(
+            kwargs
+        ),
+    )
+
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIModelCatalogService",
+        lambda _db: SimpleNamespace(ensure_seeded=lambda: None),
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIModelCatalogRepository",
+        lambda _db: repository,
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIModelInvocationService",
+        lambda _db: SimpleNamespace(
+            generate_text=lambda **_: (_ for _ in ()).throw(
+                ProviderQuotaError("quota")
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIEmbeddingInvocationService",
+        lambda _db: SimpleNamespace(
+            embed_text=lambda **_: (_ for _ in ()).throw(
+                AssertionError("quota must stop before embedding")
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "IndexJobService",
+        lambda _db: SimpleNamespace(
+            reindex_all_materials=lambda: backfill_calls.append("queued")
+        ),
+    )
+
+    response = admin_ai_models.health_check_admin_ai_provider(
+        provider_key="glm",
+        current_user={"id": 1},
+        db=SimpleNamespace(commit=lambda: None),
+    )
+
+    assert response.status == "quota"
+    assert health_updates[-1]["health_status"] == "quota"
+    assert backfill_calls == []
 
 
 def test_admin_provider_http_lifecycle_uses_auth_real_db_and_encryption(

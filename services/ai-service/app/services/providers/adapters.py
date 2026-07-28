@@ -201,7 +201,6 @@ class GeminiChatAdapter:
                 contents=request.prompt,
                 config=genai_types.GenerateContentConfig(
                     system_instruction=request.system_instruction,
-                    temperature=request.temperature,
                     max_output_tokens=request.max_output_tokens,
                     response_mime_type="application/json" if request.json_mode else None,
                 ),
@@ -236,7 +235,6 @@ class GeminiChatAdapter:
                 "provider": request.provider_key,
                 "model": request.model_name,
                 "jsonMode": request.json_mode,
-                "temperature": request.temperature,
                 "maxOutputTokens": request.max_output_tokens,
             },
             response_json={
@@ -255,17 +253,22 @@ class GeminiChatAdapter:
 class GeminiEmbeddingAdapter:
     def embed(self, request: EmbeddingRequest) -> ProviderEmbeddingResult:
         config_kwargs: dict[str, Any] = {
-            "task_type": request.task_type,
             "output_dimensionality": request.output_dimension,
         }
         normalized_title = (request.title or "").strip()
-        if normalized_title and request.task_type == "RETRIEVAL_DOCUMENT":
-            config_kwargs["title"] = normalized_title
+        if request.task_type == "RETRIEVAL_QUERY":
+            contents = f"task: search result | query: {request.text}"
+        elif request.task_type == "RETRIEVAL_DOCUMENT":
+            contents = (
+                f"title: {normalized_title or 'none'} | text: {request.text}"
+            )
+        else:
+            contents = request.text
         try:
             client = genai.Client(api_key=request.api_key)
             response = client.models.embed_content(
                 model=request.model_name,
-                contents=request.text,
+                contents=contents,
                 config=genai_types.EmbedContentConfig(**config_kwargs),
             )
         except genai_errors.ClientError as exc:
@@ -335,6 +338,9 @@ class OpenAICompatibleChatAdapter:
             "max_tokens": request.max_output_tokens,
             "stream": False,
         }
+        thinking_disabled = request.provider_key == "glm"
+        if thinking_disabled:
+            payload["thinking"] = {"type": "disabled"}
         if request.json_mode:
             payload["response_format"] = {"type": "json_object"}
             if request.require_parameter_support:
@@ -398,6 +404,7 @@ class OpenAICompatibleChatAdapter:
                 "model": request.model_name,
                 "jsonMode": request.json_mode,
                 "temperature": request.temperature,
+                "thinkingDisabled": thinking_disabled,
                 "maxOutputTokens": request.max_output_tokens,
             },
             response_json={

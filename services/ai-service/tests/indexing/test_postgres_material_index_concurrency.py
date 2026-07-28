@@ -32,7 +32,7 @@ from app.tasks.material_index import _acquire_material_write_fence
 
 
 POSTGRES_TEST_DSN_ENV = "AI_TEST_POSTGRES_DSN"
-EMBEDDING_MODEL_ID = "gemini:gemini-embedding-001"
+EMBEDDING_MODEL_ID = "gemini:gemini-embedding-2"
 EMBEDDING_VERSION = f"{EMBEDDING_MODEL_ID}@1024"
 
 

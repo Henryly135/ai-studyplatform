@@ -85,7 +85,7 @@ PUBLIC_FRONTEND_URL=https://your-learning-platform.example.com
 
 | 聊天 Provider | 对应向量模型 |
 | --- | --- |
-| Gemini | Gemini Embedding 001 |
+| Gemini | Gemini Embedding 2 |
 | GLM | GLM Embedding-3 |
 | OpenRouter | OpenAI Text Embedding 3 Small via OpenRouter |
 

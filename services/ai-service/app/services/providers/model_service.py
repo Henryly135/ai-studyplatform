@@ -244,7 +244,12 @@ class AIModelCatalogService:
         )
         self.session.commit()
 
-    def availability_for_model(self, model: AIModelCatalog) -> ModelAvailability:
+    def availability_for_model(
+        self,
+        model: AIModelCatalog,
+        *,
+        bypass_health_status_for_health_check: bool = False,
+    ) -> ModelAvailability:
         provider = self.repo.get_provider(model.provider_key)
         credential = self.repo.get_credential(model.provider_key)
         if not model.is_enabled:
@@ -261,9 +266,30 @@ class AIModelCatalogService:
             return ModelAvailability(False, "模型向量维度与当前向量库不匹配，需要重新索引。")
         if credential is None or not credential.is_enabled or not credential.encrypted_api_key:
             return ModelAvailability(False, "管理员尚未配置该供应商 API key。")
+        if not bypass_health_status_for_health_check:
+            health_status = str(
+                getattr(credential, "health_status", None) or "unknown"
+            ).strip().lower()
+            unavailable_reason = {
+                "unknown": "供应商尚未通过健康检查。",
+                "failed": "供应商健康检查失败，当前暂不可用。",
+                "quota": "供应商额度受限，当前暂不可用。",
+            }.get(health_status)
+            if health_status != "ready":
+                return ModelAvailability(
+                    False,
+                    unavailable_reason
+                    or "供应商健康状态未知，当前暂不可用。",
+                )
         return ModelAvailability(True, None)
 
-    def resolve_chat_model(self, *, user_id: int | None, requested_model_id: str | None) -> ResolvedModel:
+    def resolve_chat_model(
+        self,
+        *,
+        user_id: int | None,
+        requested_model_id: str | None,
+        bypass_health_status_for_health_check: bool = False,
+    ) -> ResolvedModel:
         model_id = requested_model_id.strip() if requested_model_id and requested_model_id.strip() else None
         if model_id is None and user_id is not None:
             preference = self.repo.get_user_preference(user_id)
@@ -284,7 +310,12 @@ class AIModelCatalogService:
         provider = self.repo.get_provider(model.provider_key)
         if provider is None:
             raise ProviderConfigurationError("Selected provider is not configured.")
-        availability = self.availability_for_model(model)
+        availability = self.availability_for_model(
+            model,
+            bypass_health_status_for_health_check=(
+                bypass_health_status_for_health_check
+            ),
+        )
         credential = self.repo.get_credential(model.provider_key)
         if not availability.available:
             raise ProviderConfigurationError(availability.reason or "Selected model is unavailable.")
@@ -292,7 +323,12 @@ class AIModelCatalogService:
             self.repo.set_user_preference(user_id=user_id, chat_model_id=model.model_id)
         return ResolvedModel(model=model, provider=provider, credential=credential, availability=availability)
 
-    def resolve_embedding_model(self, *, embedding_model_id: str) -> ResolvedModel:
+    def resolve_embedding_model(
+        self,
+        *,
+        embedding_model_id: str,
+        bypass_health_status_for_health_check: bool = False,
+    ) -> ResolvedModel:
         normalized_model_id = embedding_model_id.strip()
         if not normalized_model_id:
             raise ProviderConfigurationError("Embedding model id is required.")
@@ -310,7 +346,12 @@ class AIModelCatalogService:
             raise ProviderConfigurationError(
                 "Selected embedding provider is not configured."
             )
-        availability = self.availability_for_model(model)
+        availability = self.availability_for_model(
+            model,
+            bypass_health_status_for_health_check=(
+                bypass_health_status_for_health_check
+            ),
+        )
         credential = self.repo.get_credential(model.provider_key)
         if not availability.available:
             raise ProviderConfigurationError(
@@ -477,7 +518,7 @@ class AIEmbeddingInvocationService:
 
     def __init__(self, session: Session) -> None:
         self.session = session
-        self._resolved_models: dict[str, ResolvedModel] = {}
+        self._resolved_models: dict[tuple[str, bool], ResolvedModel] = {}
         self._credentials = {}
         self._adapters = {}
 
@@ -488,18 +529,26 @@ class AIEmbeddingInvocationService:
         model_id: str,
         task_type: str,
         title: str | None = None,
+        bypass_health_status_for_health_check: bool = False,
     ) -> EmbeddingInvocationResult:
         normalized_text = text.strip()
         if not normalized_text:
             raise ProviderConfigurationError("Embedding text is required.")
 
         catalog = AIModelCatalogService(self.session)
-        resolved = self._resolved_models.get(model_id)
+        resolved_model_key = (
+            model_id,
+            bypass_health_status_for_health_check,
+        )
+        resolved = self._resolved_models.get(resolved_model_key)
         if resolved is None:
             resolved = catalog.resolve_embedding_model(
-                embedding_model_id=model_id
+                embedding_model_id=model_id,
+                bypass_health_status_for_health_check=(
+                    bypass_health_status_for_health_check
+                ),
             )
-            self._resolved_models[model_id] = resolved
+            self._resolved_models[resolved_model_key] = resolved
         credentials = self._credentials.get(resolved.provider.provider_key)
         if credentials is None:
             credentials = ProviderCredentialService(
@@ -588,11 +637,18 @@ class AIModelInvocationService:
         temperature: float | None = None,
         max_output_tokens: int | None = None,
         json_mode: bool = False,
+        bypass_health_status_for_health_check: bool = False,
     ) -> ModelInvocationResult:
         with _managed_session(self.session) as session:
             catalog = AIModelCatalogService(session)
             catalog.ensure_seeded()
-            resolved = catalog.resolve_chat_model(user_id=user_id, requested_model_id=model_id)
+            resolved = catalog.resolve_chat_model(
+                user_id=user_id,
+                requested_model_id=model_id,
+                bypass_health_status_for_health_check=(
+                    bypass_health_status_for_health_check
+                ),
+            )
             if json_mode and not resolved.model.supports_json:
                 raise ProviderConfigurationError("Selected model does not support JSON generation.")
 

@@ -583,16 +583,16 @@ def test_admin_ai_provider_config_status_returns_sanitized_summary(monkeypatch) 
                 generatedAt="2026-07-02T00:00:00+00:00",
                 overallStatus="warning",
                 provider="gemini",
-                model="gemini-2.5-flash",
+                model="gemini-3.6-flash",
                 embeddingProvider="gemini",
-                embeddingModel="gemini-embedding-001",
+                embeddingModel="gemini-embedding-2",
                 storageProvider="local",
                 items=[
                     AdminAIProviderConfigItem(
                         key="chat_provider",
                         label="Chat provider",
                         status="ready",
-                        detail="gemini / gemini-2.5-flash",
+                        detail="gemini / gemini-3.6-flash",
                     )
                 ],
             )
@@ -633,9 +633,9 @@ def test_admin_ai_provider_health_returns_success_rate_and_anomalies(monkeypatch
                 averageLatencyMs=8500,
                 items=[
                     AdminAIProviderHealthItem(
-                        key="prompt:chat:gemini-2.5-flash",
+                        key="prompt:chat:gemini-3.6-flash",
                         provider="gemini",
-                        modelName="gemini-2.5-flash",
+                        modelName="gemini-3.6-flash",
                         callType="chat",
                         totalCalls=10,
                         success=8,
@@ -651,7 +651,7 @@ def test_admin_ai_provider_health_returns_success_rate_and_anomalies(monkeypatch
                 ],
                 anomalies=[
                     AdminAIProviderAnomaly(
-                        key="prompt:chat:gemini-2.5-flash:failure_rate",
+                        key="prompt:chat:gemini-3.6-flash:failure_rate",
                         severity="warning",
                         title="Provider failure rate needs review",
                         detail="20% failures across 10 calls.",
@@ -721,9 +721,9 @@ def test_admin_ai_provider_health_anomalies_flag_failures_latency_and_missing_ca
     )
     service = AdminAITelemetryService(object())
     item = service._build_provider_health_item(
-        key="prompt:chat:gemini-2.5-flash",
+        key="prompt:chat:gemini-3.6-flash",
         provider="gemini",
-        model_name="gemini-2.5-flash",
+        model_name="gemini-3.6-flash",
         call_type="chat",
         total_calls=10,
         success=6,
@@ -888,12 +888,12 @@ def test_demo_health_rejects_unavailable_default_model(monkeypatch) -> None:
 
         def list_model_status(self) -> dict:
             return {
-                "defaultChatModelId": "gemini:gemini-2.5-flash-lite",
+                "defaultChatModelId": "gemini:gemini-3.5-flash-lite",
                 "items": [
                     {
-                        "modelId": "gemini:gemini-2.5-flash-lite",
+                        "modelId": "gemini:gemini-3.5-flash-lite",
                         "provider": "gemini",
-                        "modelName": "gemini-2.5-flash-lite",
+                        "modelName": "gemini-3.5-flash-lite",
                         "available": False,
                     }
                 ],

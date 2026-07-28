@@ -6,13 +6,13 @@ import remarkGfm from "remark-gfm";
 import { getAiModelCatalog, getChatSessionDetail, listModuleChatSessions, sendChatMessage } from "../../services/chat";
 import type {
   AiModelCatalog,
-  AiModelCatalogModel,
   CourseChatMessage,
   ChatSessionSummary,
 } from "../../types/chat";
 import {
+  formatRagOptionSuffix,
+  formatRagStatusText,
   isChatModelSelectable,
-  isNoMaterialIndexStatus,
   resolveChatModelSelection,
 } from "./courseChatModels";
 import {
@@ -58,54 +58,6 @@ function mapMessagesToConversation(messages: CourseChatMessage[], pendingText: s
   });
 
   return nextMessages;
-}
-
-function formatIndexCoverage(value: number | null) {
-  return value === null ? null : `${Math.round(value * 100)}%`;
-}
-
-function normalizeIndexStatus(value: string | null) {
-  return value?.trim().toLowerCase().replaceAll("-", "_") ?? "";
-}
-
-function isIndexBuildingStatus(value: string | null) {
-  return ["building", "indexing", "pending", "queued", "running"].includes(
-    normalizeIndexStatus(value)
-  );
-}
-
-function getRagStatusText(model: AiModelCatalogModel) {
-  const coverage = formatIndexCoverage(model.indexCoverage);
-  if (isNoMaterialIndexStatus(model.indexStatus)) {
-    return "当前模块暂无可检索资料，可继续普通聊天。";
-  }
-  if (model.ragReady === true) {
-    return `课程资料检索已就绪${coverage ? `，索引覆盖 ${coverage}` : ""}。`;
-  }
-  if (model.ragReady === false && isIndexBuildingStatus(model.indexStatus)) {
-    return `课程资料索引构建中${coverage ? `（${coverage}）` : ""}，完成前暂不可选择。`;
-  }
-  if (model.ragReady === false) {
-    return "课程资料检索暂未就绪，当前模型暂不可选择。";
-  }
-  return "课程资料检索状态待确认，当前模型暂不可选择。";
-}
-
-function getRagOptionSuffix(model: AiModelCatalogModel) {
-  const coverage = formatIndexCoverage(model.indexCoverage);
-  if (isNoMaterialIndexStatus(model.indexStatus)) {
-    return " · 暂无资料";
-  }
-  if (model.ragReady === true) {
-    return " · 资料检索就绪";
-  }
-  if (model.ragReady === false && isIndexBuildingStatus(model.indexStatus)) {
-    return ` · 索引构建中${coverage ? ` ${coverage}` : ""}`;
-  }
-  if (model.ragReady === false) {
-    return " · 资料检索未就绪";
-  }
-  return "";
 }
 
 function CourseChatSidebar({
@@ -482,7 +434,7 @@ function CourseChatSidebar({
                           {model.name}
                           {model.modelId === activeModelCatalog.userSelectedModelId ? " (已选)" : ""}
                           {model.isDefault || model.modelId === activeModelCatalog.defaultModelId ? " (默认)" : ""}
-                          {getRagOptionSuffix(model)}
+                          {formatRagOptionSuffix(model)}
                           {!model.available && model.unavailableReason ? ` - ${model.unavailableReason}` : ""}
                         </option>
                       ))}
@@ -503,7 +455,7 @@ function CourseChatSidebar({
                   {selectedModel.embeddingDimension
                     ? ` · ${selectedModel.embeddingDimension} 维`
                     : ""}
-                  <span>{getRagStatusText(selectedModel)}</span>
+                  <span>{formatRagStatusText(selectedModel)}</span>
                 </small>
               ) : null}
               {activeModelCatalogError ? <small>{activeModelCatalogError}</small> : null}
@@ -523,7 +475,11 @@ function CourseChatSidebar({
                     ? "询问这个模块..."
                     : activeModelCatalogError
                       ? "模型目录不可用，暂时无法发送"
-                      : "正在准备可用模型..."
+                      : !activeModelCatalog
+                        ? "正在准备可用模型..."
+                        : selectedModel
+                          ? "当前模型暂不可用"
+                          : "当前没有可用模型"
                 }
                 disabled={isSending || !hasUsableSelectedModel}
               />

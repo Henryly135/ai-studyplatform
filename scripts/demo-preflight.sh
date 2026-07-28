@@ -3,7 +3,9 @@ set -euo pipefail
 
 BASE_URL="${DEMO_BASE_URL:-http://localhost:8080}"
 ACCESS_TOKEN="${DEMO_ACCESS_TOKEN:-}"
+ADMIN_ACCESS_TOKEN="${DEMO_ADMIN_ACCESS_TOKEN:-}"
 COURSE_UUID="${DEMO_COURSE_UUID:-}"
+MODULE_UUID="${DEMO_MODULE_UUID:-}"
 ATTEMPTS="${DEMO_PREFLIGHT_ATTEMPTS:-30}"
 INTERVAL_SECONDS="${DEMO_PREFLIGHT_INTERVAL_SECONDS:-2}"
 
@@ -17,12 +19,22 @@ for command_name in curl jq; do
 done
 
 if [ -z "$ACCESS_TOKEN" ]; then
-  echo "DEMO_ACCESS_TOKEN must contain an administrator access token"
+  echo "DEMO_ACCESS_TOKEN must contain an educator or learner access token with course access and AI_CHAT_USE"
+  exit 2
+fi
+
+if [ -z "$ADMIN_ACCESS_TOKEN" ]; then
+  echo "DEMO_ADMIN_ACCESS_TOKEN must contain an administrator access token with AI governance access"
   exit 2
 fi
 
 if [ -z "$COURSE_UUID" ]; then
   echo "DEMO_COURSE_UUID must contain the course UUID to verify RAG coverage"
+  exit 2
+fi
+
+if [ -z "$MODULE_UUID" ]; then
+  echo "DEMO_MODULE_UUID must contain an accessible published module UUID to verify RAG coverage"
   exit 2
 fi
 
@@ -45,13 +57,14 @@ wait_for_url "$BASE_URL/api/learning/health"
 wait_for_url "$BASE_URL/api/communication/health"
 wait_for_url "$BASE_URL/api/ai/health"
 
-AUTH_HEADER="Authorization: Bearer ${ACCESS_TOKEN}"
+COURSE_AUTH_HEADER="Authorization: Bearer ${ACCESS_TOKEN}"
+ADMIN_AUTH_HEADER="Authorization: Bearer ${ADMIN_ACCESS_TOKEN}"
 CATALOG_URL="$BASE_URL/api/ai/models"
 if [ "${DEMO_TRIGGER_BACKFILL:-false}" = "true" ]; then
   echo "Queuing multi-embedding backfill..."
   curl --fail --silent --show-error \
     -X POST \
-    -H "$AUTH_HEADER" \
+    -H "$ADMIN_AUTH_HEADER" \
     "$BASE_URL/api/ai/admin/telemetry/index-jobs/reindex-all" \
     >/dev/null
 fi
@@ -60,9 +73,10 @@ CATALOG_JSON=""
 for ((attempt = 1; attempt <= ATTEMPTS; attempt += 1)); do
   CATALOG_JSON="$(
     curl --fail --silent --show-error \
-      -H "$AUTH_HEADER" \
+      -H "$COURSE_AUTH_HEADER" \
       --get \
       --data-urlencode "courseUuid=${COURSE_UUID}" \
+      --data-urlencode "moduleUuid=${MODULE_UUID}" \
       "$CATALOG_URL"
   )"
   if echo "$CATALOG_JSON" | jq --exit-status '
@@ -83,7 +97,7 @@ for ((attempt = 1; attempt <= ATTEMPTS; attempt += 1)); do
     break
   fi
   if [ "$attempt" -eq "$ATTEMPTS" ]; then
-    echo "course multi-embedding coverage did not become ready"
+    echo "course module multi-embedding coverage did not become ready"
     exit 1
   fi
   sleep "$INTERVAL_SECONDS"
@@ -91,7 +105,7 @@ done
 
 PROVIDERS_JSON="$(
   curl --fail --silent --show-error \
-    -H "$AUTH_HEADER" \
+    -H "$ADMIN_AUTH_HEADER" \
     "$BASE_URL/api/ai/admin/ai/providers"
 )"
 

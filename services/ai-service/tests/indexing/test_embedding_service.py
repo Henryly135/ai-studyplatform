@@ -111,17 +111,17 @@ def test_embed_query_accepts_authoritative_embedding_model_id_directly() -> None
     service.invocation = SimpleNamespace(
         embed_text=lambda **kwargs: (
             calls.append(kwargs)
-            or _invocation_result("gemini:gemini-embedding-001")
+            or _invocation_result("gemini:gemini-embedding-2")
         )
     )
 
     result = service.embed_query(
         text="question",
-        embedding_model_id="gemini:gemini-embedding-001",
+        embedding_model_id="gemini:gemini-embedding-2",
     )
 
-    assert calls[0]["model_id"] == "gemini:gemini-embedding-001"
-    assert result.embedding_model_id == "gemini:gemini-embedding-001"
+    assert calls[0]["model_id"] == "gemini:gemini-embedding-2"
+    assert result.embedding_model_id == "gemini:gemini-embedding-2"
 
 
 def test_embed_query_maps_unavailable_pair_to_stable_api_error() -> None:

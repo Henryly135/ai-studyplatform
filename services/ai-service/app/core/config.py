@@ -38,7 +38,7 @@ class Settings:
     ai_chat_timeout_seconds: int = int(get_env("AI_CHAT_TIMEOUT_SECONDS", default="60"))
     ai_default_chat_model: str = get_env(
         "AI_DEFAULT_CHAT_MODEL",
-        default="gemini-2.5-flash-lite",
+        default="gemini-3.5-flash-lite",
     )
     ai_model_catalog_seed_enabled: bool = get_env("AI_MODEL_CATALOG_SEED_ENABLED", default="true").lower() == "true"
     ai_provider_key_encryption_secret: str = get_env("AI_PROVIDER_KEY_ENCRYPTION_SECRET", default="")
