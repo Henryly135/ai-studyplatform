@@ -34,6 +34,7 @@ const ADMIN_AI_PROVIDER_HEALTH_URL = "/api/ai/admin/telemetry/provider-health";
 const ADMIN_AI_GOVERNANCE_URL = "/api/ai/admin/telemetry/governance";
 const ADMIN_AI_TELEMETRY_FAILURES_URL = "/api/ai/admin/telemetry/failures";
 const ADMIN_AI_INDEX_JOB_RETRY_URL = "/api/ai/admin/telemetry/index-jobs";
+const SUPPORTED_AI_PROVIDERS = new Set(["gemini", "glm", "openrouter"]);
 
 function getAccessToken() {
   return getStoredAccessToken();
@@ -165,6 +166,42 @@ function toBoolean(value: unknown, fallback = false) {
   return fallback;
 }
 
+function toNullableBoolean(value: unknown) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return null;
+}
+
+function normalizeIndexCoverage(value: unknown) {
+  const parsed = toNullableFiniteNumber(value);
+  if (parsed === null) {
+    return null;
+  }
+
+  const ratio = parsed > 1 ? parsed / 100 : parsed;
+  return Math.min(1, Math.max(0, ratio));
+}
+
+function isSupportedAiProvider(provider: string) {
+  return SUPPORTED_AI_PROVIDERS.has(provider.trim().toLowerCase());
+}
+
 function getField(data: Record<string, unknown>, camelKey: string, snakeKey?: string) {
   return data[camelKey] ?? (snakeKey ? data[snakeKey] : undefined);
 }
@@ -179,6 +216,25 @@ function normalizeAiModelCatalogModel(
   const unavailableReason = toNullableString(
     getField(data, "unavailableReason", "unavailable_reason") ?? data.reason
   );
+  const pairedEmbeddingModel = asRecord(
+    getField(data, "pairedEmbeddingModel", "paired_embedding_model")
+  );
+  const pairedEmbeddingModelId = toNullableString(
+    getField(data, "pairedEmbeddingModelId", "paired_embedding_model_id") ??
+      getField(data, "embeddingModelId", "embedding_model_id") ??
+      getField(pairedEmbeddingModel, "modelId", "model_id") ??
+      pairedEmbeddingModel.id
+  );
+  const pairedEmbeddingModelName = toNullableString(
+    getField(data, "pairedEmbeddingModelName", "paired_embedding_model_name") ??
+      getField(pairedEmbeddingModel, "displayName", "display_name") ??
+      pairedEmbeddingModel.name
+  );
+  const embeddingDimension = toNullableNonNegativeNumber(
+    getField(data, "embeddingDimension", "embedding_dimension") ??
+      getField(pairedEmbeddingModel, "outputDimension", "output_dimension") ??
+      pairedEmbeddingModel.dimension
+  );
 
   return {
     modelId,
@@ -191,6 +247,21 @@ function normalizeAiModelCatalogModel(
     displayOnly: toBoolean(getField(data, "displayOnly", "display_only")),
     isDefault: toBoolean(getField(data, "isDefaultChat", "is_default_chat") ?? getField(data, "isDefault", "is_default")),
     capabilities: toStringList(data.capabilities),
+    pairedEmbeddingModelId,
+    pairedEmbeddingModelName,
+    embeddingDimension,
+    ragReady: toNullableBoolean(
+      getField(data, "ragReady", "rag_ready") ??
+        getField(pairedEmbeddingModel, "ragReady", "rag_ready")
+    ),
+    indexCoverage: normalizeIndexCoverage(
+      getField(data, "indexCoverage", "index_coverage") ??
+        getField(pairedEmbeddingModel, "indexCoverage", "index_coverage")
+    ),
+    indexStatus: toNullableString(
+      getField(data, "indexStatus", "index_status") ??
+        getField(pairedEmbeddingModel, "indexStatus", "index_status")
+    ),
   };
 }
 
@@ -211,38 +282,55 @@ function normalizeAiModelProvider(payload: unknown): AiModelCatalog["providers"]
 
 function normalizeAiModelCatalog(payload: unknown): AiModelCatalog {
   const data = asRecord(payload);
-  const providers = Array.isArray(data.providers) ? data.providers.map(normalizeAiModelProvider) : [];
+  const providers = Array.isArray(data.providers)
+    ? data.providers
+        .map(normalizeAiModelProvider)
+        .filter((provider) => isSupportedAiProvider(provider.provider))
+    : [];
   const rawModels = Array.isArray(data.items) ? data.items : Array.isArray(data.models) ? data.models : [];
 
   if (providers.length === 0 && rawModels.length > 0) {
     const groupedProviders = new Map<string, AiModelCatalog["providers"][number]>();
-    rawModels.map((model) => normalizeAiModelCatalogModel(model)).forEach((model) => {
-      const providerKey = model.provider || "default";
-      const currentProvider = groupedProviders.get(providerKey);
-      if (currentProvider) {
-        currentProvider.models.push(model);
-        currentProvider.configured = currentProvider.configured || model.available;
-        currentProvider.backendSupported = currentProvider.backendSupported || model.backendSupported;
-      } else {
-        groupedProviders.set(providerKey, {
-          provider: providerKey,
-          label: providerKey,
-          backendSupported: model.backendSupported,
-          configured: model.available,
-          models: [model],
-        });
-      }
-    });
+    rawModels
+      .map((model) => normalizeAiModelCatalogModel(model))
+      .filter((model) => isSupportedAiProvider(model.provider))
+      .forEach((model) => {
+        const providerKey = model.provider || "default";
+        const currentProvider = groupedProviders.get(providerKey);
+        if (currentProvider) {
+          currentProvider.models.push(model);
+          currentProvider.configured = currentProvider.configured || model.available;
+          currentProvider.backendSupported = currentProvider.backendSupported || model.backendSupported;
+        } else {
+          groupedProviders.set(providerKey, {
+            provider: providerKey,
+            label: providerKey,
+            backendSupported: model.backendSupported,
+            configured: model.available,
+            models: [model],
+          });
+        }
+      });
     providers.push(...groupedProviders.values());
   }
 
+  const knownModelIds = new Set(
+    providers.flatMap((provider) => provider.models.map((model) => model.modelId))
+  );
+  const defaultModelId = toNullableString(
+    getField(data, "defaultChatModelId", "default_chat_model_id") ??
+      getField(data, "defaultModelId", "default_model_id")
+  );
+  const userSelectedModelId = toNullableString(
+    getField(data, "userSelectedChatModelId", "user_selected_chat_model_id") ??
+      getField(data, "userSelectedModelId", "user_selected_model_id")
+  );
+
   return {
     generatedAt: String(getField(data, "generatedAt", "generated_at") ?? ""),
-    defaultModelId: toNullableString(getField(data, "defaultChatModelId", "default_chat_model_id") ?? getField(data, "defaultModelId", "default_model_id")),
-    userSelectedModelId: toNullableString(
-      getField(data, "userSelectedChatModelId", "user_selected_chat_model_id") ??
-        getField(data, "userSelectedModelId", "user_selected_model_id")
-    ),
+    defaultModelId: defaultModelId && knownModelIds.has(defaultModelId) ? defaultModelId : null,
+    userSelectedModelId:
+      userSelectedModelId && knownModelIds.has(userSelectedModelId) ? userSelectedModelId : null,
     providers,
   };
 }
@@ -599,8 +687,19 @@ export async function getChatSessionDetail(sessionUuid: string): Promise<ChatSes
   return parseResponse<ChatSessionDetail>(response);
 }
 
-export async function getAiModelCatalog(): Promise<AiModelCatalog> {
-  const response = await fetch(AI_MODELS_API_URL, {
+export async function getAiModelCatalog(context?: {
+  courseUuid?: string | null;
+  moduleUuid?: string | null;
+}): Promise<AiModelCatalog> {
+  const params = new URLSearchParams();
+  if (context?.courseUuid) {
+    params.set("courseUuid", context.courseUuid);
+  }
+  if (context?.moduleUuid) {
+    params.set("moduleUuid", context.moduleUuid);
+  }
+  const url = params.size > 0 ? `${AI_MODELS_API_URL}?${params.toString()}` : AI_MODELS_API_URL;
+  const response = await fetch(url, {
     headers: buildAuthHeaders(),
   });
 
@@ -737,7 +836,7 @@ export async function sendChatMessage(payload: {
   moduleUuid: string;
   message: string;
   sessionUuid?: string | null;
-  modelId?: string | null;
+  modelId: string;
 }) {
   getAccessToken();
   const requestBody: Record<string, unknown> = {
@@ -745,10 +844,8 @@ export async function sendChatMessage(payload: {
     course_uuid: payload.courseUuid,
     module_uuid: payload.moduleUuid,
     message: payload.message,
+    model_id: payload.modelId,
   };
-  if (payload.modelId) {
-    requestBody.model_id = payload.modelId;
-  }
 
   const response = await fetch(CHAT_API_URL, {
     method: "POST",

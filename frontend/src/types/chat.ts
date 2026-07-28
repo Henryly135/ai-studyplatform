@@ -46,6 +46,12 @@ export type AiModelCatalogModel = {
   displayOnly: boolean;
   isDefault: boolean;
   capabilities: string[];
+  pairedEmbeddingModelId: string | null;
+  pairedEmbeddingModelName: string | null;
+  embeddingDimension: number | null;
+  ragReady: boolean | null;
+  indexCoverage: number | null;
+  indexStatus: string | null;
 };
 
 export type AiModelCatalogProvider = {

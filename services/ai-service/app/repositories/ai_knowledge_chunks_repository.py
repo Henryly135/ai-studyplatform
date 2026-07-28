@@ -6,6 +6,10 @@ from collections.abc import Sequence
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.models.ai_knowledge_chunk_embeddings import (
+    MULTI_EMBEDDING_DIMENSION,
+    AIKnowledgeChunkEmbedding,
+)
 from app.models.ai_knowledge_chunks import AIKnowledgeChunk
 from app.models.ai_knowledge_sources import AIKnowledgeSource, AIPublishStatus, AIVisibilityScope
 from platform_common.errors import invalid_request_error
@@ -38,10 +42,18 @@ class ChunkCreate:
     visibility_scope: AIVisibilityScope
     publish_status: AIPublishStatus
     is_active: bool
-    embedding_model: str
-    embedding_version: str | None
-    embedding: list[float]
     metadata_json: dict | list | None
+    embedding_model: str | None = None
+    embedding_version: str | None = None
+    embedding: list[float] | None = None
+
+
+@dataclass(frozen=True)
+class ChunkEmbeddingCreate:
+    chunk_id: int
+    embedding_model_id: str
+    embedding_version: str
+    embedding: list[float]
 
 
 class AIKnowledgeChunksRepository:
@@ -74,6 +86,8 @@ class AIKnowledgeChunksRepository:
         self,
         *,
         query_embedding: list[float],
+        embedding_model_id: str,
+        embedding_version: str | None = None,
         course_id: int,
         module_id: int | None = None,
         top_k: int = 5,
@@ -84,18 +98,31 @@ class AIKnowledgeChunksRepository:
             raise invalid_request_error("course_id must be greater than 0")
         if top_k <= 0:
             raise invalid_request_error("top_k must be greater than 0")
+        if not embedding_model_id.strip():
+            raise invalid_request_error("embedding_model_id is required")
+        if len(query_embedding) != MULTI_EMBEDDING_DIMENSION:
+            raise invalid_request_error(
+                f"query_embedding must contain exactly {MULTI_EMBEDDING_DIMENSION} dimensions"
+            )
 
-        distance_expr = AIKnowledgeChunk.embedding.cosine_distance(query_embedding)
+        distance_expr = AIKnowledgeChunkEmbedding.embedding.cosine_distance(query_embedding)
         stmt = (
             select(AIKnowledgeChunk, distance_expr.label("distance"))
+            .join(
+                AIKnowledgeChunkEmbedding,
+                AIKnowledgeChunkEmbedding.chunk_id == AIKnowledgeChunk.chunk_id,
+            )
             .where(
                 AIKnowledgeChunk.course_id == course_id,
                 AIKnowledgeChunk.is_active.is_(True),
                 AIKnowledgeChunk.publish_status == AIPublishStatus.PUBLISHED,
+                AIKnowledgeChunkEmbedding.embedding_model_id == embedding_model_id,
             )
             .order_by(distance_expr.asc(), AIKnowledgeChunk.chunk_id.asc())
             .limit(top_k)
         )
+        if embedding_version is not None:
+            stmt = stmt.where(AIKnowledgeChunkEmbedding.embedding_version == embedding_version)
         if module_id is not None:
             stmt = stmt.where(AIKnowledgeChunk.module_id == module_id)
 
@@ -109,6 +136,8 @@ class AIKnowledgeChunksRepository:
         self,
         *,
         query_text: str,
+        embedding_model_id: str,
+        embedding_version: str,
         course_id: int,
         module_id: int | None = None,
         top_k: int = 5,
@@ -117,6 +146,10 @@ class AIKnowledgeChunksRepository:
             raise invalid_request_error("course_id must be greater than 0")
         if top_k <= 0:
             raise invalid_request_error("top_k must be greater than 0")
+        if not embedding_model_id.strip() or not embedding_version.strip():
+            raise invalid_request_error(
+                "embedding_model_id and embedding_version are required"
+            )
 
         normalized_query = _normalize_title_match_text(query_text)
         if not normalized_query:
@@ -125,10 +158,18 @@ class AIKnowledgeChunksRepository:
         stmt = (
             select(AIKnowledgeChunk, AIKnowledgeSource)
             .join(AIKnowledgeSource, AIKnowledgeSource.source_id == AIKnowledgeChunk.source_id)
+            .join(
+                AIKnowledgeChunkEmbedding,
+                AIKnowledgeChunkEmbedding.chunk_id == AIKnowledgeChunk.chunk_id,
+            )
             .where(
                 AIKnowledgeChunk.course_id == course_id,
                 AIKnowledgeChunk.is_active.is_(True),
                 AIKnowledgeChunk.publish_status == AIPublishStatus.PUBLISHED,
+                AIKnowledgeChunkEmbedding.embedding_model_id
+                == embedding_model_id,
+                AIKnowledgeChunkEmbedding.embedding_version
+                == embedding_version,
             )
             .order_by(AIKnowledgeChunk.chunk_index.asc(), AIKnowledgeChunk.chunk_id.asc())
         )
@@ -206,6 +247,53 @@ class AIKnowledgeChunksRepository:
         self.session.flush()
         return created_chunks
 
+    def create_many_embeddings(
+        self,
+        embeddings: Sequence[ChunkEmbeddingCreate],
+    ) -> list[AIKnowledgeChunkEmbedding]:
+        created_embeddings: list[AIKnowledgeChunkEmbedding] = []
+        for embedding_data in embeddings:
+            if embedding_data.chunk_id <= 0:
+                raise invalid_request_error("chunk_id must be greater than 0")
+            if not embedding_data.embedding_model_id.strip():
+                raise invalid_request_error("embedding_model_id is required")
+            if not embedding_data.embedding_version.strip():
+                raise invalid_request_error("embedding_version is required")
+            if len(embedding_data.embedding) != MULTI_EMBEDDING_DIMENSION:
+                raise invalid_request_error(
+                    f"embedding must contain exactly {MULTI_EMBEDDING_DIMENSION} dimensions"
+                )
+
+            row = AIKnowledgeChunkEmbedding(
+                chunk_id=embedding_data.chunk_id,
+                embedding_model_id=embedding_data.embedding_model_id,
+                embedding_version=embedding_data.embedding_version,
+                embedding_dimension=MULTI_EMBEDDING_DIMENSION,
+                embedding=embedding_data.embedding,
+            )
+            self.session.add(row)
+            created_embeddings.append(row)
+
+        self.session.flush()
+        return created_embeddings
+
+    def delete_embeddings_by_source_and_model(
+        self,
+        *,
+        source_id: int,
+        embedding_model_id: str,
+    ) -> int:
+        chunk_ids = select(AIKnowledgeChunk.chunk_id).where(
+            AIKnowledgeChunk.source_id == source_id
+        )
+        stmt = delete(AIKnowledgeChunkEmbedding).where(
+            AIKnowledgeChunkEmbedding.chunk_id.in_(chunk_ids),
+            AIKnowledgeChunkEmbedding.embedding_model_id == embedding_model_id,
+        )
+        result = self.session.execute(stmt)
+        self.session.flush()
+        return int(result.rowcount or 0)
+
     def update(
         self,
         chunk: AIKnowledgeChunk,
@@ -220,9 +308,9 @@ class AIKnowledgeChunksRepository:
         visibility_scope: AIVisibilityScope,
         publish_status: AIPublishStatus,
         is_active: bool,
-        embedding_model: str,
+        embedding_model: str | None,
         embedding_version: str | None,
-        embedding: list[float],
+        embedding: list[float] | None,
         metadata_json: dict | list | None,
     ) -> AIKnowledgeChunk:
         chunk.chunk_text = chunk_text

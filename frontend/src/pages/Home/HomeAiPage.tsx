@@ -47,6 +47,7 @@ import type {
   AdminAiTelemetrySummary,
   AdminAiTelemetryTrendPoint,
   AiModelCatalog,
+  AiModelCatalogModel,
   AiRuntimeHealth,
   ChatSessionDetail,
   ChatSessionSummary,
@@ -157,6 +158,26 @@ function formatPercent(value: number | null | undefined) {
     return "0%";
   }
   return `${Math.round(value)}%`;
+}
+
+function formatEmbeddingPair(model: AiModelCatalogModel | null) {
+  if (!model) {
+    return "尚未选择生成模型";
+  }
+
+  const embeddingName =
+    model.pairedEmbeddingModelName || model.pairedEmbeddingModelId || "配对向量模型待目录同步";
+  const dimension = model.embeddingDimension ? ` · ${model.embeddingDimension} 维` : "";
+  const coverage =
+    model.indexCoverage === null ? "" : ` · 索引覆盖 ${Math.round(model.indexCoverage * 100)}%`;
+
+  if (model.ragReady === true) {
+    return `${embeddingName}${dimension} · 资料检索就绪${coverage}`;
+  }
+  if (model.ragReady === false) {
+    return `${embeddingName}${dimension} · 资料检索尚未就绪${coverage}`;
+  }
+  return `${embeddingName}${dimension} · 资料检索状态待确认`;
 }
 
 function formatLatency(value: number | null | undefined) {
@@ -734,8 +755,14 @@ function HomeAiPage() {
           modelId: model.modelId,
           name: model.name,
           isDefault: model.isDefault || model.modelId === modelCatalog.defaultModelId,
+          pairedEmbeddingModelId: model.pairedEmbeddingModelId,
+          pairedEmbeddingModelName: model.pairedEmbeddingModelName,
         }))
     ) ?? [];
+  const selectedDefaultModel =
+    modelCatalog?.providers
+      .flatMap((provider) => provider.models)
+      .find((model) => model.modelId === selectedDefaultModelId) ?? null;
   const credentialByProvider = new Map(roleDashboard.aiProviderCredentials.map((item) => [item.provider, item]));
   const providerCredentialEntries =
     modelCatalog?.providers.map((provider) => {
@@ -800,7 +827,6 @@ function HomeAiPage() {
       provider_adapter: "供应商适配器",
       multi_provider: "多供应商",
       gemini: "Gemini",
-      deepseek: "DeepSeek",
       glm: "GLM",
       openrouter: "OpenRouter",
     };
@@ -868,12 +894,27 @@ function HomeAiPage() {
     setCredentialDrafts((current) => ({ ...current, [provider]: value }));
   }
 
-  async function refreshProviderCredentials() {
-    const response = await listAdminAiProviderCredentials("");
+  async function refreshProviderConfiguration() {
+    const [credentialsResponse, catalog] = await Promise.all([
+      listAdminAiProviderCredentials(""),
+      getAiModelCatalog(),
+    ]);
     setRoleDashboard((current) => ({
       ...current,
-      aiProviderCredentials: response.credentials,
+      aiProviderCredentials: credentialsResponse.credentials,
+      aiModelCatalog: catalog,
     }));
+    const availableModels = catalog.providers.flatMap((provider) =>
+      provider.models.filter((model) => model.available && model.capabilities.includes("chat"))
+    );
+    setSelectedDefaultModelId((current) =>
+      availableModels.some((model) => model.modelId === current)
+        ? current
+        : catalog.defaultModelId ??
+          availableModels.find((model) => model.isDefault)?.modelId ??
+          availableModels[0]?.modelId ??
+          ""
+    );
   }
 
   async function handleSaveProviderCredential(provider: string) {
@@ -894,13 +935,7 @@ function HomeAiPage() {
         defaultModelId: selectedDefaultModelId || null,
       });
       setCredentialDrafts((current) => ({ ...current, [provider]: "" }));
-      setRoleDashboard((current) => ({
-        ...current,
-        aiProviderCredentials: [
-          ...current.aiProviderCredentials.filter((item) => item.provider !== credential.provider),
-          credential,
-        ],
-      }));
+      await refreshProviderConfiguration();
       setCredentialActionNotice(`${credential.label || credential.provider} 密钥已保存。`);
     } catch (error) {
       setCredentialActionError(error instanceof Error ? error.message : "保存供应商密钥失败。");
@@ -916,7 +951,7 @@ function HomeAiPage() {
     setCredentialActionNotice(null);
     try {
       await deleteAdminAiProviderCredential("", provider);
-      await refreshProviderCredentials();
+      await refreshProviderConfiguration();
       setCredentialActionNotice(`${formatTelemetryKind(provider)} 密钥已删除。`);
     } catch (error) {
       setCredentialActionError(error instanceof Error ? error.message : "删除供应商密钥失败。");
@@ -932,7 +967,7 @@ function HomeAiPage() {
     setCredentialActionNotice(null);
     try {
       const result = await checkAdminAiProviderCredentialHealth("", provider);
-      await refreshProviderCredentials();
+      await refreshProviderConfiguration();
       setCredentialActionNotice(
         `${formatTelemetryKind(provider)} 健康检查：${formatTelemetryKind(result.status)}${
           result.message ? ` · ${result.message}` : ""
@@ -952,25 +987,8 @@ function HomeAiPage() {
     setCredentialActionNotice(null);
     try {
       const response = await setAdminAiDefaultModel("", { modelId: selectedDefaultModelId });
+      await refreshProviderConfiguration();
       setCredentialActionNotice(`默认模型已设置为 ${response.modelId}。`);
-      setRoleDashboard((current) =>
-        current.aiModelCatalog
-          ? {
-              ...current,
-              aiModelCatalog: {
-                ...current.aiModelCatalog,
-                defaultModelId: response.modelId,
-                providers: current.aiModelCatalog.providers.map((provider) => ({
-                  ...provider,
-                  models: provider.models.map((model) => ({
-                    ...model,
-                    isDefault: model.modelId === response.modelId,
-                  })),
-                })),
-              },
-            }
-          : current
-      );
     } catch (error) {
       setCredentialActionError(error instanceof Error ? error.message : "设置默认模型失败。");
     } finally {
@@ -1265,10 +1283,24 @@ function HomeAiPage() {
                         {availableDefaultModelOptions.map((model) => (
                           <option key={model.modelId} value={model.modelId}>
                             {model.providerLabel}: {model.name}
+                            {model.pairedEmbeddingModelName || model.pairedEmbeddingModelId
+                              ? ` → ${
+                                  model.pairedEmbeddingModelName || model.pairedEmbeddingModelId
+                                }`
+                              : ""}
                             {model.isDefault ? " (当前)" : ""}
                           </option>
                         ))}
                       </select>
+                      <small
+                        className={`home-ai-default-model-pair${
+                          selectedDefaultModel?.ragReady === false
+                            ? " home-ai-default-model-pair-warning"
+                            : ""
+                        }`}
+                      >
+                        配对向量：{formatEmbeddingPair(selectedDefaultModel)}
+                      </small>
                     </label>
                     <button
                       type="button"

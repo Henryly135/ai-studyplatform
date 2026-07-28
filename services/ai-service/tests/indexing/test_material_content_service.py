@@ -66,3 +66,21 @@ def test_read_minio_bytes_closes_response(monkeypatch) -> None:
 def test_decode_text_falls_back_to_latin1() -> None:
     # Tests text decoding falls back to latin-1 when UTF-8 fails.
     assert MaterialContentService()._decode_text(b"caf\xe9") == "caf\xe9"
+
+
+def test_extract_text_normalizes_cross_platform_line_endings(tmp_path) -> None:
+    material_path = tmp_path / "lesson.txt"
+    material_path.write_bytes(b"first\r\nsecond\rthird")
+
+    result = MaterialContentService().extract_text(
+        request=MaterialContentRequest(
+            title="Lesson",
+            content_type="text/plain",
+            storage_provider="local",
+            absolute_path=str(material_path),
+            storage_bucket=None,
+            object_key="lesson.txt",
+        )
+    )
+
+    assert result.content_text == "first\nsecond\nthird"

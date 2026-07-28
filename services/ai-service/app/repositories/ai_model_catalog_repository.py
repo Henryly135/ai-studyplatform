@@ -84,6 +84,7 @@ class AIModelCatalogRepository:
         supports_rag_answer: bool,
         supports_rag_indexing: bool,
         embedding_dimension: int | None,
+        paired_embedding_model_id: str | None,
         display_order: int,
         unavailable_reason: str | None,
     ) -> AIModelCatalog:
@@ -102,6 +103,7 @@ class AIModelCatalogRepository:
         model.supports_rag_answer = supports_rag_answer
         model.supports_rag_indexing = supports_rag_indexing
         model.embedding_dimension = embedding_dimension
+        model.paired_embedding_model_id = paired_embedding_model_id
         model.display_order = display_order
         model.unavailable_reason = unavailable_reason
         self.session.flush()

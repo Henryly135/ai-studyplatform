@@ -6,6 +6,7 @@ from langchain_core.runnables import RunnableLambda, RunnableSerializable
 from sqlalchemy.orm import Session
 
 from app.services.chat.rag_retrieval_service import RagRetrievalService, RetrievalResult
+from app.services.retrieval_readiness_service import RetrievalPurpose
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,9 @@ class CustomPgvectorRetrieverInput:
     session_id: int | None
     message_id: int | None
     top_k: int
+    chat_model_id: str | None = None
+    model_user_id: int | None = None
+    readiness_purpose: RetrievalPurpose = "chat"
 
 
 class CustomPgvectorRetriever:
@@ -32,6 +36,9 @@ class CustomPgvectorRetriever:
             session_id=payload.session_id,
             message_id=payload.message_id,
             top_k=payload.top_k,
+            chat_model_id=payload.chat_model_id,
+            model_user_id=payload.model_user_id,
+            readiness_purpose=payload.readiness_purpose,
         )
 
     def as_runnable(self) -> RunnableSerializable[dict[str, object], RetrievalResult]:
@@ -47,5 +54,18 @@ class CustomPgvectorRetriever:
                 session_id=int(payload["session_id"]) if payload.get("session_id") is not None else None,
                 message_id=int(payload["message_id"]) if payload.get("message_id") is not None else None,
                 top_k=int(payload.get("top_k", 5)),
+                chat_model_id=(
+                    str(payload["chat_model_id"])
+                    if payload.get("chat_model_id") is not None
+                    else None
+                ),
+                model_user_id=(
+                    int(payload["model_user_id"])
+                    if payload.get("model_user_id") is not None
+                    else None
+                ),
+                readiness_purpose=str(
+                    payload.get("readiness_purpose", "chat")
+                ),
             )
         )

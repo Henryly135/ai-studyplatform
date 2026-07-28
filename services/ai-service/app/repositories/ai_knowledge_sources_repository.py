@@ -54,6 +54,20 @@ class AIKnowledgeSourcesRepository:
         )
         return list(self.session.scalars(stmt))
 
+    def list_material_sources(self) -> list[AIKnowledgeSource]:
+        stmt = (
+            select(AIKnowledgeSource)
+            .where(
+                AIKnowledgeSource.source_type == AIKnowledgeSourceType.MATERIAL,
+                AIKnowledgeSource.material_id.is_not(None),
+            )
+            .order_by(
+                AIKnowledgeSource.updated_at.asc(),
+                AIKnowledgeSource.source_id.asc(),
+            )
+        )
+        return list(self.session.scalars(stmt))
+
     def create(
         self,
         *,

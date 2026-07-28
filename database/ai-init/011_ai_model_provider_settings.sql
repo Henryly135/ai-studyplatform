@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS ai_model_catalog (
     supports_rag_answer BOOLEAN NOT NULL DEFAULT FALSE,
     supports_rag_indexing BOOLEAN NOT NULL DEFAULT FALSE,
     embedding_dimension INTEGER NULL,
+    paired_embedding_model_id VARCHAR(120) NULL,
     is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     display_order INTEGER NOT NULL DEFAULT 100,
     unavailable_reason TEXT NULL,
@@ -29,6 +30,9 @@ CREATE TABLE IF NOT EXISTS ai_model_catalog (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_ai_model_catalog_provider_model UNIQUE (provider_key, model_name)
 );
+
+ALTER TABLE ai_model_catalog
+    ADD COLUMN IF NOT EXISTS paired_embedding_model_id VARCHAR(120) NULL;
 
 CREATE TABLE IF NOT EXISTS ai_provider_credentials (
     provider_key VARCHAR(50) PRIMARY KEY REFERENCES ai_model_providers(provider_key) ON DELETE CASCADE,
@@ -60,9 +64,8 @@ INSERT INTO ai_model_providers
     (provider_key, display_name, adapter_type, default_base_url, backend_supported, display_order)
 VALUES
     ('gemini', 'Gemini', 'gemini', NULL, TRUE, 10),
-    ('deepseek', 'DeepSeek', 'openai_compatible', 'https://api.deepseek.com', TRUE, 20),
-    ('glm', 'GLM', 'openai_compatible', 'https://open.bigmodel.cn/api/paas/v4', TRUE, 30),
-    ('openrouter', 'OpenRouter', 'openai_compatible', 'https://openrouter.ai/api/v1', TRUE, 40)
+    ('glm', 'GLM', 'openai_compatible', 'https://open.bigmodel.cn/api/paas/v4', TRUE, 20),
+    ('openrouter', 'OpenRouter', 'openai_compatible', 'https://openrouter.ai/api/v1', TRUE, 30)
 ON CONFLICT (provider_key) DO UPDATE SET
     display_name = EXCLUDED.display_name,
     adapter_type = EXCLUDED.adapter_type,
@@ -75,18 +78,19 @@ INSERT INTO ai_model_catalog
     (
         model_id, provider_key, model_name, display_name, backend_supported, display_only,
         supports_chat, supports_json, supports_embedding, supports_rag_answer, supports_rag_indexing,
-        embedding_dimension, display_order, unavailable_reason
+        embedding_dimension, paired_embedding_model_id, display_order, unavailable_reason
     )
 VALUES
-    ('gemini:gemini-2.5-flash-lite', 'gemini', 'gemini-2.5-flash-lite', 'Gemini 2.5 Flash Lite', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 10, NULL),
-    ('gemini:gemini-2.5-flash', 'gemini', 'gemini-2.5-flash', 'Gemini 2.5 Flash', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 11, NULL),
-    ('gemini:gemini-2.5-pro', 'gemini', 'gemini-2.5-pro', 'Gemini 2.5 Pro', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 12, NULL),
-    ('gemini:gemini-embedding-001', 'gemini', 'gemini-embedding-001', 'Gemini Embedding 001', TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, TRUE, 1536, 19, NULL),
-    ('deepseek:deepseek-v4-flash', 'deepseek', 'deepseek-v4-flash', 'DeepSeek V4 Flash', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 20, NULL),
-    ('glm:glm-4.5-air', 'glm', 'glm-4.5-air', 'GLM 4.5 Air', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 30, NULL),
-    ('glm:glm-4.7', 'glm', 'glm-4.7', 'GLM 4.7', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 31, NULL),
-    ('openrouter:openrouter/auto', 'openrouter', 'openrouter/auto', 'OpenRouter Auto', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 40, NULL),
-    ('openrouter:google/gemini-2.5-flash', 'openrouter', 'google/gemini-2.5-flash', 'Gemini 2.5 Flash via OpenRouter', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 41, NULL)
+    ('gemini:gemini-2.5-flash-lite', 'gemini', 'gemini-2.5-flash-lite', 'Gemini 2.5 Flash Lite', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'gemini:gemini-embedding-001', 10, NULL),
+    ('gemini:gemini-2.5-flash', 'gemini', 'gemini-2.5-flash', 'Gemini 2.5 Flash', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'gemini:gemini-embedding-001', 11, NULL),
+    ('gemini:gemini-2.5-pro', 'gemini', 'gemini-2.5-pro', 'Gemini 2.5 Pro', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'gemini:gemini-embedding-001', 12, NULL),
+    ('gemini:gemini-embedding-001', 'gemini', 'gemini-embedding-001', 'Gemini Embedding 001', TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, TRUE, 1024, NULL, 19, NULL),
+    ('glm:glm-4.5-air', 'glm', 'glm-4.5-air', 'GLM 4.5 Air', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'glm:embedding-3', 20, NULL),
+    ('glm:glm-4.7', 'glm', 'glm-4.7', 'GLM 4.7', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'glm:embedding-3', 21, NULL),
+    ('glm:embedding-3', 'glm', 'embedding-3', 'GLM Embedding-3', TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, TRUE, 1024, NULL, 29, NULL),
+    ('openrouter:openrouter/auto', 'openrouter', 'openrouter/auto', 'OpenRouter Auto', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'openrouter:openai/text-embedding-3-small', 30, NULL),
+    ('openrouter:google/gemini-2.5-flash', 'openrouter', 'google/gemini-2.5-flash', 'Gemini 2.5 Flash via OpenRouter', TRUE, FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, NULL, 'openrouter:openai/text-embedding-3-small', 31, NULL),
+    ('openrouter:openai/text-embedding-3-small', 'openrouter', 'openai/text-embedding-3-small', 'OpenAI Text Embedding 3 Small via OpenRouter', TRUE, FALSE, FALSE, FALSE, TRUE, FALSE, TRUE, 1024, NULL, 39, NULL)
 ON CONFLICT (model_id) DO UPDATE SET
     provider_key = EXCLUDED.provider_key,
     model_name = EXCLUDED.model_name,
@@ -99,6 +103,7 @@ ON CONFLICT (model_id) DO UPDATE SET
     supports_rag_answer = EXCLUDED.supports_rag_answer,
     supports_rag_indexing = EXCLUDED.supports_rag_indexing,
     embedding_dimension = EXCLUDED.embedding_dimension,
+    paired_embedding_model_id = EXCLUDED.paired_embedding_model_id,
     display_order = EXCLUDED.display_order,
     unavailable_reason = EXCLUDED.unavailable_reason,
     updated_at = CURRENT_TIMESTAMP;
@@ -107,5 +112,44 @@ INSERT INTO ai_model_defaults (scope_key, default_chat_model_id, default_embeddi
 VALUES ('global', 'gemini:gemini-2.5-flash-lite', 'gemini:gemini-embedding-001')
 ON CONFLICT (scope_key) DO NOTHING;
 
+UPDATE ai_model_defaults AS defaults
+SET default_chat_model_id = 'gemini:gemini-2.5-flash-lite',
+    default_embedding_model_id = 'gemini:gemini-embedding-001',
+    updated_at = CURRENT_TIMESTAMP
+WHERE defaults.default_chat_model_id LIKE 'deepseek:%';
+
+DELETE FROM ai_user_model_preferences
+WHERE chat_model_id LIKE 'deepseek:%';
+
+DELETE FROM ai_model_providers
+WHERE provider_key = 'deepseek';
+
+UPDATE ai_model_defaults AS defaults
+SET default_embedding_model_id = catalog.paired_embedding_model_id,
+    updated_at = CURRENT_TIMESTAMP
+FROM ai_model_catalog AS catalog
+WHERE catalog.model_id = defaults.default_chat_model_id
+  AND catalog.paired_embedding_model_id IS NOT NULL
+  AND defaults.default_embedding_model_id IS DISTINCT FROM catalog.paired_embedding_model_id;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'fk_ai_model_catalog_paired_embedding_model'
+          AND conrelid = 'ai_model_catalog'::regclass
+    ) THEN
+        ALTER TABLE ai_model_catalog
+            ADD CONSTRAINT fk_ai_model_catalog_paired_embedding_model
+            FOREIGN KEY (paired_embedding_model_id)
+            REFERENCES ai_model_catalog(model_id)
+            ON DELETE SET NULL;
+    END IF;
+END
+$$;
+
 CREATE INDEX IF NOT EXISTS idx_ai_model_catalog_provider_key ON ai_model_catalog (provider_key);
 CREATE INDEX IF NOT EXISTS idx_ai_model_catalog_display_order ON ai_model_catalog (display_order);
+CREATE INDEX IF NOT EXISTS idx_ai_model_catalog_paired_embedding_model_id
+    ON ai_model_catalog (paired_embedding_model_id);

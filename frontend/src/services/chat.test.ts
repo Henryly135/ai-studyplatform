@@ -384,26 +384,32 @@ describe("admin AI provider health normalization", () => {
       .mockResolvedValueOnce(
         mockJsonResponse({
           generated_at: "2026-07-02T00:00:00Z",
-          default_model_id: "deepseek:deepseek-v4-flash",
-          user_selected_chat_model_id: "glm:glm-4.5-air",
+          default_model_id: "glm:glm-4.7",
+          user_selected_chat_model_id: "glm:glm-4.7",
           providers: [
             {
-              provider: "deepseek",
-              label: "DeepSeek",
+              provider: "glm",
+              label: "GLM",
               backend_supported: true,
               has_credential: "true",
               models: [
                 {
-                  model_id: "deepseek:deepseek-v4-flash",
-                  display_name: "DeepSeek V4 Flash",
+                  model_id: "glm:glm-4.7",
+                  display_name: "GLM 4.7",
                   available: true,
                   is_default: true,
                   backend_supported: true,
                   capabilities: ["chat", 123],
+                  paired_embedding_model_id: "glm:embedding-3",
+                  paired_embedding_model_name: "GLM Embedding-3",
+                  embedding_dimension: "1024",
+                  rag_ready: "false",
+                  index_coverage: "72",
+                  index_status: "indexing",
                 },
                 {
-                  model_id: "deepseek:embedding",
-                  display_name: "DeepSeek Embedding",
+                  model_id: "glm:embedding-3",
+                  display_name: "GLM Embedding-3",
                   unavailable_reason: "Missing key",
                   capabilities: { embedding: true, chat: false },
                 },
@@ -427,22 +433,46 @@ describe("admin AI provider health normalization", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const catalog = await getAiModelCatalog();
-    const flatCatalog = await getAiModelCatalog();
+    const flatCatalog = await getAiModelCatalog({
+      courseUuid: "course-1",
+      moduleUuid: "module-1",
+    });
 
-    expect(catalog.defaultModelId).toBe("deepseek:deepseek-v4-flash");
-    expect(catalog.userSelectedModelId).toBe("glm:glm-4.5-air");
+    expect(catalog.defaultModelId).toBe("glm:glm-4.7");
+    expect(catalog.userSelectedModelId).toBe("glm:glm-4.7");
     expect(catalog.providers[0].backendSupported).toBe(true);
     expect(catalog.providers[0].configured).toBe(true);
-    expect(catalog.providers[0].models[0].name).toBe("DeepSeek V4 Flash");
+    expect(catalog.providers[0].models[0].name).toBe("GLM 4.7");
     expect(catalog.providers[0].models[0].capabilities).toEqual(["chat", "123"]);
+    expect(catalog.providers[0].models[0]).toMatchObject({
+      pairedEmbeddingModelId: "glm:embedding-3",
+      pairedEmbeddingModelName: "GLM Embedding-3",
+      embeddingDimension: 1024,
+      ragReady: false,
+      indexCoverage: 0.72,
+      indexStatus: "indexing",
+    });
     expect(catalog.providers[0].models[1].available).toBe(false);
     expect(catalog.providers[0].models[1].unavailableReason).toBe("Missing key");
     expect(catalog.providers[0].models[1].capabilities).toEqual(["embedding"]);
     expect(flatCatalog.providers[0].provider).toBe("gemini");
     expect(flatCatalog.providers[0].models[0].modelId).toBe("gemini:flash");
+    expect(flatCatalog.providers[0].models[0]).toMatchObject({
+      pairedEmbeddingModelId: null,
+      pairedEmbeddingModelName: null,
+      embeddingDimension: null,
+      ragReady: null,
+      indexCoverage: null,
+      indexStatus: null,
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/ai/models?courseUuid=course-1&moduleUuid=module-1",
+      expect.any(Object)
+    );
   });
 
-  it("sends optional model_id with chat messages", async () => {
+  it("always sends the selected model_id with chat messages", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       mockJsonResponse({
         success: true,
@@ -460,7 +490,7 @@ describe("admin AI provider health normalization", () => {
       courseUuid: "course-1",
       moduleUuid: "module-1",
       message: "Hi",
-      modelId: "deepseek:deepseek-v4-flash",
+      modelId: "glm:glm-4.7",
     });
 
     expect(result.reply).toBe("Hello");
@@ -473,7 +503,7 @@ describe("admin AI provider health normalization", () => {
           course_uuid: "course-1",
           module_uuid: "module-1",
           message: "Hi",
-          model_id: "deepseek:deepseek-v4-flash",
+          model_id: "glm:glm-4.7",
         }),
       })
     );

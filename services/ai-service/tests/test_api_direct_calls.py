@@ -8,6 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api import admin_telemetry as admin_telemetry_api
+from app.api import ai_models as ai_models_api
 from app.api import chat as chat_api
 from app.api import demo as demo_api
 from app.api import internal_index_jobs as index_api
@@ -61,6 +62,68 @@ class RollbackSession:
         self.rollback_calls += 1
 
 
+def test_ai_model_catalog_scope_rechecks_course_access(monkeypatch) -> None:
+    access_calls = []
+    catalog_calls = []
+    monkeypatch.setattr(ai_models_api, "decode_course_uuid", lambda value: 11)
+    monkeypatch.setattr(ai_models_api, "decode_module_uuid", lambda value: 22)
+    monkeypatch.setattr(
+        ai_models_api,
+        "LearningContextAccessClient",
+        lambda: SimpleNamespace(
+            ensure_chat_context_access=lambda **kwargs: access_calls.append(
+                kwargs
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        ai_models_api,
+        "AIModelCatalogService",
+        lambda _db: SimpleNamespace(
+            list_model_status=lambda **kwargs: (
+                catalog_calls.append(kwargs)
+                or {
+                    "defaultChatModelId": None,
+                    "defaultEmbeddingModelId": None,
+                    "userSelectedChatModelId": None,
+                    "items": [],
+                }
+            )
+        ),
+    )
+
+    response = ai_models_api.list_ai_models(
+        courseUuid="course-uuid",
+        moduleUuid="module-uuid",
+        current_user={"id": 7, "identity": "Learner"},
+        db=object(),
+    )
+
+    assert response.items == []
+    assert access_calls == [
+        {
+            "course_uuid": "course-uuid",
+            "module_uuid": "module-uuid",
+            "current_user": {"id": 7, "identity": "Learner"},
+        }
+    ]
+    assert catalog_calls == [
+        {"user_id": 7, "course_id": 11, "module_id": 22}
+    ]
+
+
+def test_ai_model_catalog_rejects_module_scope_without_course() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        ai_models_api.list_ai_models(
+            courseUuid=None,
+            moduleUuid="module-uuid",
+            current_user={"id": 7, "identity": "Learner"},
+            db=object(),
+        )
+
+    assert exc_info.value.status_code == 400
+
+
 def _run(status: str = "queued") -> dict:
     return {
         "runId": "run-1",
@@ -105,6 +168,11 @@ def _authoring_generation_response() -> QuizGenerationRunResponse:
             topK=5,
             chunkCount=0,
             chunks=[],
+            chatModelId="glm:glm-4.7",
+            embeddingModelId="glm:embedding-3",
+            embeddingVersion="glm:embedding-3@1024",
+            indexStatus="ready",
+            indexCoverage=1.0,
         ),
         plan=QuizGenerationPlanRead(
             titleSuggestion="Draft Quiz",
@@ -612,11 +680,6 @@ def test_admin_ai_provider_config_service_redacts_secret_values(monkeypatch) -> 
     monkeypatch.setattr(
         "app.services.admin_telemetry_service.settings",
         SimpleNamespace(
-            gemini_api_key="super-secret-gemini-key",
-            ai_demo_model_name="gemini-2.5-flash",
-            ai_embedding_provider="gemini",
-            ai_embedding_model="gemini-embedding-001",
-            ai_embedding_output_dimension=1536,
             ai_embedding_dimension=1536,
             ai_retrieval_top_k=5,
             ai_retrieval_min_score=0.45,
@@ -638,7 +701,9 @@ def test_admin_ai_provider_config_service_redacts_secret_values(monkeypatch) -> 
     response = AdminAITelemetryService(object()).get_provider_config_status()
     serialized = response.model_dump_json().lower()
 
-    assert response.overallStatus == "ready"
+    assert response.overallStatus == "blocked"
+    assert response.embeddingProvider == "unconfigured"
+    assert response.embeddingModel == "unconfigured"
     assert "super-secret" not in serialized
     assert "internal-token-secret" not in serialized
     assert "public-id-secret" not in serialized
@@ -788,25 +853,59 @@ def test_admin_ai_telemetry_error_summary_redacts_secrets() -> None:
 
 
 def test_demo_health_reports_configured_provider(monkeypatch) -> None:
-    # Tests demo health returns provider metadata when Gemini is configured.
-    monkeypatch.setattr("app.api.demo.settings", SimpleNamespace(gemini_api_key="key", ai_demo_model_name="model"))
+    # Tests demo health returns the configured default from the shared model catalog.
+    class FakeCatalog:
+        def ensure_seeded(self) -> None:
+            return None
 
-    response = demo_api.demo_health()
+        def list_model_status(self) -> dict:
+            return {
+                "defaultChatModelId": "glm:glm-4.7",
+                "items": [
+                    {
+                        "modelId": "glm:glm-4.7",
+                        "provider": "glm",
+                        "modelName": "glm-4.7",
+                        "available": True,
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(demo_api, "AIModelCatalogService", lambda _: FakeCatalog())
+
+    response = demo_api.demo_health(db=object())
 
     assert response.status == "ok"
-    assert response.provider == "gemini"
+    assert response.provider == "glm"
+    assert response.model == "glm-4.7"
 
 
-def test_demo_health_rejects_missing_api_key(monkeypatch) -> None:
-    # Tests demo health returns service unavailable when Gemini key is absent.
-    monkeypatch.setattr("app.api.demo.settings", SimpleNamespace(gemini_api_key="", ai_demo_model_name="model"))
+def test_demo_health_rejects_unavailable_default_model(monkeypatch) -> None:
+    # Tests demo health is blocked when the catalog default has no usable credential.
+    class FakeCatalog:
+        def ensure_seeded(self) -> None:
+            return None
+
+        def list_model_status(self) -> dict:
+            return {
+                "defaultChatModelId": "gemini:gemini-2.5-flash-lite",
+                "items": [
+                    {
+                        "modelId": "gemini:gemini-2.5-flash-lite",
+                        "provider": "gemini",
+                        "modelName": "gemini-2.5-flash-lite",
+                        "available": False,
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(demo_api, "AIModelCatalogService", lambda _: FakeCatalog())
 
     with pytest.raises(HTTPException) as exc_info:
-        demo_api.demo_health()
+        demo_api.demo_health(db=object())
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == "AI provider is temporarily unavailable."
-    assert "GEMINI_API_KEY" not in exc_info.value.detail
 
 
 def test_demo_chat_trims_message_and_maps_success(monkeypatch) -> None:
@@ -850,7 +949,7 @@ def test_demo_chat_rejects_blank_message() -> None:
 @pytest.mark.parametrize(
     ("exc", "status_code", "detail"),
     [
-        (demo_api.AIChatConfigurationError("GEMINI_API_KEY is not configured"), 503, "AI provider is temporarily unavailable."),
+        (demo_api.AIChatConfigurationError("Provider credential is not configured"), 503, "AI provider is temporarily unavailable."),
         (demo_api.AIChatQuotaError("quota api_key=abc123"), 429, "AI provider quota is temporarily unavailable. Please retry later."),
         (demo_api.AIChatSessionError("bad session private detail"), 400, "Chat session is invalid."),
         (RuntimeError("boom"), 500, "AI provider call failed."),
@@ -917,7 +1016,7 @@ def test_authenticated_chat_success_and_error_mapping(monkeypatch) -> None:
     ("exc", "status_code", "code", "message"),
     [
         (
-            chat_api.AIChatConfigurationError("GEMINI_API_KEY is not configured"),
+            chat_api.AIChatConfigurationError("Provider credential is not configured"),
             503,
             "AI_NOT_CONFIGURED",
             "AI provider is temporarily unavailable.",
@@ -950,7 +1049,7 @@ def test_authenticated_chat_redacts_service_error_details(monkeypatch, exc, stat
 
     assert exc_info.value.status_code == status_code
     assert exc_info.value.detail == {"code": code, "message": message}
-    assert "GEMINI_API_KEY" not in str(exc_info.value.detail)
+    assert "Provider credential is not configured" not in str(exc_info.value.detail)
     assert "api_key" not in str(exc_info.value.detail)
     assert "private detail" not in str(exc_info.value.detail)
     assert db.rollback_calls == 1

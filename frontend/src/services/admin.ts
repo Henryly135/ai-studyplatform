@@ -30,6 +30,7 @@ import {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 const AI_ADMIN_PROVIDERS_URL = `${API_BASE_URL}/ai/admin/ai/providers`;
 const AI_ADMIN_DEFAULTS_URL = `${API_BASE_URL}/ai/admin/ai/defaults`;
+const SUPPORTED_AI_PROVIDERS = new Set(["gemini", "glm", "openrouter"]);
 
 async function parseJsonSafe(response: Response) {
   return parseJsonText(await response.text());
@@ -248,7 +249,12 @@ function normalizeProviderCredentialList(payload: unknown): AdminAiProviderCrede
       : [];
 
   return {
-    credentials: rawCredentials.filter(isRecord).map(normalizeProviderCredential),
+    credentials: rawCredentials
+      .filter(isRecord)
+      .map(normalizeProviderCredential)
+      .filter((credential) =>
+        SUPPORTED_AI_PROVIDERS.has(credential.provider.trim().toLowerCase())
+      ),
   };
 }
 

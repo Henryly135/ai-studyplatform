@@ -6,7 +6,6 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.core.config import settings
 from app.models.ai_knowledge_sources import AIPublishStatus, AIVisibilityScope
 from app.models.common import enum_values
 from sqlalchemy import Enum as SqlEnum
@@ -94,15 +93,17 @@ class AIKnowledgeChunk(Base):
         default=True,
         server_default="true",
     )
-    embedding_model: Mapped[str] = mapped_column(
-        String(100), nullable=False
+    # Legacy single-vector fields are kept nullable during the multi-vector
+    # migration so an existing deployment can roll back without losing data.
+    embedding_model: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
     )
     embedding_version: Mapped[str | None] = mapped_column(
         String(50), nullable=True
     )
-    embedding: Mapped[list[float]] = mapped_column(
-        Vector(settings.ai_embedding_dimension),
-        nullable=False,
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(),
+        nullable=True,
     )
     metadata_json: Mapped[dict | list | None] = mapped_column(
         JSONB, 

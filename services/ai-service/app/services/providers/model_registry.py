@@ -3,13 +3,20 @@ from __future__ import annotations
 from app.services.providers.types import ModelDefinition, ModelProviderDefinition
 
 
-SUPPORTED_PROVIDER_KEYS = {"gemini", "deepseek", "glm", "openrouter"}
+SUPPORTED_PROVIDER_KEYS = {"gemini", "glm", "openrouter"}
 
 PROVIDER_DEFINITIONS: tuple[ModelProviderDefinition, ...] = (
     ModelProviderDefinition("gemini", "Gemini", "gemini", None, True, 10),
-    ModelProviderDefinition("deepseek", "DeepSeek", "openai_compatible", "https://api.deepseek.com", True, 20),
-    ModelProviderDefinition("glm", "GLM", "openai_compatible", "https://open.bigmodel.cn/api/paas/v4", True, 30),
-    ModelProviderDefinition("openrouter", "OpenRouter", "openai_compatible", "https://openrouter.ai/api/v1", True, 40),
+    ModelProviderDefinition("glm", "GLM", "openai_compatible", "https://open.bigmodel.cn/api/paas/v4", True, 20),
+    ModelProviderDefinition(
+        "openrouter",
+        "OpenRouter",
+        "openai_compatible",
+        "https://openrouter.ai/api/v1",
+        True,
+        30,
+        require_json_parameter_support=True,
+    ),
 )
 
 MODEL_DEFINITIONS: tuple[ModelDefinition, ...] = (
@@ -26,6 +33,7 @@ MODEL_DEFINITIONS: tuple[ModelDefinition, ...] = (
         True,
         False,
         display_order=10,
+        paired_embedding_model_id="gemini:gemini-embedding-001",
     ),
     ModelDefinition(
         "gemini:gemini-2.5-flash",
@@ -40,6 +48,7 @@ MODEL_DEFINITIONS: tuple[ModelDefinition, ...] = (
         True,
         False,
         display_order=11,
+        paired_embedding_model_id="gemini:gemini-embedding-001",
     ),
     ModelDefinition(
         "gemini:gemini-2.5-pro",
@@ -54,6 +63,7 @@ MODEL_DEFINITIONS: tuple[ModelDefinition, ...] = (
         True,
         False,
         display_order=12,
+        paired_embedding_model_id="gemini:gemini-embedding-001",
     ),
     ModelDefinition(
         "gemini:gemini-embedding-001",
@@ -67,22 +77,8 @@ MODEL_DEFINITIONS: tuple[ModelDefinition, ...] = (
         True,
         False,
         True,
-        embedding_dimension=1536,
+        embedding_dimension=1024,
         display_order=19,
-    ),
-    ModelDefinition(
-        "deepseek:deepseek-v4-flash",
-        "deepseek",
-        "deepseek-v4-flash",
-        "DeepSeek V4 Flash",
-        True,
-        False,
-        True,
-        True,
-        False,
-        True,
-        False,
-        display_order=20,
     ),
     ModelDefinition(
         "glm:glm-4.5-air",
@@ -96,7 +92,8 @@ MODEL_DEFINITIONS: tuple[ModelDefinition, ...] = (
         False,
         True,
         False,
-        display_order=30,
+        display_order=20,
+        paired_embedding_model_id="glm:embedding-3",
     ),
     ModelDefinition(
         "glm:glm-4.7",
@@ -110,7 +107,23 @@ MODEL_DEFINITIONS: tuple[ModelDefinition, ...] = (
         False,
         True,
         False,
-        display_order=31,
+        display_order=21,
+        paired_embedding_model_id="glm:embedding-3",
+    ),
+    ModelDefinition(
+        "glm:embedding-3",
+        "glm",
+        "embedding-3",
+        "GLM Embedding-3",
+        True,
+        False,
+        False,
+        False,
+        True,
+        False,
+        True,
+        embedding_dimension=1024,
+        display_order=29,
     ),
     ModelDefinition(
         "openrouter:openrouter/auto",
@@ -124,7 +137,8 @@ MODEL_DEFINITIONS: tuple[ModelDefinition, ...] = (
         False,
         True,
         False,
-        display_order=40,
+        display_order=30,
+        paired_embedding_model_id="openrouter:openai/text-embedding-3-small",
     ),
     ModelDefinition(
         "openrouter:google/gemini-2.5-flash",
@@ -138,7 +152,23 @@ MODEL_DEFINITIONS: tuple[ModelDefinition, ...] = (
         False,
         True,
         False,
-        display_order=41,
+        display_order=31,
+        paired_embedding_model_id="openrouter:openai/text-embedding-3-small",
+    ),
+    ModelDefinition(
+        "openrouter:openai/text-embedding-3-small",
+        "openrouter",
+        "openai/text-embedding-3-small",
+        "OpenAI Text Embedding 3 Small via OpenRouter",
+        True,
+        False,
+        False,
+        False,
+        True,
+        False,
+        True,
+        embedding_dimension=1024,
+        display_order=39,
     ),
 )
 

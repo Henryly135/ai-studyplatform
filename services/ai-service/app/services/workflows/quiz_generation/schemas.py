@@ -91,6 +91,11 @@ class RetrievalContextRead(BaseModel):
     topK: int = Field(..., ge=1)
     chunkCount: int = Field(..., ge=0)
     chunks: list[RetrievalContextChunkRead]
+    chatModelId: str = Field(..., min_length=1)
+    embeddingModelId: str = Field(..., min_length=1)
+    embeddingVersion: str = Field(..., min_length=1)
+    indexStatus: Literal["ready"]
+    indexCoverage: float = Field(..., ge=0.0, le=1.0)
 
 
 class QuizGenerationPlanQuestionRead(BaseModel):

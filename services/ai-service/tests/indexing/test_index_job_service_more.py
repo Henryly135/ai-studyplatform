@@ -27,6 +27,9 @@ class FakeJobsRepository:
     def list_replaceable_material_jobs(self, *, material_id):
         return [SimpleNamespace(job_id=1)] if material_id == 99 else []
 
+    def lock_material_job_scope(self, *, material_id):
+        return None
+
     def mark_superseded(self, jobs):
         self.superseded.extend(jobs)
 
@@ -135,6 +138,43 @@ def test_delete_material_index_returns_deleted_counts() -> None:
     assert result.deletedSourceCount == 1
     assert result.deletedChunkCount == 2
     assert result.deletedJobCount == 3
+
+
+def test_delete_material_index_holds_material_lock_through_commit() -> None:
+    events = []
+
+    class OrderedSession(FakeSession):
+        def commit(self) -> None:
+            events.append("commit")
+            super().commit()
+
+    class OrderedJobs(FakeJobsRepository):
+        def lock_material_job_scope(self, *, material_id):
+            events.append(("lock", material_id))
+
+        def delete_by_material_id(self, *, material_id):
+            events.append(("delete_jobs", material_id))
+            return 3
+
+    class OrderedKnowledge(FakeKnowledgeService):
+        def delete_material_source(self, *, material_id):
+            events.append(("delete_source", material_id))
+            return super().delete_material_source(material_id=material_id)
+
+    service = IndexJobService(OrderedSession())
+    service.jobs = OrderedJobs()
+    service.knowledge = OrderedKnowledge()
+
+    service.delete_material_index(
+        payload=MaterialIndexDeleteRequest(materialId=88)
+    )
+
+    assert events == [
+        ("lock", 88),
+        ("delete_source", 88),
+        ("delete_jobs", 88),
+        "commit",
+    ]
 
 
 def test_retry_job_requeues_failed_job_and_dispatches() -> None:

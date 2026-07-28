@@ -18,6 +18,13 @@ if [ ! -f "$DOCKER_CONFIG/config.json" ]; then
   printf '{"auths":{}}' > "$DOCKER_CONFIG/config.json"
 fi
 
+docker compose --env-file .env -f infra/docker-compose.yml config --quiet
 docker compose --env-file .env -f infra/docker-compose.yml down --remove-orphans
 docker compose --env-file .env -f infra/docker-compose.yml up -d --build
 docker compose --env-file .env -f infra/docker-compose.yml ps
+
+if [ -n "${DEMO_ACCESS_TOKEN:-}" ]; then
+  bash scripts/demo-preflight.sh
+else
+  echo "DEMO_ACCESS_TOKEN is not set; run bash scripts/demo-preflight.sh manually before presenting the Demo"
+fi

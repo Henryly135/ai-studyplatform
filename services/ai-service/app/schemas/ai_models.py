@@ -24,6 +24,11 @@ class AIModelCatalogItem(BaseModel):
     configured: bool
     capabilities: AIModelCapabilities
     embeddingDimension: int | None = None
+    pairedEmbeddingModelId: str | None = None
+    pairedEmbeddingModelName: str | None = None
+    ragReady: bool | None = None
+    indexCoverage: float | None = Field(default=None, ge=0, le=1)
+    indexStatus: str | None = None
     isDefaultChat: bool
     isDefaultEmbedding: bool
     isUserSelected: bool

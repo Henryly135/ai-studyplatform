@@ -77,7 +77,7 @@ jobs:
         run: npm run build
 
       - name: Audit dependencies
-        run: npm audit
+        run: npm run audit:ci
 
   identity-service-check:
     runs-on: ubuntu-latest
@@ -186,10 +186,8 @@ jobs:
           AI_DB_PASSWORD=ai_password
           AI_DB_PORT=5432
           AI_DB_EXTERNAL_PORT=5433
-          AI_EMBEDDING_DIMENSION=1536
+          AI_EMBEDDING_DIMENSION=1024
           IDENTITY_SERVICE_URL=http://identity-service:8000
-          GEMINI_API_KEY=
-          AI_DEMO_MODEL_NAME=gemini-2.5-flash
           LEARNING_MATERIAL_ROOT=/app/storage/materials
           LEARNING_MATERIAL_PUBLIC_BASE_URL=/api/learning/materials
           LEARNING_MATERIAL_AI_QUEUE=ai.material.index
@@ -282,10 +280,8 @@ jobs:
           AI_DB_PASSWORD=ai_password
           AI_DB_PORT=5432
           AI_DB_EXTERNAL_PORT=5433
-          AI_EMBEDDING_DIMENSION=1536
+          AI_EMBEDDING_DIMENSION=1024
           IDENTITY_SERVICE_URL=http://identity-service:8000
-          GEMINI_API_KEY=
-          AI_DEMO_MODEL_NAME=gemini-2.5-flash
           LEARNING_MATERIAL_ROOT=/app/storage/materials
           LEARNING_MATERIAL_PUBLIC_BASE_URL=/api/learning/materials
           LEARNING_MATERIAL_AI_QUEUE=ai.material.index
@@ -301,7 +297,7 @@ jobs:
           EOF
 
       - name: Validate compose file
-        run: docker compose --env-file .env -f infra/docker-compose.yml config
+        run: docker compose --env-file .env -f infra/docker-compose.yml config --quiet
 
   redis-check:
     runs-on: ubuntu-latest
@@ -378,9 +374,7 @@ jobs:
           AI_DB_PASSWORD=ai_password
           AI_DB_PORT=5432
           AI_DB_EXTERNAL_PORT=5433
-          AI_EMBEDDING_DIMENSION=1536
-          GEMINI_API_KEY=
-          AI_DEMO_MODEL_NAME=gemini-2.5-flash
+          AI_EMBEDDING_DIMENSION=1024
           LEARNING_MATERIAL_ROOT=/app/storage/materials
           LEARNING_MATERIAL_PUBLIC_BASE_URL=/api/learning/materials
           LEARNING_MATERIAL_AI_QUEUE=ai.material.index
@@ -490,9 +484,7 @@ jobs:
           AI_DB_PASSWORD=ai_password
           AI_DB_PORT=5432
           AI_DB_EXTERNAL_PORT=5433
-          AI_EMBEDDING_DIMENSION=1536
-          GEMINI_API_KEY=
-          AI_DEMO_MODEL_NAME=gemini-2.5-flash
+          AI_EMBEDDING_DIMENSION=1024
           LEARNING_MATERIAL_ROOT=/app/storage/materials
           LEARNING_MATERIAL_PUBLIC_BASE_URL=/api/learning/materials
           LEARNING_MATERIAL_AI_QUEUE=ai.material.index
@@ -602,9 +594,7 @@ jobs:
           AI_DB_PASSWORD=ai_password
           AI_DB_PORT=5432
           AI_DB_EXTERNAL_PORT=5433
-          AI_EMBEDDING_DIMENSION=1536
-          GEMINI_API_KEY=
-          AI_DEMO_MODEL_NAME=gemini-2.5-flash
+          AI_EMBEDDING_DIMENSION=1024
           LEARNING_MATERIAL_ROOT=/app/storage/materials
           LEARNING_MATERIAL_PUBLIC_BASE_URL=/api/learning/materials
           LEARNING_MATERIAL_AI_QUEUE=ai.material.index
@@ -730,10 +720,8 @@ jobs:
           AI_DB_PASSWORD=ai_password
           AI_DB_PORT=5432
           AI_DB_EXTERNAL_PORT=5433
-          AI_EMBEDDING_DIMENSION=1536
+          AI_EMBEDDING_DIMENSION=1024
           IDENTITY_SERVICE_URL=http://identity-service:8000
-          GEMINI_API_KEY=
-          AI_DEMO_MODEL_NAME=gemini-2.5-flash
           LEARNING_MATERIAL_ROOT=/app/storage/materials
           LEARNING_MATERIAL_PUBLIC_BASE_URL=/api/learning/materials
           LEARNING_MATERIAL_AI_QUEUE=ai.material.index
@@ -1045,6 +1033,9 @@ jobs:
       - name: Import check
         run: python -c "from app.main import app; print('learning-service import ok')"
 
+      - name: Run learning-service tests
+        run: pytest tests -q
+
       - name: Celery task registration check
         run: python -c "import app.tasks.quiz_attempts; from app.core.celery_app import celery_app; assert 'app.tasks.quiz_attempts.auto_submit_quiz_attempt_task' in celery_app.tasks; print('learning-worker celery task ok')"
 
@@ -1094,5 +1085,5 @@ jobs:
           python -c "import app.services.orchestration.langgraph.profile_update_graph; print('profile update graph import ok')"
           python -c "import app.services.orchestration.langgraph.quiz_generation_graph; print('quiz generation graph import ok')"
 
-      - name: Run ai-service workflow tests
-        run: pytest tests/profile_update tests/quiz_generation -q
+      - name: Run ai-service tests
+        run: pytest tests -q

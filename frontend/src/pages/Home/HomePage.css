@@ -1229,10 +1229,20 @@
 }
 
 .home-ai-default-model-row span,
+.home-ai-default-model-row small,
 .home-ai-provider-card small,
 .home-ai-model-chip {
   color: #64748b;
   font: 650 0.78rem/1.35 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.home-ai-default-model-row .home-ai-default-model-pair {
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.home-ai-default-model-row .home-ai-default-model-pair-warning {
+  color: #b45309;
 }
 
 .home-ai-default-model-row select,

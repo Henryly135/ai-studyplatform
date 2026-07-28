@@ -7,14 +7,25 @@ from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.core.time import now_local
 from app.db.session import SessionLocal
-from app.models.ai_index_jobs import AIJobStatus
-from app.models.ai_knowledge_sources import AIPublishStatus, AIKnowledgeSourceType, AIVisibilityScope
+from app.models.ai_index_jobs import AIIndexJob, AIJobStatus
+from app.models.ai_knowledge_chunk_embeddings import MULTI_EMBEDDING_DIMENSION
+from app.models.ai_knowledge_chunks import AIKnowledgeChunk
+from app.models.ai_knowledge_sources import (
+    AIKnowledgeSource,
+    AIPublishStatus,
+    AIKnowledgeSourceType,
+    AIVisibilityScope,
+)
 from app.models.ai_prompt_logs import AIPromptStatus
 from app.repositories.ai_embedding_logs_repository import AIEmbeddingLogsRepository
 from app.repositories.ai_index_jobs_repository import AIIndexJobsRepository
 from app.repositories.ai_knowledge_chunks_repository import ChunkCreate
 from app.services.indexing.embedding_service import EmbeddingService
-from app.services.indexing.knowledge_indexing_service import KnowledgeIndexingService, SourceUpsert
+from app.services.indexing.knowledge_indexing_service import (
+    KnowledgeIndexingResult,
+    KnowledgeIndexingService,
+    SourceUpsert,
+)
 from app.services.indexing.material_content_service import MaterialContentRequest, MaterialContentService
 from app.services.indexing.text_chunking_service import TextChunkingService
 from platform_common.errors import invalid_request_error
@@ -37,11 +48,6 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
     embedding_logs = AIEmbeddingLogsRepository(session)
 
     try:
-        content_service = MaterialContentService()
-        chunking_service = TextChunkingService()
-        embedding_service = EmbeddingService(session)
-        indexing_service = KnowledgeIndexingService(session)
-
         # Stage 2: Job Retrieval and Validation
         stage = "loading_job"
         job = jobs.get_by_id(jobId)
@@ -64,18 +70,34 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
                 "jobStatus": job.status.value,
             }
 
-        jobs.update_status(
-            job,
-            status=AIJobStatus.RUNNING,
-            worker_id=str(getattr(self.request, "hostname", "") or getattr(self.request, "id", "") or "ai-worker"),
-            next_retry_at=None,
-            locked_at=current_time,
-            started_at=current_time,
-            finished_at=None,
-            error_message=None,
-            attempt_count=job.attempt_count + 1,
+        worker_id = str(
+            getattr(self.request, "hostname", "")
+            or getattr(self.request, "id", "")
+            or "ai-worker"
         )
+        if not jobs.claim_queued_job(
+            job_id=job.job_id,
+            worker_id=worker_id,
+            claimed_at=current_time,
+        ):
+            session.rollback()
+            current_job = jobs.get_by_id(jobId)
+            return {
+                "status": "skipped",
+                "jobId": jobId,
+                "jobStatus": (
+                    current_job.status.value
+                    if current_job is not None
+                    else "missing"
+                ),
+            }
         session.commit()
+        session.refresh(job)
+
+        content_service = MaterialContentService()
+        chunking_service = TextChunkingService()
+        embedding_service = EmbeddingService(session)
+        indexing_service = KnowledgeIndexingService(session)
 
         # Stage 3: Metadata Validation and Content Extraction
         stage = "metadata_validation"
@@ -94,7 +116,6 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             )
         )
         content_hash = sha256(extracted.content_text.encode("utf-8")).hexdigest()
-        job.content_hash = content_hash
 
         # Stage 5: Text Chunking, Embedding, and Indexing
         stage = "chunking"
@@ -116,91 +137,9 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             "chunkCount": len(text_chunks),
         }
 
-        # Stage 6: For each chunk, generate embeddings and prepare for database insertion 
+        # Stage 6: Persist provider-independent canonical chunks first.
         chunk_rows: list[ChunkCreate] = []
-        prompt_log_user_id = _get_prompt_log_user_id(metadata)
         for text_chunk in text_chunks:
-            stage = f"embedding_chunk_{text_chunk.chunk_index}"
-            embedding_input = text_chunk.chunk_text
-            token_count = embedding_service.count_document_tokens(text=embedding_input)
-            try:
-                embedding_result = embedding_service.embed_document(
-                    text=embedding_input,
-                    title=str(metadata["title"]),
-                )
-                embedding_logs.create(
-                    job_id=job.job_id,
-                    user_id=prompt_log_user_id,
-                    course_id=job.course_id,
-                    module_id=job.module_id,
-                    material_id=job.material_id,
-                    chunk_index=text_chunk.chunk_index,
-                    chunk_hash=text_chunk.chunk_hash,
-                    model_name=embedding_result.embedding_model,
-                    model_version=embedding_result.embedding_version,
-                    task_type=embedding_result.task_type,
-                    title=str(metadata["title"]),
-                    input_text=_truncate_text(embedding_input),
-                    input_chars=len(embedding_input),
-                    provider_input_tokens=token_count.provider_input_tokens,
-                    provider_total_tokens=token_count.provider_total_tokens,
-                    vector_length=len(embedding_result.vector),
-                    output_dimensionality=embedding_result.output_dimensionality,
-                    request_json={
-                        "tokenCount": token_count.request_json,
-                        "embedding": embedding_result.request_json,
-                    },
-                    response_json={
-                        "tokenCount": token_count.response_json,
-                        "embedding": embedding_result.response_json,
-                    },
-                    latency_ms=embedding_result.latency_ms,
-                    status=embedding_result.status,
-                    error_message=embedding_result.error_message,
-                    trace_id=embedding_result.trace_id,
-                )
-                session.commit()
-            except Exception as exc:
-                embedding_logs.create(
-                    job_id=job.job_id,
-                    user_id=prompt_log_user_id,
-                    course_id=job.course_id,
-                    module_id=job.module_id,
-                    material_id=job.material_id,
-                    chunk_index=text_chunk.chunk_index,
-                    chunk_hash=text_chunk.chunk_hash,
-                    model_name=settings.ai_embedding_model,
-                    model_version=settings.ai_embedding_version,
-                    task_type=settings.ai_embedding_task_type,
-                    title=str(metadata["title"]),
-                    input_text=_truncate_text(embedding_input),
-                    input_chars=len(embedding_input),
-                    provider_input_tokens=token_count.provider_input_tokens,
-                    provider_total_tokens=token_count.provider_total_tokens,
-                    vector_length=None,
-                    output_dimensionality=settings.ai_embedding_output_dimension,
-                    request_json={
-                        "tokenCount": token_count.request_json,
-                        "embedding": {
-                            "model": settings.ai_embedding_model,
-                            "contents_preview": embedding_input[:500],
-                            "config": {
-                                "task_type": settings.ai_embedding_task_type,
-                                "output_dimensionality": settings.ai_embedding_output_dimension,
-                                "title": str(metadata["title"]),
-                            },
-                        },
-                    },
-                    response_json={
-                        "tokenCount": token_count.response_json,
-                    },
-                    latency_ms=None,
-                    status=AIPromptStatus.FAILED,
-                    error_message=_safe_task_error_message(stage="embedding", exc=exc),
-                    trace_id=None,
-                )
-                session.commit()
-                raise
             chunk_rows.append(
                 ChunkCreate(
                     source_id=0,
@@ -218,9 +157,6 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
                     visibility_scope=AIVisibilityScope.COURSE_ONLY,
                     publish_status=publish_status,
                     is_active=True,
-                    embedding_model=embedding_result.embedding_model,
-                    embedding_version=embedding_result.embedding_version,
-                    embedding=embedding_result.vector,
                     metadata_json={
                         "title": metadata["title"],
                         "objectKey": metadata["objectKey"],
@@ -230,10 +166,212 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             )
 
 
-        # Stage 7: Upsert the knowledge source and its chunks into the database
-        stage = "index_write"
-        indexing_result = indexing_service.replace_source_chunks(
-            source_data=SourceUpsert(
+        # Stage 7: Generate all provider vectors before replacing the current
+        # index. Existing RAG data remains visible until at least one complete
+        # replacement vector set is ready.
+        existing_source = indexing_service.sources.get_by_type_and_ref(
+            source_type=AIKnowledgeSourceType.MATERIAL,
+            source_ref_id=str(job.material_id),
+        )
+        existing_chunks = (
+            indexing_service.chunks.list_by_source_id(existing_source.source_id)
+            if existing_source is not None
+            else []
+        )
+        expected_chunk_fingerprint = [
+            (chunk.chunk_index, chunk.chunk_hash)
+            for chunk in text_chunks
+        ]
+        existing_chunk_fingerprint = [
+            (chunk.chunk_index, chunk.chunk_hash)
+            for chunk in existing_chunks
+        ]
+        can_reuse_canonical_chunks = _can_reuse_canonical_chunks(
+            source=existing_source,
+            chunks=existing_chunks,
+            content_hash=content_hash,
+            source_version=str(metadata["objectKey"]),
+            publish_status=publish_status,
+            existing_chunk_fingerprint=existing_chunk_fingerprint,
+            expected_chunk_fingerprint=expected_chunk_fingerprint,
+        )
+        embedding_targets = embedding_service.list_available_embedding_models()
+        if not embedding_targets:
+            superseded_response = _acquire_material_write_fence(
+                session=session,
+                jobs=jobs,
+                job=job,
+            )
+            if superseded_response is not None:
+                return superseded_response
+            job.content_hash = content_hash
+            if existing_source is not None and not can_reuse_canonical_chunks:
+                indexing_service.mark_source_index_stale(
+                    source=existing_source,
+                    pending_content_hash=content_hash,
+                    pending_source_version=str(metadata["objectKey"]),
+                )
+            session.commit()
+            stage = "embedding_model_configuration"
+            raise invalid_request_error("No configured embedding model is available")
+
+        target_by_model_id = {
+            target.model_id: target for target in embedding_targets
+        }
+        existing_successful_models: set[str] = set()
+        if can_reuse_canonical_chunks and existing_source is not None:
+            for embedding_status in indexing_service.embedding_statuses.list_by_source_id(
+                existing_source.source_id
+            ):
+                target = target_by_model_id.get(
+                    embedding_status.embedding_model_id
+                )
+                if (
+                    target is not None
+                    and embedding_status.status == "success"
+                    and embedding_status.embedding_version
+                    == target.embedding_version
+                    and embedding_status.expected_chunk_count == len(text_chunks)
+                    and embedding_status.indexed_chunk_count == len(text_chunks)
+                ):
+                    existing_successful_models.add(target.model_id)
+        pending_embedding_targets = [
+            target
+            for target in embedding_targets
+            if target.model_id not in existing_successful_models
+        ]
+
+        prompt_log_user_id = _get_prompt_log_user_id(metadata)
+        successful_embedding_models: list[str] = sorted(
+            existing_successful_models
+        )
+        failed_embedding_models: list[dict[str, str]] = []
+        successful_executions = []
+        failed_attempts = []
+        first_embedding_error: Exception | None = None
+
+        for target in pending_embedding_targets:
+            stage = f"embedding_model_{target.model_id}"
+            executions = []
+            failed_chunk = None
+            failed_token_count = None
+            try:
+                for text_chunk in text_chunks:
+                    failed_chunk = text_chunk
+                    failed_token_count = embedding_service.count_document_tokens(
+                        text=text_chunk.chunk_text,
+                        embedding_model_id=target.model_id,
+                    )
+                    embedding_result = embedding_service.embed_document(
+                        text=text_chunk.chunk_text,
+                        title=str(metadata["title"]),
+                        embedding_model_id=target.model_id,
+                    )
+                    executions.append(
+                        (text_chunk, failed_token_count, embedding_result)
+                    )
+                successful_embedding_models.append(target.model_id)
+                successful_executions.append((target, executions))
+            except Exception as exc:
+                if first_embedding_error is None:
+                    first_embedding_error = exc
+                error_message = _safe_task_error_message(stage=stage, exc=exc)
+                failed_attempts.append(
+                    (target, failed_chunk, failed_token_count, error_message)
+                )
+                failed_embedding_models.append(
+                    {
+                        "modelId": target.model_id,
+                        "error": error_message,
+                    }
+                )
+
+        if not successful_embedding_models:
+            superseded_response = _acquire_material_write_fence(
+                session=session,
+                jobs=jobs,
+                job=job,
+            )
+            if superseded_response is not None:
+                return superseded_response
+            job.content_hash = content_hash
+            if existing_source is not None:
+                if not can_reuse_canonical_chunks:
+                    indexing_service.mark_source_index_stale(
+                        source=existing_source,
+                        pending_content_hash=content_hash,
+                        pending_source_version=str(metadata["objectKey"]),
+                    )
+                for target, _, _, error_message in failed_attempts:
+                    indexing_service.mark_embedding_index_failed(
+                        source_id=existing_source.source_id,
+                        embedding_model_id=target.model_id,
+                        embedding_version=target.embedding_version,
+                        expected_chunk_count=len(text_chunks),
+                        indexed_chunk_count=0,
+                        last_error=error_message,
+                    )
+            for target, failed_chunk, failed_token_count, error_message in failed_attempts:
+                if failed_chunk is None:
+                    continue
+                embedding_logs.create(
+                    job_id=job.job_id,
+                    user_id=prompt_log_user_id,
+                    course_id=job.course_id,
+                    module_id=job.module_id,
+                    material_id=job.material_id,
+                    chunk_index=failed_chunk.chunk_index,
+                    chunk_hash=failed_chunk.chunk_hash,
+                    model_name=target.model_id,
+                    model_version=target.embedding_version,
+                    task_type=settings.ai_embedding_task_type,
+                    title=str(metadata["title"]),
+                    input_text=_truncate_text(failed_chunk.chunk_text),
+                    input_chars=len(failed_chunk.chunk_text),
+                    provider_input_tokens=(
+                        failed_token_count.provider_input_tokens
+                        if failed_token_count is not None
+                        else None
+                    ),
+                    provider_total_tokens=(
+                        failed_token_count.provider_total_tokens
+                        if failed_token_count is not None
+                        else None
+                    ),
+                    vector_length=None,
+                    output_dimensionality=target.dimension,
+                    request_json={"embeddingModelId": target.model_id},
+                    response_json=None,
+                    latency_ms=None,
+                    status=AIPromptStatus.FAILED,
+                    error_message=error_message,
+                    trace_id=None,
+                )
+            superseded_response = _supersede_if_newer_material_job(
+                session=session,
+                jobs=jobs,
+                job=job,
+            )
+            if superseded_response is not None:
+                return superseded_response
+            session.commit()
+            if first_embedding_error is not None:
+                raise first_embedding_error
+            raise invalid_request_error("No embedding model completed indexing")
+
+        superseded_response = _acquire_material_write_fence(
+            session=session,
+            jobs=jobs,
+            job=job,
+        )
+        if superseded_response is not None:
+            return superseded_response
+        job.content_hash = content_hash
+
+        # Stage 8: Atomically swap canonical chunks and every complete vector
+        # set, then expose provider-specific readiness in the same commit.
+        stage = "multi_vector_index_write"
+        source_data = SourceUpsert(
                 source_type=AIKnowledgeSourceType.MATERIAL,
                 source_ref_id=str(job.material_id),
                 course_id=job.course_id,
@@ -250,18 +388,164 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
                 visibility_scope=AIVisibilityScope.COURSE_ONLY,
                 publish_status=publish_status,
                 content_hash=content_hash,
-                embedding_model=settings.ai_embedding_model,
-                embedding_version=settings.ai_embedding_version,
+                embedding_model=None,
+                embedding_version=None,
                 source_version=str(metadata["objectKey"]),
                 metadata_json=source_metadata,
                 created_by=None,
                 updated_by=None,
                 origin_event_id=job.trigger_event_id,
-            ),
-            chunks=chunk_rows,
         )
+        if can_reuse_canonical_chunks and existing_source is not None:
+            indexing_result = KnowledgeIndexingResult(
+                source=existing_source,
+                source_created=False,
+                deleted_chunk_count=0,
+                chunk_count=len(existing_chunks),
+                created_chunks=existing_chunks,
+            )
+        else:
+            indexing_result = indexing_service.replace_source_chunks(
+                source_data=source_data,
+                chunks=chunk_rows,
+            )
+
+        for target, executions in successful_executions:
+            indexing_service.mark_embedding_index_running(
+                source_id=indexing_result.source.source_id,
+                embedding_model_id=target.model_id,
+                embedding_version=target.embedding_version,
+                expected_chunk_count=len(text_chunks),
+            )
+            indexing_service.write_source_embeddings(
+                source_id=indexing_result.source.source_id,
+                embedding_model_id=target.model_id,
+                embedding_version=target.embedding_version,
+                embeddings_by_chunk_index={
+                    text_chunk.chunk_index: embedding_result.vector
+                    for text_chunk, _, embedding_result in executions
+                },
+            )
+            for text_chunk, token_count, embedding_result in executions:
+                embedding_logs.create(
+                    job_id=job.job_id,
+                    user_id=prompt_log_user_id,
+                    course_id=job.course_id,
+                    module_id=job.module_id,
+                    material_id=job.material_id,
+                    chunk_index=text_chunk.chunk_index,
+                    chunk_hash=text_chunk.chunk_hash,
+                    model_name=embedding_result.embedding_model_id,
+                    model_version=embedding_result.embedding_version,
+                    task_type=embedding_result.task_type,
+                    title=str(metadata["title"]),
+                    input_text=_truncate_text(text_chunk.chunk_text),
+                    input_chars=len(text_chunk.chunk_text),
+                    provider_input_tokens=(
+                        embedding_result.provider_input_tokens
+                        if embedding_result.provider_input_tokens is not None
+                        else token_count.provider_input_tokens
+                    ),
+                    provider_total_tokens=(
+                        embedding_result.provider_total_tokens
+                        if embedding_result.provider_total_tokens is not None
+                        else token_count.provider_total_tokens
+                    ),
+                    vector_length=len(embedding_result.vector),
+                    output_dimensionality=embedding_result.output_dimensionality,
+                    request_json={
+                        "tokenCount": token_count.request_json,
+                        "embedding": embedding_result.request_json,
+                    },
+                    response_json={
+                        "tokenCount": token_count.response_json,
+                        "embedding": embedding_result.response_json,
+                    },
+                    latency_ms=embedding_result.latency_ms,
+                    status=embedding_result.status,
+                    error_message=embedding_result.error_message,
+                    trace_id=embedding_result.trace_id,
+                )
+
+        for target, failed_chunk, failed_token_count, error_message in failed_attempts:
+            indexing_service.mark_embedding_index_failed(
+                source_id=indexing_result.source.source_id,
+                embedding_model_id=target.model_id,
+                embedding_version=target.embedding_version,
+                expected_chunk_count=len(text_chunks),
+                indexed_chunk_count=0,
+                last_error=error_message,
+            )
+            if failed_chunk is not None:
+                embedding_logs.create(
+                    job_id=job.job_id,
+                    user_id=prompt_log_user_id,
+                    course_id=job.course_id,
+                    module_id=job.module_id,
+                    material_id=job.material_id,
+                    chunk_index=failed_chunk.chunk_index,
+                    chunk_hash=failed_chunk.chunk_hash,
+                    model_name=target.model_id,
+                    model_version=target.embedding_version,
+                    task_type=settings.ai_embedding_task_type,
+                    title=str(metadata["title"]),
+                    input_text=_truncate_text(failed_chunk.chunk_text),
+                    input_chars=len(failed_chunk.chunk_text),
+                    provider_input_tokens=(
+                        failed_token_count.provider_input_tokens
+                        if failed_token_count is not None
+                        else None
+                    ),
+                    provider_total_tokens=(
+                        failed_token_count.provider_total_tokens
+                        if failed_token_count is not None
+                        else None
+                    ),
+                    vector_length=None,
+                    output_dimensionality=target.dimension,
+                    request_json={
+                        "embeddingModelId": target.model_id,
+                        "contentsPreview": failed_chunk.chunk_text[:500],
+                    },
+                    response_json=None,
+                    latency_ms=None,
+                    status=AIPromptStatus.FAILED,
+                    error_message=error_message,
+                    trace_id=None,
+                )
+
+        superseded_response = _supersede_if_newer_material_job(
+            session=session,
+            jobs=jobs,
+            job=job,
+        )
+        if superseded_response is not None:
+            return superseded_response
 
         processed_at = now_local()
+        if not isinstance(job.metadata_json, dict):
+            job.metadata_json = {}
+        job.metadata_json = {
+            **job.metadata_json,
+            "indexedEmbeddingModels": successful_embedding_models,
+            "failedEmbeddingModels": failed_embedding_models,
+            "multiEmbeddingDimension": MULTI_EMBEDDING_DIMENSION,
+        }
+        if failed_embedding_models:
+            # Keep complete provider vectors available, but leave the job in
+            # the standard retry path until every configured pair is covered.
+            superseded_response = _supersede_if_newer_material_job(
+                session=session,
+                jobs=jobs,
+                job=job,
+            )
+            if superseded_response is not None:
+                return superseded_response
+            session.commit()
+            stage = "embedding_partial"
+            raise RuntimeError(
+                "One or more embedding providers failed; partial vectors remain available"
+            )
         jobs.update_status(
             job,
             status=AIJobStatus.SUCCESS,
@@ -271,6 +555,13 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             started_at=job.started_at,
             finished_at=processed_at,
         )
+        superseded_response = _supersede_if_newer_material_job(
+            session=session,
+            jobs=jobs,
+            job=job,
+        )
+        if superseded_response is not None:
+            return superseded_response
         session.commit()
 
         return {
@@ -290,6 +581,8 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             "sourceCreated": indexing_result.source_created,
             "deletedChunkCount": indexing_result.deleted_chunk_count,
             "chunkCount": indexing_result.chunk_count,
+            "embeddingModels": successful_embedding_models,
+            "embeddingFailures": failed_embedding_models,
             "processedAt": processed_at.isoformat(timespec="seconds"),
         }
     
@@ -387,6 +680,114 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
     
     finally:
         session.close()
+
+
+def _acquire_material_write_fence(
+    *,
+    session: Session,
+    jobs: AIIndexJobsRepository,
+    job: AIIndexJob,
+) -> dict[str, object] | None:
+    """Linearize final index writes against register/backfill/delete."""
+
+    job_id = job.job_id
+    material_id = job.material_id
+    if material_id is None:
+        session.rollback()
+        return {
+            "status": "skipped",
+            "jobId": job_id,
+            "materialId": None,
+            "jobStatus": "missing_material",
+        }
+
+    jobs.lock_material_job_scope(material_id=material_id)
+    if not jobs.is_running_material_job(
+        job_id=job_id,
+        material_id=material_id,
+    ):
+        # The row may have been deleted while this worker waited for the lock.
+        # Do not consult the possibly stale ORM identity after the rollback.
+        session.rollback()
+        return {
+            "status": "skipped",
+            "jobId": job_id,
+            "materialId": material_id,
+            "jobStatus": "missing_or_not_running",
+        }
+
+    return _supersede_if_newer_material_job(
+        session=session,
+        jobs=jobs,
+        job=job,
+    )
+
+
+def _supersede_if_newer_material_job(
+    *,
+    session: Session,
+    jobs: AIIndexJobsRepository,
+    job: AIIndexJob,
+) -> dict[str, object] | None:
+    material_id = job.material_id
+    job_id = job.job_id
+    if material_id is None or not jobs.has_newer_material_job(
+        material_id=material_id,
+        job_id=job_id,
+    ):
+        return None
+
+    # Discard every pending source/vector/status mutation from the older job,
+    # then persist only its terminal superseded state.
+    session.rollback()
+    current_job = jobs.get_by_id(job_id)
+    superseded_at = now_local()
+    if current_job is not None:
+        jobs.update_status(
+            current_job,
+            status=AIJobStatus.SUPERSEDED,
+            worker_id=None,
+            next_retry_at=None,
+            locked_at=None,
+            started_at=current_job.started_at,
+            finished_at=superseded_at,
+            error_message=None,
+        )
+        session.commit()
+
+    return {
+        "status": "superseded",
+        "jobId": job_id,
+        "materialId": material_id,
+        "processedAt": superseded_at.isoformat(timespec="seconds"),
+    }
+
+
+def _can_reuse_canonical_chunks(
+    *,
+    source: AIKnowledgeSource | None,
+    chunks: list[AIKnowledgeChunk],
+    content_hash: str,
+    source_version: str,
+    publish_status: AIPublishStatus,
+    existing_chunk_fingerprint: list[tuple[int, str]],
+    expected_chunk_fingerprint: list[tuple[int, str]],
+) -> bool:
+    if source is None or not chunks:
+        return False
+    source_metadata = (
+        source.metadata_json
+        if isinstance(source.metadata_json, dict)
+        else {}
+    )
+    return bool(
+        not source_metadata.get("indexStale")
+        and all(chunk.is_active for chunk in chunks)
+        and source.content_hash == content_hash
+        and source.source_version == source_version
+        and source.publish_status == publish_status
+        and existing_chunk_fingerprint == expected_chunk_fingerprint
+    )
 
 
 def _get_material_job_metadata(metadata_json: dict | list | None) -> dict[str, object]:
@@ -509,10 +910,16 @@ def _should_auto_retry(*, exc: Exception, stage: str) -> bool:
     if any(marker in normalized_message for marker in retryable_markers):
         return True
 
-    if normalized_stage.startswith("embedding_chunk_"):
+    if normalized_stage.startswith(
+        ("embedding_chunk_", "embedding_model_", "embedding_partial")
+    ):
         return True
 
-    if normalized_stage in {"content_extraction", "index_write"}:
+    if normalized_stage in {
+        "content_extraction",
+        "index_write",
+        "multi_vector_index_write",
+    }:
         return True
 
     return False
