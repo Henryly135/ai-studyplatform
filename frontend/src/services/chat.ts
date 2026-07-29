@@ -292,21 +292,42 @@ function normalizeAiModelCatalog(payload: unknown): AiModelCatalog {
   if (providers.length === 0 && rawModels.length > 0) {
     const groupedProviders = new Map<string, AiModelCatalog["providers"][number]>();
     rawModels
-      .map((model) => normalizeAiModelCatalogModel(model))
-      .filter((model) => isSupportedAiProvider(model.provider))
-      .forEach((model) => {
+      .map((payload) => {
+        const data = asRecord(payload);
+        const model = normalizeAiModelCatalogModel(payload);
+        const configuredValue =
+          data.configured ?? getField(data, "hasCredential", "has_credential");
+
+        return {
+          model,
+          providerLabel: String(
+            getField(data, "providerLabel", "provider_label") ??
+              data.providerName ??
+              model.provider
+          ),
+          configured:
+            configuredValue === undefined
+              ? model.available
+              : toBoolean(configuredValue),
+        };
+      })
+      .filter(({ model }) => isSupportedAiProvider(model.provider))
+      .forEach(({ model, providerLabel, configured }) => {
         const providerKey = model.provider || "default";
         const currentProvider = groupedProviders.get(providerKey);
         if (currentProvider) {
           currentProvider.models.push(model);
-          currentProvider.configured = currentProvider.configured || model.available;
+          currentProvider.configured = currentProvider.configured || configured;
           currentProvider.backendSupported = currentProvider.backendSupported || model.backendSupported;
+          if (currentProvider.label === providerKey && providerLabel !== providerKey) {
+            currentProvider.label = providerLabel;
+          }
         } else {
           groupedProviders.set(providerKey, {
             provider: providerKey,
-            label: providerKey,
+            label: providerLabel,
             backendSupported: model.backendSupported,
-            configured: model.available,
+            configured,
             models: [model],
           });
         }

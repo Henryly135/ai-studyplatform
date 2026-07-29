@@ -150,8 +150,34 @@ def health_check_admin_ai_provider(
             "该供应商不在当前版本的支持列表中。",
         )
     repo = AIModelCatalogRepository(db)
+    models = repo.list_models()
+    models_by_id = {
+        model.model_id: model
+        for model in models
+    }
     provider_models = [
-        model for model in repo.list_models() if model.provider_key == provider_key and model.supports_chat
+        model
+        for model in models
+        if (
+            model.provider_key == provider_key
+            and model.supports_chat
+            and model.is_enabled
+            and model.backend_supported
+            and not model.display_only
+            and model.paired_embedding_model_id
+            and (
+                embedding_model := models_by_id.get(
+                    model.paired_embedding_model_id
+                )
+            )
+            is not None
+            and embedding_model.provider_key == provider_key
+            and embedding_model.is_enabled
+            and embedding_model.backend_supported
+            and not embedding_model.display_only
+            and embedding_model.supports_embedding
+            and embedding_model.supports_rag_indexing
+        )
     ]
     if not provider_models:
         raise _http_error(status.HTTP_400_BAD_REQUEST, "AI_PROVIDER_UNSUPPORTED", "该供应商没有可用的聊天模型。")

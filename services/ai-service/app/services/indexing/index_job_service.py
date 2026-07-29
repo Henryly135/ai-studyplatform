@@ -166,7 +166,24 @@ class IndexJobService:
             )
 
         recovered_job_ids: list[int] = []
-        for job in stale_jobs:
+        for stale_snapshot in stale_jobs:
+            if stale_snapshot.material_id is None:
+                continue
+            self.jobs.lock_material_job_scope(
+                material_id=stale_snapshot.material_id
+            )
+            job = self.jobs.get_stale_running_job_for_recovery(
+                job_id=stale_snapshot.job_id,
+                material_id=stale_snapshot.material_id,
+                locked_before=locked_before,
+                expected_worker_id=stale_snapshot.worker_id,
+                expected_attempt_count=stale_snapshot.attempt_count,
+            )
+            if job is None:
+                # Release the transaction-scoped advisory lock before checking
+                # the next snapshot.
+                self.session.commit()
+                continue
             if not isinstance(job.metadata_json, dict):
                 job.metadata_json = {}
             job.metadata_json = {
@@ -185,8 +202,9 @@ class IndexJobService:
                 finished_at=None,
             )
             recovered_job_ids.append(job.job_id)
-
-        self.session.commit()
+            # Commit one material at a time so a slow recovery batch does not
+            # hold unrelated material locks.
+            self.session.commit()
 
         for job_id in recovered_job_ids:
             self._dispatch_job(job_id)
@@ -270,6 +288,9 @@ class IndexJobService:
                     if snapshot_job is not None
                     else source.metadata_json
                 ),
+                snapshot_source_id=(
+                    source.source_id if snapshot_job is None else None
+                ),
                 snapshot_job_id=(
                     snapshot_job.job_id
                     if snapshot_job is not None
@@ -314,6 +335,7 @@ class IndexJobService:
                 source_version=latest_job.source_version,
                 content_hash=latest_job.content_hash,
                 metadata=latest_job.metadata_json,
+                snapshot_source_id=None,
                 snapshot_job_id=latest_job.job_id,
             )
             if job is None:
@@ -360,6 +382,7 @@ class IndexJobService:
         source_version: str | None,
         content_hash: str | None,
         metadata: dict | list | None,
+        snapshot_source_id: int | None,
         snapshot_job_id: int | None,
     ):
         if (
@@ -390,12 +413,40 @@ class IndexJobService:
             return None
 
         self.jobs.lock_material_job_scope(material_id=material_id)
+        if (
+            snapshot_source_id is not None
+            and not self.sources.has_material_source_snapshot(
+                source_id=snapshot_source_id,
+                material_id=material_id,
+                course_id=course_id,
+                module_id=module_id,
+                source_version=source_version,
+                content_hash=content_hash,
+            )
+        ):
+            # The source may have been deleted after the outer backfill scan.
+            # Re-check under the material advisory lock so stale snapshots
+            # cannot recreate work for a deleted learning material.
+            return None
+
         latest_job = self.jobs.get_latest_backfill_candidate_material_job(
             material_id=material_id
         )
+        if snapshot_job_id is not None and (
+            latest_job is None
+            or latest_job.job_id != snapshot_job_id
+            or latest_job.material_id != material_id
+            or latest_job.course_id != course_id
+            or latest_job.module_id != module_id
+            or latest_job.source_version != source_version
+            or latest_job.content_hash != content_hash
+        ):
+            # Physical deletion removes the snapshot row, while replacement
+            # uploads change the authoritative id or fingerprint. Either case
+            # fences the stale outer scan.
+            return None
         if latest_job is not None and (
             snapshot_job_id is None
-            or latest_job.job_id > snapshot_job_id
             or latest_job.status in {AIJobStatus.QUEUED, AIJobStatus.BLOCKED}
         ):
             return None

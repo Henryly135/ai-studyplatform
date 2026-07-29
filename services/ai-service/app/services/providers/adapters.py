@@ -73,6 +73,31 @@ def classify_provider_error(
     return "unknown_provider_error"
 
 
+def _classify_genai_client_error(
+    exc: genai_errors.ClientError,
+) -> str:
+    raw_status_code = getattr(exc, "code", None)
+    status_code = (
+        int(raw_status_code)
+        if isinstance(raw_status_code, int)
+        or (
+            isinstance(raw_status_code, str)
+            and raw_status_code.isdigit()
+        )
+        else None
+    )
+    raw_error_code = getattr(exc, "status", None)
+    return classify_provider_error(
+        exc,
+        status_code=status_code,
+        error_code=(
+            str(raw_error_code)
+            if raw_error_code is not None
+            else None
+        ),
+    )
+
+
 def _usage_value(data: Any, *names: str) -> int | None:
     for name in names:
         if isinstance(data, dict) and data.get(name) is not None:
@@ -206,7 +231,7 @@ class GeminiChatAdapter:
                 ),
             )
         except genai_errors.ClientError as exc:
-            provider_error_type = classify_provider_error(exc)
+            provider_error_type = _classify_genai_client_error(exc)
             if provider_error_type == "quota":
                 raise ProviderQuotaError("AI provider quota is temporarily unavailable.") from exc
             raise ProviderInvocationError(
@@ -272,7 +297,7 @@ class GeminiEmbeddingAdapter:
                 config=genai_types.EmbedContentConfig(**config_kwargs),
             )
         except genai_errors.ClientError as exc:
-            provider_error_type = classify_provider_error(exc)
+            provider_error_type = _classify_genai_client_error(exc)
             if provider_error_type == "quota":
                 raise ProviderQuotaError("AI provider quota is temporarily unavailable.") from exc
             raise ProviderInvocationError(

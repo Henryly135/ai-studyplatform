@@ -103,6 +103,7 @@ def test_release_blocked_jobs_still_publishes_existing_sources_when_no_jobs() ->
 def test_reindex_all_materials_clones_source_metadata_and_dispatches_jobs() -> None:
     session = _FakeSession()
     source = SimpleNamespace(
+        source_id=301,
         course_id=1,
         module_id=2,
         material_id=3,
@@ -134,7 +135,10 @@ def test_reindex_all_materials_clones_source_metadata_and_dispatches_jobs() -> N
         ),
     )
     service = IndexJobService(session)
-    service.sources = SimpleNamespace(list_material_sources=lambda: [source])
+    service.sources = SimpleNamespace(
+        list_material_sources=lambda: [source],
+        has_material_source_snapshot=lambda **_: True,
+    )
     service.jobs = jobs
     dispatched = []
     service._dispatch_job = lambda job_id: dispatched.append(job_id)
@@ -152,6 +156,7 @@ def test_reindex_all_materials_clones_source_metadata_and_dispatches_jobs() -> N
 def test_reindex_all_materials_queues_follow_up_from_running_job_snapshot() -> None:
     session = _FakeSession()
     source = SimpleNamespace(
+        source_id=302,
         course_id=1,
         module_id=2,
         material_id=3,
@@ -193,7 +198,10 @@ def test_reindex_all_materials_queues_follow_up_from_running_job_snapshot() -> N
         ),
     )
     service = IndexJobService(session)
-    service.sources = SimpleNamespace(list_material_sources=lambda: [source])
+    service.sources = SimpleNamespace(
+        list_material_sources=lambda: [source],
+        has_material_source_snapshot=lambda **_: True,
+    )
     service.jobs = jobs
     dispatched = []
     service._dispatch_job = lambda job_id: dispatched.append(job_id)
@@ -260,6 +268,7 @@ def test_reindex_all_materials_covers_first_upload_before_source_exists() -> Non
 def test_reindex_all_materials_never_replaces_newer_queued_upload() -> None:
     session = _FakeSession()
     source = SimpleNamespace(
+        source_id=303,
         course_id=1,
         module_id=2,
         material_id=3,
@@ -288,7 +297,10 @@ def test_reindex_all_materials_never_replaces_newer_queued_upload() -> None:
         create_material_job=lambda **kwargs: created_payloads.append(kwargs),
     )
     service = IndexJobService(session)
-    service.sources = SimpleNamespace(list_material_sources=lambda: [source])
+    service.sources = SimpleNamespace(
+        list_material_sources=lambda: [source],
+        has_material_source_snapshot=lambda **_: True,
+    )
     service.jobs = jobs
     dispatched = []
     service._dispatch_job = lambda job_id: dispatched.append(job_id)
@@ -307,6 +319,7 @@ def test_reindex_all_materials_never_replaces_newer_queued_upload() -> None:
 def test_reindex_all_materials_retries_committed_job_after_broker_recovers() -> None:
     session = _FakeSession()
     source = SimpleNamespace(
+        source_id=304,
         course_id=1,
         module_id=2,
         material_id=3,
@@ -372,7 +385,10 @@ def test_reindex_all_materials_retries_committed_job_after_broker_recovers() -> 
 
     jobs = StatefulJobs()
     service = IndexJobService(session)
-    service.sources = SimpleNamespace(list_material_sources=lambda: [source])
+    service.sources = SimpleNamespace(
+        list_material_sources=lambda: [source],
+        has_material_source_snapshot=lambda **_: True,
+    )
     service.jobs = jobs
     dispatch_attempts = []
 
@@ -443,6 +459,7 @@ def test_reindex_all_materials_respects_blocked_and_delayed_retry_jobs() -> None
 def test_reindex_all_materials_prefers_newer_successful_source_over_old_running_job() -> None:
     session = _FakeSession()
     source = SimpleNamespace(
+        source_id=305,
         course_id=1,
         module_id=2,
         material_id=3,
@@ -496,7 +513,10 @@ def test_reindex_all_materials_prefers_newer_successful_source_over_old_running_
         ),
     )
     service = IndexJobService(session)
-    service.sources = SimpleNamespace(list_material_sources=lambda: [source])
+    service.sources = SimpleNamespace(
+        list_material_sources=lambda: [source],
+        has_material_source_snapshot=lambda **_: True,
+    )
     service.jobs = jobs
     service._dispatch_job = lambda _job_id: None
 
@@ -506,3 +526,52 @@ def test_reindex_all_materials_prefers_newer_successful_source_over_old_running_
     assert created_payloads[0]["source_version"] == "materials/new.pdf"
     assert created_payloads[0]["content_hash"] == "new-hash"
     assert created_payloads[0]["metadata_json"]["backfillOfJobId"] == 900
+
+
+def test_reindex_all_materials_skips_source_deleted_after_snapshot() -> None:
+    session = _FakeSession()
+    source = SimpleNamespace(
+        source_id=306,
+        course_id=1,
+        module_id=2,
+        material_id=3,
+        source_version="materials/deleted.pdf",
+        content_hash="deleted-hash",
+        metadata_json={
+            "title": "Deleted",
+            "materialType": "document",
+            "resourceUrl": "/deleted.pdf",
+            "storagePath": "materials/deleted.pdf",
+            "contentType": "application/pdf",
+            "sizeBytes": 123,
+            "moduleStatus": "published",
+            "storageProvider": "minio",
+            "storageBucket": "materials",
+            "objectKey": "materials/deleted.pdf",
+        },
+    )
+    created_payloads = []
+    jobs = SimpleNamespace(
+        list_backfill_candidate_material_jobs=lambda: [],
+        lock_material_job_scope=lambda **_: None,
+        get_latest_backfill_candidate_material_job=lambda **_: None,
+        list_replaceable_material_jobs=lambda **_: [],
+        create_material_job=lambda **kwargs: created_payloads.append(kwargs),
+    )
+    service = IndexJobService(session)
+    service.sources = SimpleNamespace(
+        list_material_sources=lambda: [source],
+        has_material_source_snapshot=lambda **_: False,
+    )
+    service.jobs = jobs
+    dispatched = []
+    service._dispatch_job = dispatched.append
+
+    response = service.reindex_all_materials()
+
+    assert response.jobIds == []
+    assert response.queuedCount == 0
+    assert response.skippedCount == 1
+    assert response.dispatchedCount == 0
+    assert created_payloads == []
+    assert dispatched == []

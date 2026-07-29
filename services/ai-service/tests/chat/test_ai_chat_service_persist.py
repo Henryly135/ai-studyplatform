@@ -138,6 +138,86 @@ def test_persist_chat_writes_user_assistant_messages_and_prompt_log(monkeypatch)
     assert db.commit_calls == 2
 
 
+def test_persist_chat_uses_stored_context_when_follow_up_omits_it(monkeypatch) -> None:
+    # Internal callers cannot clear or move an existing session by omitting its
+    # context; RAG and session activity use the stored immutable scope.
+    _reset_fakes()
+    stored_session = SimpleNamespace(
+        session_id=10,
+        user_id=7,
+        course_id=2,
+        module_id=3,
+        message_count=2,
+    )
+    workflow_calls = []
+    activity_calls = []
+
+    class ExistingSessionsRepository:
+        def __init__(self, db) -> None:
+            self.db = db
+
+        def get_by_id(self, session_id):
+            assert session_id == 10
+            return stored_session
+
+        def record_user_message(self, session, **kwargs):
+            activity_calls.append(("user", kwargs))
+            session.message_count += 1
+            return session
+
+        def update_activity(self, session, **kwargs):
+            activity_calls.append(("assistant", kwargs))
+            session.message_count += kwargs["message_increment"]
+            return session
+
+    monkeypatch.setattr(
+        "app.services.chat.ai_chat_service.AIChatSessionsRepository",
+        ExistingSessionsRepository,
+    )
+    monkeypatch.setattr(
+        "app.services.chat.ai_chat_service.AIChatMessagesRepository",
+        FakeMessagesRepository,
+    )
+    monkeypatch.setattr(
+        "app.services.chat.ai_chat_service.AIPromptLogsRepository",
+        FakePromptLogsRepository,
+    )
+    monkeypatch.setattr(
+        "app.services.chat.ai_chat_service.now_local",
+        lambda: datetime(2026, 4, 29, tzinfo=timezone.utc),
+    )
+
+    def _execute_chat_workflow(**kwargs):
+        workflow_calls.append(kwargs)
+        return ChatWorkflowResult(
+            reply_result=_reply_result(),
+            prompt_template_name="chat_reply_v1",
+            retrieval_result=None,
+            used_retrieval=False,
+            retrieval_context_text=None,
+            conversation_history=[],
+        )
+
+    monkeypatch.setattr(
+        "app.services.chat.ai_chat_service.RAGWorkflowService",
+        lambda db: SimpleNamespace(execute_chat_workflow=_execute_chat_workflow),
+    )
+
+    result = persist_chat(
+        FakeSession(),
+        ChatServiceRequest(session_id=10, user_id=7, message="Follow up"),
+    )
+
+    assert result.session_id == 10
+    assert workflow_calls[0]["course_id"] == 2
+    assert workflow_calls[0]["module_id"] == 3
+    assert (stored_session.course_id, stored_session.module_id) == (2, 3)
+    assert all(
+        "course_id" not in kwargs and "module_id" not in kwargs
+        for _, kwargs in activity_calls
+    )
+
+
 def test_persist_chat_writes_retrieval_context_message_and_log(monkeypatch) -> None:
     # Tests persist_chat stores hidden retrieval context and retrieval prompt log when RAG is used.
     _reset_fakes()

@@ -1,5 +1,6 @@
-from hashlib import sha256
+from dataclasses import dataclass
 from datetime import timedelta
+from hashlib import sha256
 
 from sqlalchemy.orm import Session
 
@@ -7,7 +8,7 @@ from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.core.time import now_local
 from app.db.session import SessionLocal
-from app.models.ai_index_jobs import AIIndexJob, AIJobStatus
+from app.models.ai_index_jobs import AIJobStatus
 from app.models.ai_knowledge_chunk_embeddings import MULTI_EMBEDDING_DIMENSION
 from app.models.ai_knowledge_chunks import AIKnowledgeChunk
 from app.models.ai_knowledge_sources import (
@@ -31,6 +32,14 @@ from app.services.indexing.text_chunking_service import TextChunkingService
 from platform_common.errors import invalid_request_error
 
 
+@dataclass(frozen=True)
+class _MaterialJobLease:
+    job_id: int
+    material_id: int | None
+    worker_id: str
+    attempt_count: int
+
+
 def _safe_task_error_message(*, stage: str, exc: Exception) -> str:
     return f"[{stage}] {type(exc).__name__}"
 
@@ -46,6 +55,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
     # Stage 1: Initialization
     stage = "initializing"
     embedding_logs = AIEmbeddingLogsRepository(session)
+    claimed_lease: _MaterialJobLease | None = None
 
     try:
         # Stage 2: Job Retrieval and Validation
@@ -71,8 +81,8 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             }
 
         worker_id = str(
-            getattr(self.request, "hostname", "")
-            or getattr(self.request, "id", "")
+            getattr(self.request, "id", "")
+            or getattr(self.request, "hostname", "")
             or "ai-worker"
         )
         if not jobs.claim_queued_job(
@@ -93,6 +103,12 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             }
         session.commit()
         session.refresh(job)
+        claimed_lease = _MaterialJobLease(
+            job_id=job.job_id,
+            material_id=job.material_id,
+            worker_id=str(job.worker_id),
+            attempt_count=job.attempt_count,
+        )
 
         content_service = MaterialContentService()
         chunking_service = TextChunkingService()
@@ -200,7 +216,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             superseded_response = _acquire_material_write_fence(
                 session=session,
                 jobs=jobs,
-                job=job,
+                lease=claimed_lease,
             )
             if superseded_response is not None:
                 return superseded_response
@@ -290,7 +306,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             superseded_response = _acquire_material_write_fence(
                 session=session,
                 jobs=jobs,
-                job=job,
+                lease=claimed_lease,
             )
             if superseded_response is not None:
                 return superseded_response
@@ -350,7 +366,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             superseded_response = _supersede_if_newer_material_job(
                 session=session,
                 jobs=jobs,
-                job=job,
+                lease=claimed_lease,
             )
             if superseded_response is not None:
                 return superseded_response
@@ -362,7 +378,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
         superseded_response = _acquire_material_write_fence(
             session=session,
             jobs=jobs,
-            job=job,
+            lease=claimed_lease,
         )
         if superseded_response is not None:
             return superseded_response
@@ -517,7 +533,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
         superseded_response = _supersede_if_newer_material_job(
             session=session,
             jobs=jobs,
-            job=job,
+            lease=claimed_lease,
         )
         if superseded_response is not None:
             return superseded_response
@@ -537,7 +553,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             superseded_response = _supersede_if_newer_material_job(
                 session=session,
                 jobs=jobs,
-                job=job,
+                lease=claimed_lease,
             )
             if superseded_response is not None:
                 return superseded_response
@@ -558,7 +574,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
         superseded_response = _supersede_if_newer_material_job(
             session=session,
             jobs=jobs,
-            job=job,
+            lease=claimed_lease,
         )
         if superseded_response is not None:
             return superseded_response
@@ -588,7 +604,27 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
     
     except Exception as exc:
         session.rollback()
-        job = jobs.get_by_id(jobId)
+        if claimed_lease is not None:
+            fence_response = _acquire_material_write_fence(
+                session=session,
+                jobs=jobs,
+                lease=claimed_lease,
+            )
+            if fence_response is not None:
+                return fence_response
+            if claimed_lease.material_id is None:
+                return _missing_material_job_response(claimed_lease)
+            job = jobs.get_running_material_job_for_lease(
+                job_id=claimed_lease.job_id,
+                material_id=claimed_lease.material_id,
+                expected_worker_id=claimed_lease.worker_id,
+                expected_attempt_count=claimed_lease.attempt_count,
+            )
+            if job is None:
+                session.rollback()
+                return _missing_or_changed_lease_response(claimed_lease)
+        else:
+            job = jobs.get_by_id(jobId)
         if job is not None:
             if not isinstance(job.metadata_json, dict):
                 job.metadata_json = {}
@@ -686,40 +722,33 @@ def _acquire_material_write_fence(
     *,
     session: Session,
     jobs: AIIndexJobsRepository,
-    job: AIIndexJob,
+    lease: _MaterialJobLease,
 ) -> dict[str, object] | None:
     """Linearize final index writes against register/backfill/delete."""
 
-    job_id = job.job_id
-    material_id = job.material_id
+    job_id = lease.job_id
+    material_id = lease.material_id
     if material_id is None:
         session.rollback()
-        return {
-            "status": "skipped",
-            "jobId": job_id,
-            "materialId": None,
-            "jobStatus": "missing_material",
-        }
+        return _missing_material_job_response(lease)
 
     jobs.lock_material_job_scope(material_id=material_id)
-    if not jobs.is_running_material_job(
+    current_job = jobs.get_running_material_job_for_lease(
         job_id=job_id,
         material_id=material_id,
-    ):
+        expected_worker_id=lease.worker_id,
+        expected_attempt_count=lease.attempt_count,
+    )
+    if current_job is None:
         # The row may have been deleted while this worker waited for the lock.
         # Do not consult the possibly stale ORM identity after the rollback.
         session.rollback()
-        return {
-            "status": "skipped",
-            "jobId": job_id,
-            "materialId": material_id,
-            "jobStatus": "missing_or_not_running",
-        }
+        return _missing_or_changed_lease_response(lease)
 
     return _supersede_if_newer_material_job(
         session=session,
         jobs=jobs,
-        job=job,
+        lease=lease,
     )
 
 
@@ -727,10 +756,10 @@ def _supersede_if_newer_material_job(
     *,
     session: Session,
     jobs: AIIndexJobsRepository,
-    job: AIIndexJob,
+    lease: _MaterialJobLease,
 ) -> dict[str, object] | None:
-    material_id = job.material_id
-    job_id = job.job_id
+    material_id = lease.material_id
+    job_id = lease.job_id
     if material_id is None or not jobs.has_newer_material_job(
         material_id=material_id,
         job_id=job_id,
@@ -740,26 +769,56 @@ def _supersede_if_newer_material_job(
     # Discard every pending source/vector/status mutation from the older job,
     # then persist only its terminal superseded state.
     session.rollback()
-    current_job = jobs.get_by_id(job_id)
+    jobs.lock_material_job_scope(material_id=material_id)
+    current_job = jobs.get_running_material_job_for_lease(
+        job_id=job_id,
+        material_id=material_id,
+        expected_worker_id=lease.worker_id,
+        expected_attempt_count=lease.attempt_count,
+    )
+    if current_job is None:
+        session.rollback()
+        return _missing_or_changed_lease_response(lease)
     superseded_at = now_local()
-    if current_job is not None:
-        jobs.update_status(
-            current_job,
-            status=AIJobStatus.SUPERSEDED,
-            worker_id=None,
-            next_retry_at=None,
-            locked_at=None,
-            started_at=current_job.started_at,
-            finished_at=superseded_at,
-            error_message=None,
-        )
-        session.commit()
+    jobs.update_status(
+        current_job,
+        status=AIJobStatus.SUPERSEDED,
+        worker_id=None,
+        next_retry_at=None,
+        locked_at=None,
+        started_at=current_job.started_at,
+        finished_at=superseded_at,
+        error_message=None,
+    )
+    session.commit()
 
     return {
         "status": "superseded",
         "jobId": job_id,
         "materialId": material_id,
         "processedAt": superseded_at.isoformat(timespec="seconds"),
+    }
+
+
+def _missing_material_job_response(
+    lease: _MaterialJobLease,
+) -> dict[str, object]:
+    return {
+        "status": "skipped",
+        "jobId": lease.job_id,
+        "materialId": None,
+        "jobStatus": "missing_material",
+    }
+
+
+def _missing_or_changed_lease_response(
+    lease: _MaterialJobLease,
+) -> dict[str, object]:
+    return {
+        "status": "skipped",
+        "jobId": lease.job_id,
+        "materialId": lease.material_id,
+        "jobStatus": "missing_or_not_running",
     }
 
 

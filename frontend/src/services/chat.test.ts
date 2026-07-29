@@ -424,8 +424,11 @@ describe("admin AI provider health normalization", () => {
             {
               id: "gemini:flash",
               provider: "gemini",
+              providerLabel: "Google Gemini",
+              configured: true,
               name: "Gemini Flash",
-              available: true,
+              available: false,
+              unavailableReason: "Provider health check failed",
             },
           ],
         })
@@ -456,7 +459,10 @@ describe("admin AI provider health normalization", () => {
     expect(catalog.providers[0].models[1].unavailableReason).toBe("Missing key");
     expect(catalog.providers[0].models[1].capabilities).toEqual(["embedding"]);
     expect(flatCatalog.providers[0].provider).toBe("gemini");
+    expect(flatCatalog.providers[0].label).toBe("Google Gemini");
+    expect(flatCatalog.providers[0].configured).toBe(true);
     expect(flatCatalog.providers[0].models[0].modelId).toBe("gemini:flash");
+    expect(flatCatalog.providers[0].models[0].available).toBe(false);
     expect(flatCatalog.providers[0].models[0]).toMatchObject({
       pairedEmbeddingModelId: null,
       pairedEmbeddingModelName: null,

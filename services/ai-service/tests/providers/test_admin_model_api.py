@@ -22,6 +22,44 @@ from app.schemas.ai_models import AdminAIProviderCredentialRequest
 from app.services.providers.types import ProviderQuotaError
 
 
+def _health_chat_model(
+    *,
+    model_id: str = "glm:glm-4.7",
+    paired_embedding_model_id: str | None = "glm:embedding-3",
+    is_enabled: bool = True,
+    backend_supported: bool = True,
+    display_only: bool = False,
+):
+    return SimpleNamespace(
+        model_id=model_id,
+        provider_key="glm",
+        supports_chat=True,
+        paired_embedding_model_id=paired_embedding_model_id,
+        is_enabled=is_enabled,
+        backend_supported=backend_supported,
+        display_only=display_only,
+    )
+
+
+def _health_embedding_model(
+    *,
+    model_id: str = "glm:embedding-3",
+    is_enabled: bool = True,
+    backend_supported: bool = True,
+    display_only: bool = False,
+):
+    return SimpleNamespace(
+        model_id=model_id,
+        provider_key="glm",
+        supports_chat=False,
+        supports_embedding=True,
+        supports_rag_indexing=True,
+        is_enabled=is_enabled,
+        backend_supported=backend_supported,
+        display_only=display_only,
+    )
+
+
 def test_saving_enabled_provider_key_queues_historical_vector_backfill(
     monkeypatch,
 ) -> None:
@@ -126,14 +164,10 @@ def test_admin_provider_health_check_requires_chat_and_paired_1024_embedding(
     monkeypatch,
 ) -> None:
     calls: list[tuple[str, object]] = []
-    chat_model = SimpleNamespace(
-        model_id="glm:glm-4.7",
-        provider_key="glm",
-        supports_chat=True,
-        paired_embedding_model_id="glm:embedding-3",
-    )
+    chat_model = _health_chat_model()
+    embedding_model = _health_embedding_model()
     repository = SimpleNamespace(
-        list_models=lambda: [chat_model],
+        list_models=lambda: [chat_model, embedding_model],
         update_credential_health=lambda **kwargs: calls.append(
             ("health", kwargs)
         ),
@@ -202,19 +236,115 @@ def test_admin_provider_health_check_requires_chat_and_paired_1024_embedding(
     )
 
 
+def test_admin_provider_health_check_skips_ineligible_chat_models(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+    valid_chat_model = _health_chat_model(
+        model_id="glm:available-chat",
+    )
+    valid_embedding_model = _health_embedding_model()
+    disabled_embedding_model = _health_embedding_model(
+        model_id="glm:disabled-embedding",
+        is_enabled=False,
+    )
+    repository = SimpleNamespace(
+        list_models=lambda: [
+            _health_chat_model(
+                model_id="glm:disabled-chat",
+                is_enabled=False,
+            ),
+            _health_chat_model(
+                model_id="glm:unsupported-chat",
+                backend_supported=False,
+            ),
+            _health_chat_model(
+                model_id="glm:display-only-chat",
+                display_only=True,
+            ),
+            _health_chat_model(
+                model_id="glm:unpaired-chat",
+                paired_embedding_model_id=None,
+            ),
+            _health_chat_model(
+                model_id="glm:disabled-pair-chat",
+                paired_embedding_model_id=disabled_embedding_model.model_id,
+            ),
+            valid_chat_model,
+            disabled_embedding_model,
+            valid_embedding_model,
+        ],
+        update_credential_health=lambda **kwargs: calls.append(
+            ("health", kwargs)
+        ),
+    )
+
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIModelCatalogService",
+        lambda _db: SimpleNamespace(ensure_seeded=lambda: None),
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIModelCatalogRepository",
+        lambda _db: repository,
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIModelInvocationService",
+        lambda _db: SimpleNamespace(
+            generate_text=lambda **kwargs: calls.append(("chat", kwargs))
+        ),
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "AIEmbeddingInvocationService",
+        lambda _db: SimpleNamespace(
+            embed_text=lambda **kwargs: (
+                calls.append(("embedding", kwargs))
+                or SimpleNamespace(output_dimension=1024)
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        admin_ai_models,
+        "IndexJobService",
+        lambda _db: SimpleNamespace(
+            reindex_all_materials=lambda: calls.append(("backfill", None))
+        ),
+    )
+
+    response = admin_ai_models.health_check_admin_ai_provider(
+        provider_key="glm",
+        current_user={"id": 1},
+        db=SimpleNamespace(
+            commit=lambda: calls.append(("commit", None))
+        ),
+    )
+
+    assert response.status == "ready"
+    assert calls[0][0] == "chat"
+    assert calls[0][1]["model_id"] == valid_chat_model.model_id
+    assert calls[1] == (
+        "embedding",
+        {
+            "text": "AI provider embedding health check.",
+            "model_id": valid_embedding_model.model_id,
+            "task_type": "RETRIEVAL_QUERY",
+            "bypass_health_status_for_health_check": True,
+        },
+    )
+
+
 def test_admin_provider_health_check_rejects_non_1024_embedding(
     monkeypatch,
 ) -> None:
     health_updates: list[dict] = []
     backfill_calls: list[str] = []
-    chat_model = SimpleNamespace(
-        model_id="glm:glm-4.7",
-        provider_key="glm",
-        supports_chat=True,
-        paired_embedding_model_id="glm:embedding-3",
-    )
+    chat_model = _health_chat_model()
+    embedding_model = _health_embedding_model()
     repository = SimpleNamespace(
-        list_models=lambda: [chat_model],
+        list_models=lambda: [chat_model, embedding_model],
         update_credential_health=lambda **kwargs: health_updates.append(
             kwargs
         ),
@@ -267,14 +397,10 @@ def test_admin_provider_health_check_quota_does_not_queue_backfill(
 ) -> None:
     health_updates: list[dict] = []
     backfill_calls: list[str] = []
-    chat_model = SimpleNamespace(
-        model_id="glm:glm-4.7",
-        provider_key="glm",
-        supports_chat=True,
-        paired_embedding_model_id="glm:embedding-3",
-    )
+    chat_model = _health_chat_model()
+    embedding_model = _health_embedding_model()
     repository = SimpleNamespace(
-        list_models=lambda: [chat_model],
+        list_models=lambda: [chat_model, embedding_model],
         update_credential_health=lambda **kwargs: health_updates.append(
             kwargs
         ),

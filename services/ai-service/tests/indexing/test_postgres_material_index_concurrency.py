@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import timedelta
 from queue import Queue
 from threading import Thread
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import Engine, create_engine, delete, func, select, text
+from sqlalchemy import Engine, create_engine, delete, func, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.time import now_local
@@ -28,12 +29,24 @@ from app.repositories.ai_index_jobs_repository import AIIndexJobsRepository
 from app.schemas.index_jobs import MaterialIndexJobRegisterRequest
 from app.services.indexing.index_job_service import IndexJobService
 from app.services.indexing.knowledge_indexing_service import KnowledgeIndexingService
-from app.tasks.material_index import _acquire_material_write_fence
+from app.tasks.material_index import (
+    _MaterialJobLease,
+    _acquire_material_write_fence,
+)
 
 
 POSTGRES_TEST_DSN_ENV = "AI_TEST_POSTGRES_DSN"
 EMBEDDING_MODEL_ID = "gemini:gemini-embedding-2"
 EMBEDDING_VERSION = f"{EMBEDDING_MODEL_ID}@1024"
+
+
+def _lease_for(job: AIIndexJob) -> _MaterialJobLease:
+    return _MaterialJobLease(
+        job_id=job.job_id,
+        material_id=job.material_id,
+        worker_id=str(job.worker_id),
+        attempt_count=job.attempt_count,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -334,7 +347,7 @@ def test_new_upload_supersedes_running_worker_at_postgres_write_fence(
         fence_result = _acquire_material_write_fence(
             session=session,
             jobs=repository,
-            job=old_job,
+            lease=_lease_for(old_job),
         )
 
     assert fence_result is not None
@@ -384,7 +397,7 @@ def test_backfill_triggered_before_worker_commit_gets_final_write_rights(
             _acquire_material_write_fence(
                 session=worker_session,
                 jobs=worker_jobs,
-                job=worker_job,
+                lease=_lease_for(worker_job),
             )
             is None
         )
@@ -449,7 +462,7 @@ def test_backfill_triggered_before_worker_commit_gets_final_write_rights(
             _acquire_material_write_fence(
                 session=new_worker_session,
                 jobs=new_worker_jobs,
-                job=new_job,
+                lease=_lease_for(new_job),
             )
             is None
         )
@@ -473,7 +486,7 @@ def test_backfill_triggered_before_worker_commit_gets_final_write_rights(
         stale_result = _acquire_material_write_fence(
             session=stale_worker_session,
             jobs=stale_jobs,
-            job=stale_job,
+            lease=_lease_for(stale_job),
         )
         assert stale_result is not None
         assert stale_result["jobStatus"] == "missing_or_not_running"
@@ -543,7 +556,7 @@ def test_delete_while_worker_waits_does_not_resurrect_index_rows(
                     result = _acquire_material_write_fence(
                         session=worker_session,
                         jobs=AIIndexJobsRepository(worker_session),
-                        job=worker_job,
+                        lease=_lease_for(worker_job),
                     )
                     result_queue.put(("ok", result))
             except BaseException as exc:
@@ -599,6 +612,213 @@ def test_delete_while_worker_waits_does_not_resurrect_index_rows(
             "chunks": 0,
             "vectors": 0,
         }
+
+
+def test_delete_after_backfill_snapshot_does_not_requeue_material(
+    postgres_engine: Engine,
+    session_factory: sessionmaker[Session],
+    material_id: int,
+) -> None:
+    with session_factory() as seed_session:
+        _create_source_graph(
+            seed_session,
+            material_id=material_id,
+            version="delete-backfill-race",
+        )
+        _create_job(
+            seed_session,
+            material_id=material_id,
+            status=AIJobStatus.SUCCESS,
+            version="delete-backfill-race",
+        )
+
+    result_queue: Queue[tuple[str, object]] = Queue()
+    pid_queue: Queue[int] = Queue()
+
+    with session_factory() as delete_session:
+        delete_jobs = AIIndexJobsRepository(delete_session)
+        delete_jobs.lock_material_job_scope(material_id=material_id)
+        delete_result = KnowledgeIndexingService(
+            delete_session
+        ).delete_material_source(material_id=material_id)
+        deleted_job_count = delete_jobs.delete_by_material_id(
+            material_id=material_id
+        )
+        assert delete_result.deleted_source_count == 1
+        assert deleted_job_count == 1
+
+        def trigger_backfill() -> None:
+            try:
+                with session_factory() as backfill_session:
+                    backend_pid = int(
+                        backfill_session.scalar(select(func.pg_backend_pid()))
+                    )
+                    pid_queue.put(backend_pid)
+                    service = IndexJobService(backfill_session)
+                    dispatched_job_ids: list[int] = []
+                    service._dispatch_job = dispatched_job_ids.append
+                    response = service.reindex_all_materials()
+                    result_queue.put(
+                        ("ok", (response, dispatched_job_ids))
+                    )
+            except BaseException as exc:
+                result_queue.put(("error", exc))
+
+        backfill_thread = Thread(target=trigger_backfill, daemon=True)
+        backfill_thread.start()
+        backfill_pid = pid_queue.get(timeout=5)
+        _wait_for_advisory_lock(
+            postgres_engine,
+            backend_pid=backfill_pid,
+        )
+        delete_session.commit()
+
+    backfill_thread.join(timeout=10)
+    assert not backfill_thread.is_alive()
+    response, dispatched_job_ids = _unwrap_thread_result(result_queue)
+    assert response.jobIds == []
+    assert response.queuedCount == 0
+    assert response.skippedCount == 1
+    assert response.dispatchedCount == 0
+    assert dispatched_job_ids == []
+
+    with session_factory() as assertion_session:
+        assert (
+            assertion_session.scalar(
+                select(func.count())
+                .select_from(AIIndexJob)
+                .where(AIIndexJob.material_id == material_id)
+            )
+            == 0
+        )
+        assert (
+            assertion_session.scalar(
+                select(func.count())
+                .select_from(AIKnowledgeSource)
+                .where(AIKnowledgeSource.material_id == material_id)
+            )
+            == 0
+        )
+
+
+def test_recovered_attempt_fences_old_worker_even_with_same_worker_id(
+    session_factory: sessionmaker[Session],
+    material_id: int,
+) -> None:
+    with session_factory() as old_worker_session:
+        old_job = _create_running_job(
+            old_worker_session,
+            material_id=material_id,
+            version="stale-lease",
+        )
+        old_job.locked_at = now_local() - timedelta(days=1)
+        old_worker_session.commit()
+        old_job_id = old_job.job_id
+        old_attempt_count = old_job.attempt_count
+        old_worker_id = old_job.worker_id
+        old_lease = _lease_for(old_job)
+
+        with session_factory() as recovery_session:
+            recovery_service = IndexJobService(recovery_session)
+            recovery_service._dispatch_job = lambda _job_id: None
+            recovery = recovery_service.recover_stale_running_jobs()
+        assert recovery.recoveredJobIds == [old_job_id]
+
+        with session_factory() as new_worker_session:
+            new_jobs = AIIndexJobsRepository(new_worker_session)
+            assert new_jobs.claim_queued_job(
+                job_id=old_job_id,
+                worker_id=str(old_worker_id),
+                claimed_at=now_local(),
+            )
+            new_worker_session.commit()
+
+        old_worker_session.rollback()
+        assert inspect(old_job).expired is True
+        old_result = _acquire_material_write_fence(
+            session=old_worker_session,
+            jobs=AIIndexJobsRepository(old_worker_session),
+            lease=old_lease,
+        )
+
+    assert old_result is not None
+    assert old_result["status"] == "skipped"
+    with session_factory() as assertion_session:
+        current_job = assertion_session.get(AIIndexJob, old_job_id)
+        assert current_job is not None
+        assert current_job.status == AIJobStatus.RUNNING
+        assert current_job.worker_id == old_worker_id
+        assert current_job.attempt_count == old_attempt_count + 1
+
+
+def test_recovery_waits_for_worker_fence_and_skips_committed_success(
+    postgres_engine: Engine,
+    session_factory: sessionmaker[Session],
+    material_id: int,
+) -> None:
+    with session_factory() as seed_session:
+        job = _create_running_job(
+            seed_session,
+            material_id=material_id,
+            version="recovery-fence",
+        )
+        job.locked_at = now_local() - timedelta(days=1)
+        seed_session.commit()
+        job_id = job.job_id
+
+    result_queue: Queue[tuple[str, object]] = Queue()
+    pid_queue: Queue[int] = Queue()
+
+    with session_factory() as worker_session:
+        worker_jobs = AIIndexJobsRepository(worker_session)
+        worker_job = worker_jobs.get_by_id(job_id)
+        assert worker_job is not None
+        worker_jobs.lock_material_job_scope(material_id=material_id)
+
+        def trigger_recovery() -> None:
+            try:
+                with session_factory() as recovery_session:
+                    backend_pid = int(
+                        recovery_session.scalar(select(func.pg_backend_pid()))
+                    )
+                    pid_queue.put(backend_pid)
+                    service = IndexJobService(recovery_session)
+                    service._dispatch_job = lambda _job_id: None
+                    result_queue.put(
+                        ("ok", service.recover_stale_running_jobs())
+                    )
+            except BaseException as exc:
+                result_queue.put(("error", exc))
+
+        recovery_thread = Thread(target=trigger_recovery, daemon=True)
+        recovery_thread.start()
+        recovery_pid = pid_queue.get(timeout=5)
+        _wait_for_advisory_lock(
+            postgres_engine,
+            backend_pid=recovery_pid,
+        )
+
+        worker_jobs.update_status(
+            worker_job,
+            status=AIJobStatus.SUCCESS,
+            worker_id=worker_job.worker_id,
+            locked_at=worker_job.locked_at,
+            started_at=worker_job.started_at,
+            finished_at=now_local(),
+        )
+        worker_session.commit()
+
+    recovery_thread.join(timeout=10)
+    assert not recovery_thread.is_alive()
+    recovery = _unwrap_thread_result(result_queue)
+    assert recovery.recoveredJobIds == []
+    assert recovery.recoveredCount == 0
+    assert recovery.dispatchedCount == 0
+
+    with session_factory() as assertion_session:
+        current_job = assertion_session.get(AIIndexJob, job_id)
+        assert current_job is not None
+        assert current_job.status == AIJobStatus.SUCCESS
 
 
 def test_dispatch_failure_leaves_one_republishable_queued_job(

@@ -75,6 +75,10 @@ def _build_summary_text(user_message: str, assistant_reply: str) -> str:
 def _load_or_create_session(db: Session, payload: ChatServiceRequest) -> AIChatSession:
     sessions_repo = AIChatSessionsRepository(db)
     if payload.session_id is None:
+        if payload.module_id is not None and payload.course_id is None:
+            raise AIChatSessionError(
+                "A module-scoped chat session requires a course context."
+            )
         return sessions_repo.create(
             user_id=payload.user_id,
             course_id=payload.course_id,
@@ -88,6 +92,18 @@ def _load_or_create_session(db: Session, payload: ChatServiceRequest) -> AIChatS
         raise AIChatSessionError("Chat session does not exist.")
     if session.user_id != payload.user_id:
         raise AIChatSessionError("Chat session does not belong to the provided user.")
+    if (
+        payload.course_id is not None
+        and payload.course_id != session.course_id
+    ):
+        raise AIChatSessionError("Chat session course context cannot change.")
+    if (
+        payload.module_id is not None
+        and payload.module_id != session.module_id
+    ):
+        raise AIChatSessionError("Chat session module context cannot change.")
+    if session.module_id is not None and session.course_id is None:
+        raise AIChatSessionError("Chat session has an invalid context.")
     return session
 
 
@@ -96,6 +112,8 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
     messages_repo = AIChatMessagesRepository(db)
     prompt_logs_repo = AIPromptLogsRepository(db)
     session = _load_or_create_session(db, payload)
+    course_id = session.course_id
+    module_id = session.module_id
     timestamp = now_local()
 
     user_message = messages_repo.create(
@@ -105,8 +123,6 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
     )
     sessions_repo.record_user_message(
         session,
-        course_id=payload.course_id,
-        module_id=payload.module_id,
         timestamp=timestamp,
     )
     db.commit()
@@ -119,8 +135,8 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
             session_id=session.session_id,
             message_id=user_message.message_id,
             current_user_message=payload.message.strip(),
-            course_id=payload.course_id,
-            module_id=payload.module_id,
+            course_id=course_id,
+            module_id=module_id,
             model_id=payload.model_id,
         )
     except AIModelInvocationError as exc:
@@ -129,7 +145,7 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
             message_id=user_message.message_id,
             user_id=payload.user_id,
             call_type=AIPromptCallType.CHAT,
-            prompt_template_name="chat_rag_v1" if payload.course_id is not None else "chat_reply_v1",
+            prompt_template_name="chat_rag_v1" if course_id is not None else "chat_reply_v1",
             model_name=settings.ai_default_chat_model,
             input_text=payload.message.strip(),
             output_text=None,
@@ -157,7 +173,7 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
             message_id=user_message.message_id,
             user_id=payload.user_id,
             call_type=AIPromptCallType.CHAT,
-            prompt_template_name="chat_rag_v1" if payload.course_id is not None else "chat_reply_v1",
+            prompt_template_name="chat_rag_v1" if course_id is not None else "chat_reply_v1",
             model_name=settings.ai_default_chat_model,
             input_text=payload.message.strip(),
             output_text=None,
@@ -253,8 +269,6 @@ def persist_chat(db: Session, payload: ChatServiceRequest) -> PersistedChatResul
 
     sessions_repo.update_activity(
         session,
-        course_id=payload.course_id,
-        module_id=payload.module_id,
         last_message_at=timestamp,
         last_user_message_at=timestamp,
         last_assistant_message_at=timestamp,

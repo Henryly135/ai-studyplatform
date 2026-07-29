@@ -77,11 +77,9 @@ def test_chat_session_repository_create_update_record_and_list() -> None:
 
     created = repo.create(user_id=7, course_id=1, module_id=2, session_type="demo", title="Title")
     created.message_count = 0
-    repo.record_user_message(created, course_id=1, module_id=2, timestamp=now)
+    repo.record_user_message(created, timestamp=now)
     repo.update_activity(
         created,
-        course_id=1,
-        module_id=2,
         last_message_at=now,
         last_user_message_at=now,
         last_assistant_message_at=now,
@@ -92,6 +90,7 @@ def test_chat_session_repository_create_update_record_and_list() -> None:
     assert repo.get_by_id(1).obj_id == 1
     assert repo.list_by_user(7)[0].session_id == 1
     assert repo.list_by_user_and_module(user_id=7, module_id=2)[0].session_id == 1
+    assert (created.course_id, created.module_id) == (1, 2)
     assert created.message_count == 2
     assert created.summary_text == "summary"
 

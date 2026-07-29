@@ -977,6 +977,19 @@ def test_authenticated_chat_success_and_error_mapping(monkeypatch) -> None:
     monkeypatch.setattr("app.api.chat.decode_course_uuid", lambda value: 2)
     monkeypatch.setattr("app.api.chat.decode_module_uuid", lambda value: 3)
     monkeypatch.setattr("app.api.chat.encode_session_uuid", lambda value: f"session-{value}")
+    monkeypatch.setattr("app.api.chat.encode_course_uuid", lambda value: "c")
+    monkeypatch.setattr("app.api.chat.encode_module_uuid", lambda value: "m")
+    monkeypatch.setattr(
+        "app.api.chat.AIChatSessionsRepository",
+        lambda _db: SimpleNamespace(
+            get_by_id=lambda session_id: SimpleNamespace(
+                session_id=session_id,
+                user_id=7,
+                course_id=2,
+                module_id=3,
+            )
+        ),
+    )
     monkeypatch.setattr(
         "app.api.chat.LearningContextAccessClient",
         lambda: SimpleNamespace(
@@ -1080,6 +1093,164 @@ def test_authenticated_chat_stops_before_persist_when_context_forbidden(monkeypa
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail["code"] == "COURSE_ENROLLMENT_REQUIRED"
+    assert persist_calls == []
+    assert db.rollback_calls == 1
+
+
+def test_authenticated_chat_rechecks_stored_context_when_request_omits_it(monkeypatch) -> None:
+    # Existing sessions retain their course authorization boundary even when the
+    # client omits course/module UUIDs from a follow-up request.
+    db = RollbackSession()
+    access_calls = []
+    persist_calls = []
+    session_row = SimpleNamespace(
+        session_id=5,
+        user_id=7,
+        course_id=2,
+        module_id=3,
+    )
+    forbidden = HTTPException(
+        status_code=403,
+        detail={"code": "COURSE_ENROLLMENT_REQUIRED", "message": "Enrollment required"},
+    )
+    monkeypatch.setattr("app.api.chat.decode_session_uuid", lambda value: 5)
+    monkeypatch.setattr("app.api.chat.encode_course_uuid", lambda value: f"course-{value}")
+    monkeypatch.setattr("app.api.chat.encode_module_uuid", lambda value: f"module-{value}")
+    monkeypatch.setattr(
+        "app.api.chat.AIChatSessionsRepository",
+        lambda _db: SimpleNamespace(get_by_id=lambda session_id: session_row),
+    )
+
+    def _reject_stored_context(**kwargs):
+        access_calls.append(kwargs)
+        raise forbidden
+
+    monkeypatch.setattr(
+        "app.api.chat.LearningContextAccessClient",
+        lambda: SimpleNamespace(ensure_chat_context_access=_reject_stored_context),
+    )
+    monkeypatch.setattr(
+        "app.api.chat.persist_chat",
+        lambda *_args: persist_calls.append(True),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        chat_api.chat(
+            ChatRequest(session_uuid="session-5", message="hello"),
+            current_user={"id": 7, "identity": "Learner"},
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail["code"] == "COURSE_ENROLLMENT_REQUIRED"
+    assert access_calls == [
+        {
+            "course_uuid": "course-2",
+            "module_uuid": "module-3",
+            "current_user": {"id": 7, "identity": "Learner"},
+        }
+    ]
+    assert persist_calls == []
+    assert db.rollback_calls == 1
+
+
+def test_authenticated_chat_fills_stored_context_for_existing_session(monkeypatch) -> None:
+    # Authorized follow-ups may omit repeated context; the service receives the
+    # immutable course/module scope loaded from the session row.
+    db = RollbackSession()
+    access_calls = []
+    persisted_payloads = []
+    session_row = SimpleNamespace(
+        session_id=5,
+        user_id=7,
+        course_id=2,
+        module_id=3,
+    )
+    monkeypatch.setattr("app.api.chat.decode_session_uuid", lambda value: 5)
+    monkeypatch.setattr("app.api.chat.encode_session_uuid", lambda value: f"session-{value}")
+    monkeypatch.setattr("app.api.chat.encode_course_uuid", lambda value: f"course-{value}")
+    monkeypatch.setattr("app.api.chat.encode_module_uuid", lambda value: f"module-{value}")
+    monkeypatch.setattr(
+        "app.api.chat.AIChatSessionsRepository",
+        lambda _db: SimpleNamespace(get_by_id=lambda session_id: session_row),
+    )
+    monkeypatch.setattr(
+        "app.api.chat.LearningContextAccessClient",
+        lambda: SimpleNamespace(
+            ensure_chat_context_access=lambda **kwargs: access_calls.append(kwargs)
+        ),
+    )
+
+    def _persist_chat(_db, service_payload):
+        persisted_payloads.append(service_payload)
+        return SimpleNamespace(
+            session_id=5,
+            user_message_id=10,
+            assistant_message_id=11,
+            reply="reply",
+            sources=[],
+        )
+
+    monkeypatch.setattr("app.api.chat.persist_chat", _persist_chat)
+
+    response = chat_api.chat(
+        ChatRequest(session_uuid="session-5", message="hello"),
+        current_user={"id": 7, "identity": "Learner"},
+        db=db,
+    )
+
+    assert response.data.session_uuid == "session-5"
+    assert access_calls[0]["course_uuid"] == "course-2"
+    assert access_calls[0]["module_uuid"] == "module-3"
+    assert persisted_payloads[0].course_id == 2
+    assert persisted_payloads[0].module_id == 3
+
+
+def test_authenticated_chat_rejects_existing_session_context_mismatch_before_persist(monkeypatch) -> None:
+    # A caller cannot move an existing session into another course/module by
+    # submitting a different request context.
+    db = RollbackSession()
+    access_calls = []
+    persist_calls = []
+    session_row = SimpleNamespace(
+        session_id=5,
+        user_id=7,
+        course_id=2,
+        module_id=3,
+    )
+    monkeypatch.setattr("app.api.chat.decode_session_uuid", lambda value: 5)
+    monkeypatch.setattr("app.api.chat.decode_course_uuid", lambda value: 4)
+    monkeypatch.setattr("app.api.chat.decode_module_uuid", lambda value: 3)
+    monkeypatch.setattr(
+        "app.api.chat.AIChatSessionsRepository",
+        lambda _db: SimpleNamespace(get_by_id=lambda session_id: session_row),
+    )
+    monkeypatch.setattr(
+        "app.api.chat.LearningContextAccessClient",
+        lambda: SimpleNamespace(
+            ensure_chat_context_access=lambda **kwargs: access_calls.append(kwargs)
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.chat.persist_chat",
+        lambda *_args: persist_calls.append(True),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        chat_api.chat(
+            ChatRequest(
+                session_uuid="session-5",
+                course_uuid="course-4",
+                module_uuid="module-3",
+                message="hello",
+            ),
+            current_user={"id": 7, "identity": "Learner"},
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail["code"] == "CHAT_SESSION_INVALID"
+    assert access_calls == []
     assert persist_calls == []
     assert db.rollback_calls == 1
 

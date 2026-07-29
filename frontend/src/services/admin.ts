@@ -263,12 +263,14 @@ function normalizeProviderCredentialHealth(
   fallbackProvider: string
 ): AdminAiProviderCredentialHealthResponse {
   const data = asRecord(payload);
+  const status = String(data.status ?? (toBoolean(data.ok) ? "ready" : "blocked"));
+  const explicitOk = data.ok ?? data.healthy;
 
   return {
     provider: String(data.provider ?? fallbackProvider),
-    status: String(data.status ?? (toBoolean(data.ok) ? "ready" : "blocked")),
-    ok: toBoolean(data.ok ?? data.healthy),
-    checkedAt: String(getField(data, "checkedAt", "checked_at") ?? ""),
+    status,
+    ok: explicitOk === undefined ? status === "ready" : toBoolean(explicitOk),
+    checkedAt: toNullableString(getField(data, "checkedAt", "checked_at")),
     message: toNullableString(data.message ?? data.detail),
   };
 }

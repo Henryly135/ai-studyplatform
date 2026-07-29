@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from app.models.ai_index_jobs import AIJobStatus
 from app.models.ai_knowledge_sources import AIPublishStatus
 from app.tasks.material_index import (
+    _MaterialJobLease,
     _acquire_material_write_fence,
     _can_reuse_canonical_chunks,
     _compute_retry_delay_seconds,
@@ -18,6 +19,15 @@ from app.tasks.material_index import (
     _to_publish_status,
     _truncate_text,
 )
+
+
+def _lease_for(job) -> _MaterialJobLease:
+    return _MaterialJobLease(
+        job_id=job.job_id,
+        material_id=job.material_id,
+        worker_id=job.worker_id,
+        attempt_count=job.attempt_count,
+    )
 
 
 def test_material_metadata_validation_requires_dict_and_required_fields() -> None:
@@ -93,6 +103,8 @@ def test_supersede_helper_rolls_back_pending_writes_before_terminal_update(
     job = SimpleNamespace(
         job_id=8,
         material_id=9,
+        worker_id="task-1",
+        attempt_count=1,
         started_at="started",
     )
     session = SimpleNamespace(
@@ -101,7 +113,17 @@ def test_supersede_helper_rolls_back_pending_writes_before_terminal_update(
     )
     jobs = SimpleNamespace(
         has_newer_material_job=lambda **_: True,
-        get_by_id=lambda _job_id: job,
+        lock_material_job_scope=lambda **_: calls.append("lock"),
+        get_running_material_job_for_lease=lambda **kwargs: (
+            calls.append(
+                (
+                    "lease",
+                    kwargs["expected_worker_id"],
+                    kwargs["expected_attempt_count"],
+                )
+            )
+            or job
+        ),
         update_status=lambda current_job, **kwargs: (
             calls.append(("status", kwargs["status"]))
             or setattr(current_job, "status", kwargs["status"])
@@ -115,11 +137,13 @@ def test_supersede_helper_rolls_back_pending_writes_before_terminal_update(
     response = _supersede_if_newer_material_job(
         session=session,
         jobs=jobs,
-        job=job,
+        lease=_lease_for(job),
     )
 
     assert calls == [
         "rollback",
+        "lock",
+        ("lease", "task-1", 1),
         ("status", AIJobStatus.SUPERSEDED),
         "commit",
     ]
@@ -138,6 +162,8 @@ def test_material_write_fence_locks_before_observing_competing_newer_job(
     job = SimpleNamespace(
         job_id=8,
         material_id=9,
+        worker_id="task-1",
+        attempt_count=1,
         started_at="started",
     )
     competing_job = SimpleNamespace(job_id=10, status=newer_status)
@@ -159,11 +185,17 @@ def test_material_write_fence_locks_before_observing_competing_newer_job(
     )
     jobs = SimpleNamespace(
         lock_material_job_scope=lock_material_job_scope,
-        is_running_material_job=lambda **_: (
-            events.append("current") or True
+        get_running_material_job_for_lease=lambda **kwargs: (
+            events.append(
+                (
+                    "current",
+                    kwargs["expected_worker_id"],
+                    kwargs["expected_attempt_count"],
+                )
+            )
+            or job
         ),
         has_newer_material_job=has_newer_material_job,
-        get_by_id=lambda _job_id: job,
         update_status=lambda current_job, **kwargs: (
             events.append(("status", kwargs["status"]))
             or setattr(current_job, "status", kwargs["status"])
@@ -179,14 +211,16 @@ def test_material_write_fence_locks_before_observing_competing_newer_job(
     response = _acquire_material_write_fence(
         session=session,
         jobs=jobs,
-        job=job,
+        lease=_lease_for(job),
     )
 
     assert events == [
         "lock",
-        "current",
+        ("current", "task-1", 1),
         ("newer", newer_status),
         "rollback",
+        "lock",
+        ("current", "task-1", 1),
         ("status", AIJobStatus.SUPERSEDED),
         "commit",
     ]
@@ -195,14 +229,26 @@ def test_material_write_fence_locks_before_observing_competing_newer_job(
 
 def test_material_write_fence_aborts_when_delete_removed_current_job() -> None:
     events = []
-    stale_job = SimpleNamespace(job_id=8, material_id=9)
+    stale_job = SimpleNamespace(
+        job_id=8,
+        material_id=9,
+        worker_id="old-task",
+        attempt_count=1,
+    )
     session = SimpleNamespace(
         rollback=lambda: events.append("rollback"),
     )
     jobs = SimpleNamespace(
         lock_material_job_scope=lambda **_: events.append("lock"),
-        is_running_material_job=lambda **_: (
-            events.append("current_missing") or False
+        get_running_material_job_for_lease=lambda **kwargs: (
+            events.append(
+                (
+                    "current_missing",
+                    kwargs["expected_worker_id"],
+                    kwargs["expected_attempt_count"],
+                )
+            )
+            or None
         ),
         has_newer_material_job=lambda **_: pytest.fail(
             "a missing current job must abort before the newer-job check"
@@ -212,16 +258,64 @@ def test_material_write_fence_aborts_when_delete_removed_current_job() -> None:
     response = _acquire_material_write_fence(
         session=session,
         jobs=jobs,
-        job=stale_job,
+        lease=_lease_for(stale_job),
     )
 
-    assert events == ["lock", "current_missing", "rollback"]
+    assert events == [
+        "lock",
+        ("current_missing", "old-task", 1),
+        "rollback",
+    ]
     assert response == {
         "status": "skipped",
         "jobId": 8,
         "materialId": 9,
         "jobStatus": "missing_or_not_running",
     }
+
+
+def test_material_write_fence_preserves_claimed_lease_across_rollback() -> None:
+    # Session.rollback() expires ORM rows in production. Simulate the subsequent
+    # refresh seeing a newer attempt and require the fence to retain attempt 1.
+    observed_leases = []
+    stale_job = SimpleNamespace(
+        job_id=8,
+        material_id=9,
+        worker_id="old-task",
+        attempt_count=1,
+    )
+    claimed_lease = _lease_for(stale_job)
+
+    def rollback():
+        stale_job.worker_id = "new-task"
+        stale_job.attempt_count = 2
+
+    session = SimpleNamespace(rollback=rollback)
+    jobs = SimpleNamespace(
+        lock_material_job_scope=lambda **_: None,
+        get_running_material_job_for_lease=lambda **kwargs: (
+            observed_leases.append(
+                (
+                    kwargs["expected_worker_id"],
+                    kwargs["expected_attempt_count"],
+                )
+            )
+            or None
+        ),
+        has_newer_material_job=lambda **_: pytest.fail(
+            "a lease mismatch must abort before the newer-job check"
+        ),
+    )
+
+    session.rollback()
+    response = _acquire_material_write_fence(
+        session=session,
+        jobs=jobs,
+        lease=claimed_lease,
+    )
+
+    assert observed_leases == [("old-task", 1)]
+    assert response["status"] == "skipped"
 
 
 def test_canonical_chunk_reuse_rejects_stale_or_inactive_rows() -> None:

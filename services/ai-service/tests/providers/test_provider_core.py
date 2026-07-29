@@ -6,6 +6,7 @@ import urllib.error
 from types import SimpleNamespace
 
 import pytest
+from google.genai import errors as genai_errors
 
 from app.services.providers.adapters import (
     GeminiChatAdapter,
@@ -369,6 +370,87 @@ def test_gemini_chat_adapter_omits_deprecated_temperature(
         exclude_none=True
     )
     assert "temperature" not in result.request_json
+
+
+@pytest.mark.parametrize("adapter_kind", ["chat", "embedding"])
+@pytest.mark.parametrize(
+    ("status_code", "status_name", "expected_exception", "expected_error_type"),
+    [
+        (429, "RESOURCE_EXHAUSTED", ProviderQuotaError, None),
+        (
+            401,
+            "UNAUTHENTICATED",
+            ProviderInvocationError,
+            "provider_authentication_error",
+        ),
+        (
+            503,
+            "UNAVAILABLE",
+            ProviderInvocationError,
+            "transient_network_error",
+        ),
+    ],
+)
+def test_gemini_adapters_classify_client_error_metadata(
+    monkeypatch,
+    adapter_kind,
+    status_code,
+    status_name,
+    expected_exception,
+    expected_error_type,
+) -> None:
+    provider_error = genai_errors.ClientError(
+        status_code,
+        {
+            "error": {
+                "code": status_code,
+                "status": status_name,
+                "message": "provider request failed",
+            }
+        },
+    )
+
+    class FakeModels:
+        def generate_content(self, **_kwargs):
+            raise provider_error
+
+        def embed_content(self, **_kwargs):
+            raise provider_error
+
+    monkeypatch.setattr(
+        "app.services.providers.adapters.genai.Client",
+        lambda **_: SimpleNamespace(models=FakeModels()),
+    )
+
+    with pytest.raises(expected_exception) as exc_info:
+        if adapter_kind == "chat":
+            GeminiChatAdapter().generate_text(
+                TextGenerationRequest(
+                    provider_key="gemini",
+                    model_name="gemini-3.5-flash-lite",
+                    api_key="secret-key",
+                    base_url=None,
+                    prompt="Reply with OK.",
+                )
+            )
+        else:
+            GeminiEmbeddingAdapter().embed(
+                EmbeddingRequest(
+                    provider_key="gemini",
+                    model_name="gemini-embedding-2",
+                    api_key="secret-key",
+                    base_url=None,
+                    text="document",
+                    output_dimension=2,
+                    task_type="RETRIEVAL_QUERY",
+                )
+            )
+
+    if expected_error_type is not None:
+        assert (
+            exc_info.value.provider_error_type
+            == expected_error_type
+        )
 
 
 @pytest.mark.parametrize(

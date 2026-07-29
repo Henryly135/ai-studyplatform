@@ -88,7 +88,12 @@ def test_load_or_create_session_rejects_missing_or_wrong_owner(monkeypatch, load
 
 def test_load_or_create_session_returns_existing_session_for_owner(monkeypatch) -> None:
     # Tests an existing session is returned when it belongs to the user.
-    loaded_session = SimpleNamespace(session_id=5, user_id=7)
+    loaded_session = SimpleNamespace(
+        session_id=5,
+        user_id=7,
+        course_id=2,
+        module_id=3,
+    )
 
     class FakeSessionsRepository:
         def __init__(self, db) -> None:
@@ -107,3 +112,50 @@ def test_load_or_create_session_returns_existing_session_for_owner(monkeypatch) 
         )
         is loaded_session
     )
+
+
+@pytest.mark.parametrize(
+    ("course_id", "module_id"),
+    [
+        (4, 3),
+        (2, 5),
+    ],
+)
+def test_load_or_create_session_rejects_existing_context_mismatch(
+    monkeypatch,
+    course_id,
+    module_id,
+) -> None:
+    # The service boundary independently protects immutable session scope for
+    # callers that do not pass through the authenticated HTTP endpoint.
+    loaded_session = SimpleNamespace(
+        session_id=5,
+        user_id=7,
+        course_id=2,
+        module_id=3,
+    )
+
+    class FakeSessionsRepository:
+        def __init__(self, db) -> None:
+            self.db = db
+
+        def get_by_id(self, session_id):
+            assert session_id == 5
+            return loaded_session
+
+    monkeypatch.setattr(
+        "app.services.chat.ai_chat_service.AIChatSessionsRepository",
+        FakeSessionsRepository,
+    )
+
+    with pytest.raises(AIChatSessionError):
+        _load_or_create_session(
+            object(),
+            ChatServiceRequest(
+                session_id=5,
+                user_id=7,
+                course_id=course_id,
+                module_id=module_id,
+                message="hello",
+            ),
+        )

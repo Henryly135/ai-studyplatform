@@ -77,24 +77,56 @@ class AIIndexJobsRepository:
         )
         return self.session.scalar(stmt) is not None
 
-    def is_running_material_job(
+    def get_running_material_job_for_lease(
         self,
         *,
         job_id: int,
         material_id: int,
-    ) -> bool:
-        """Read the authoritative job row without trusting the identity map."""
+        expected_worker_id: str,
+        expected_attempt_count: int,
+    ) -> AIIndexJob | None:
+        """Return the authoritative row only while the claimed lease still owns it."""
 
         stmt = (
-            select(AIIndexJob.job_id)
+            select(AIIndexJob)
             .where(
                 AIIndexJob.job_id == job_id,
                 AIIndexJob.material_id == material_id,
                 AIIndexJob.status == AIJobStatus.RUNNING,
+                AIIndexJob.worker_id == expected_worker_id,
+                AIIndexJob.attempt_count == expected_attempt_count,
             )
             .limit(1)
+            .execution_options(populate_existing=True)
         )
-        return self.session.scalar(stmt) is not None
+        return self.session.scalar(stmt)
+
+    def get_stale_running_job_for_recovery(
+        self,
+        *,
+        job_id: int,
+        material_id: int,
+        locked_before: datetime,
+        expected_worker_id: str | None,
+        expected_attempt_count: int,
+    ) -> AIIndexJob | None:
+        """Re-read a stale lease after the material advisory lock is held."""
+
+        stmt = (
+            select(AIIndexJob)
+            .where(
+                AIIndexJob.job_id == job_id,
+                AIIndexJob.material_id == material_id,
+                AIIndexJob.status == AIJobStatus.RUNNING,
+                AIIndexJob.locked_at.is_not(None),
+                AIIndexJob.locked_at < locked_before,
+                AIIndexJob.worker_id == expected_worker_id,
+                AIIndexJob.attempt_count == expected_attempt_count,
+            )
+            .limit(1)
+            .execution_options(populate_existing=True)
+        )
+        return self.session.scalar(stmt)
 
     def list_replaceable_material_jobs(self, *, material_id: int) -> list[AIIndexJob]:
         stmt = (
@@ -180,6 +212,7 @@ class AIIndexJobsRepository:
             )
             .order_by(AIIndexJob.job_id.desc())
             .limit(1)
+            .execution_options(populate_existing=True)
         )
         return self.session.scalar(stmt)
 

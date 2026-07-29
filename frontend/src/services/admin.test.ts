@@ -237,9 +237,7 @@ describe("admin service normalization", () => {
       .mockResolvedValueOnce(
         mockJsonResponse({
           provider: "glm",
-          ok: "true",
           status: "ready",
-          checked_at: "2026-07-02T01:00:00Z",
           message: 123,
         })
       )
@@ -265,6 +263,7 @@ describe("admin service normalization", () => {
     expect(credentials.credentials[0].keyPreview).toBe("****1234");
     expect(saved.keyPreview).toBe("****5678");
     expect(health.ok).toBe(true);
+    expect(health.checkedAt).toBeNull();
     expect(health.message).toBe("123");
     expect(defaultModel.modelId).toBe("glm:glm-4.7");
     expect(fetchMock).toHaveBeenNthCalledWith(
