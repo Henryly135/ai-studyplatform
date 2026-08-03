@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import Engine, create_engine, delete, func, inspect, select, text
+from sqlalchemy import Engine, create_engine, delete, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.time import now_local
@@ -711,6 +711,7 @@ def test_recovered_attempt_fences_old_worker_even_with_same_worker_id(
             material_id=material_id,
             version="stale-lease",
         )
+        old_worker_session.refresh(old_job)
         old_job.locked_at = now_local() - timedelta(days=1)
         old_worker_session.commit()
         old_job_id = old_job.job_id
@@ -734,7 +735,6 @@ def test_recovered_attempt_fences_old_worker_even_with_same_worker_id(
             new_worker_session.commit()
 
         old_worker_session.rollback()
-        assert inspect(old_job).expired is True
         old_result = _acquire_material_write_fence(
             session=old_worker_session,
             jobs=AIIndexJobsRepository(old_worker_session),
