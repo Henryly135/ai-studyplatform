@@ -27,6 +27,9 @@ class FakeJobsRepository:
     def list_replaceable_material_jobs(self, *, material_id):
         return [SimpleNamespace(job_id=1)] if material_id == 99 else []
 
+    def lock_material_job_scope(self, *, material_id):
+        return None
+
     def mark_superseded(self, jobs):
         self.superseded.extend(jobs)
 
@@ -51,6 +54,27 @@ class FakeJobsRepository:
 
     def list_stale_running_jobs(self, *, locked_before):
         return [self.job] if self.job else []
+
+    def get_stale_running_job_for_recovery(
+        self,
+        *,
+        job_id,
+        material_id,
+        locked_before,
+        expected_worker_id,
+        expected_attempt_count,
+    ):
+        if (
+            self.job is not None
+            and self.job.job_id == job_id
+            and self.job.material_id == material_id
+            and self.job.status == AIJobStatus.RUNNING
+            and self.job.locked_at < locked_before
+            and self.job.worker_id == expected_worker_id
+            and self.job.attempt_count == expected_attempt_count
+        ):
+            return self.job
+        return None
 
 
 class FakeKnowledgeService:
@@ -137,6 +161,43 @@ def test_delete_material_index_returns_deleted_counts() -> None:
     assert result.deletedJobCount == 3
 
 
+def test_delete_material_index_holds_material_lock_through_commit() -> None:
+    events = []
+
+    class OrderedSession(FakeSession):
+        def commit(self) -> None:
+            events.append("commit")
+            super().commit()
+
+    class OrderedJobs(FakeJobsRepository):
+        def lock_material_job_scope(self, *, material_id):
+            events.append(("lock", material_id))
+
+        def delete_by_material_id(self, *, material_id):
+            events.append(("delete_jobs", material_id))
+            return 3
+
+    class OrderedKnowledge(FakeKnowledgeService):
+        def delete_material_source(self, *, material_id):
+            events.append(("delete_source", material_id))
+            return super().delete_material_source(material_id=material_id)
+
+    service = IndexJobService(OrderedSession())
+    service.jobs = OrderedJobs()
+    service.knowledge = OrderedKnowledge()
+
+    service.delete_material_index(
+        payload=MaterialIndexDeleteRequest(materialId=88)
+    )
+
+    assert events == [
+        ("lock", 88),
+        ("delete_source", 88),
+        ("delete_jobs", 88),
+        "commit",
+    ]
+
+
 def test_retry_job_requeues_failed_job_and_dispatches() -> None:
     # Tests manual retry requeues failed jobs, updates metadata, and dispatches.
     job = SimpleNamespace(job_id=8, status=AIJobStatus.FAILED, metadata_json=None)
@@ -164,7 +225,16 @@ def test_retry_job_rejects_missing_or_non_retryable_jobs(job) -> None:
 
 def test_recover_stale_running_jobs_requeues_and_dispatches(monkeypatch) -> None:
     # Tests stale running jobs are marked queued with recovery metadata and dispatched.
-    job = SimpleNamespace(job_id=10, metadata_json=None, error_message="timeout")
+    job = SimpleNamespace(
+        job_id=10,
+        material_id=20,
+        status=AIJobStatus.RUNNING,
+        worker_id="worker-1",
+        attempt_count=1,
+        locked_at=datetime(2026, 4, 28, 23, 0, tzinfo=timezone.utc),
+        metadata_json=None,
+        error_message="timeout",
+    )
     service = IndexJobService(FakeSession())
     service.jobs = FakeJobsRepository(job)
     dispatched = []
@@ -179,6 +249,7 @@ def test_recover_stale_running_jobs_requeues_and_dispatches(monkeypatch) -> None
 
     assert result.recoveredJobIds == [10]
     assert job.metadata_json["staleRecoveryRequested"] is True
+    assert job.status == AIJobStatus.QUEUED
     assert dispatched == [10]
 
 

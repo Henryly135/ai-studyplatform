@@ -40,6 +40,11 @@ def _generation_response() -> QuizGenerationRunResponse:
             topK=5,
             chunkCount=1,
             chunks=[],
+            chatModelId="glm:glm-4.7",
+            embeddingModelId="glm:embedding-3",
+            embeddingVersion="glm:embedding-3@1024",
+            indexStatus="ready",
+            indexCoverage=1.0,
         ),
         plan=QuizGenerationPlanRead(
             titleSuggestion="Ownership Quiz",

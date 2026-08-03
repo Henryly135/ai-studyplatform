@@ -63,12 +63,20 @@ class AdminAITelemetryService:
 
     def get_provider_config_status(self) -> AdminAIProviderConfigResponse:
         default_chat_model = None
+        default_embedding_model = None
         if hasattr(self.session, "get"):
+            AIModelCatalogService(self.session).ensure_seeded()
             repo = AIModelCatalogRepository(self.session)
             defaults = repo.get_defaults()
             default_chat_model = (
                 repo.get_model(defaults.default_chat_model_id)
                 if defaults and defaults.default_chat_model_id
+                else None
+            )
+            default_embedding_model = (
+                repo.get_model(default_chat_model.paired_embedding_model_id)
+                if default_chat_model
+                and default_chat_model.paired_embedding_model_id
                 else None
             )
         items = [
@@ -83,10 +91,22 @@ class AdminAITelemetryService:
         return AdminAIProviderConfigResponse(
             generatedAt=self._format_datetime(datetime.now(timezone.utc)) or "",
             overallStatus=self._overall_config_status(items),
-            provider=default_chat_model.provider_key if default_chat_model else "gemini",
-            model=default_chat_model.model_name if default_chat_model else getattr(settings, "ai_demo_model_name", "unconfigured"),
-            embeddingProvider=settings.ai_embedding_provider,
-            embeddingModel=settings.ai_embedding_model,
+            provider=(
+                default_chat_model.provider_key
+                if default_chat_model
+                else "unconfigured"
+            ),
+            model=default_chat_model.model_name if default_chat_model else "unconfigured",
+            embeddingProvider=(
+                default_embedding_model.provider_key
+                if default_embedding_model
+                else "unconfigured"
+            ),
+            embeddingModel=(
+                default_embedding_model.model_name
+                if default_embedding_model
+                else "unconfigured"
+            ),
             storageProvider=settings.object_storage_provider,
             items=items,
         )
@@ -612,7 +632,7 @@ class AdminAITelemetryService:
         return [
             self._build_provider_health_item(
                 key=f"embedding:{task_type or 'default'}:{model_name}",
-                provider=settings.ai_embedding_provider,
+                provider=self._provider_for_model_name(model_name),
                 model_name=model_name,
                 call_type=f"embedding/{task_type}" if task_type else "embedding",
                 total_calls=int(total or 0),
@@ -1276,19 +1296,12 @@ class AdminAITelemetryService:
 
     def _build_chat_provider_config_item(self) -> AdminAIProviderConfigItem:
         if not hasattr(self.session, "get"):
-            if not getattr(settings, "gemini_api_key", ""):
-                return AdminAIProviderConfigItem(
-                    key="chat_provider",
-                    label="Chat provider",
-                    status="blocked",
-                    detail=f"gemini / {getattr(settings, 'ai_demo_model_name', 'unconfigured')}",
-                    recommendation="Configure an AI provider API key before enabling production AI chat.",
-                )
             return AdminAIProviderConfigItem(
                 key="chat_provider",
                 label="Chat provider",
-                status="ready",
-                detail=f"gemini / {getattr(settings, 'ai_demo_model_name', 'unconfigured')}",
+                status="blocked",
+                detail="Database-backed model catalog unavailable",
+                recommendation="Configure an AI provider credential in the administrator model settings.",
             )
         catalog = AIModelCatalogService(self.session)
         catalog.ensure_seeded()
@@ -1321,31 +1334,56 @@ class AdminAITelemetryService:
         )
 
     def _build_embedding_provider_config_item(self) -> AdminAIProviderConfigItem:
-        provider = settings.ai_embedding_provider.strip().lower()
-        credential = AIModelCatalogRepository(self.session).get_credential(provider) if hasattr(self.session, "get") else None
-        missing_gemini_key = (
-            provider == "gemini"
-            and hasattr(self.session, "get")
-            and (credential is None or not credential.is_enabled or not credential.encrypted_api_key)
-        )
-        if missing_gemini_key:
-            status = "blocked"
-            recommendation = "Configure the Gemini provider API key before indexing course materials."
-        elif settings.ai_embedding_output_dimension <= 0 or settings.ai_embedding_dimension <= 0:
-            status = "blocked"
-            recommendation = "Set positive embedding dimensions before running indexing jobs."
-        elif settings.ai_embedding_output_dimension != settings.ai_embedding_dimension:
-            status = "warning"
-            recommendation = "Confirm pgvector dimensions match the configured embedding output."
-        else:
-            status = "ready"
-            recommendation = None
+        if hasattr(self.session, "get"):
+            catalog = AIModelCatalogService(self.session)
+            catalog.ensure_seeded()
+            repo = AIModelCatalogRepository(self.session)
+            defaults = repo.get_defaults()
+            chat_model = (
+                repo.get_model(defaults.default_chat_model_id)
+                if defaults and defaults.default_chat_model_id
+                else None
+            )
+            embedding_model = (
+                repo.get_model(chat_model.paired_embedding_model_id)
+                if chat_model and chat_model.paired_embedding_model_id
+                else None
+            )
+            if embedding_model is None:
+                return AdminAIProviderConfigItem(
+                    key="embedding_provider",
+                    label="Embedding provider",
+                    status="blocked",
+                    detail="No embedding model paired with the default chat model",
+                    recommendation=(
+                        "Choose a default chat model with a supported embedding pair."
+                    ),
+                )
+            availability = catalog.availability_for_model(embedding_model)
+            provider = repo.get_provider(embedding_model.provider_key)
+            return AdminAIProviderConfigItem(
+                key="embedding_provider",
+                label="Embedding provider",
+                status="ready" if availability.available else "blocked",
+                detail=(
+                    f"{provider.display_name if provider else embedding_model.provider_key}"
+                    f" / {embedding_model.model_name}"
+                    f" / {embedding_model.embedding_dimension}d"
+                ),
+                recommendation=(
+                    None
+                    if availability.available
+                    else availability.reason
+                    or "Configure the paired embedding provider credential."
+                ),
+            )
+
         return AdminAIProviderConfigItem(
             key="embedding_provider",
             label="Embedding provider",
-            status=status,
-            detail=f"{settings.ai_embedding_provider} / {settings.ai_embedding_model} / {settings.ai_embedding_output_dimension}d",
-            recommendation=recommendation,
+            status="blocked",
+            detail="Model catalog unavailable",
+            recommendation="Read embedding configuration from a database-backed model catalog session.",
         )
 
     def _build_retrieval_config_item(self) -> AdminAIProviderConfigItem:

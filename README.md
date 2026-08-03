@@ -17,7 +17,7 @@
 - 异步与缓存：Redis、Celery。
 - 文件存储：MinIO。
 - 网关与部署：Nginx、Docker Compose。
-- AI：Gemini、LangChain、RAG、测验生成、学习画像工作流。
+- AI：Gemini、GLM、OpenRouter，多向量 RAG、测验生成、学习画像工作流。
 
 ## 环境要求
 
@@ -63,7 +63,8 @@ DEFAULT_ADMIN_EMAIL=your.project.email@gmail.com
 DEFAULT_ADMIN_PASSWORD=your-system-admin-password
 DEFAULT_ADMIN_FULL_NAME='System Admin'
 
-GEMINI_API_KEY=your_gemini_api_key
+AI_PROVIDER_KEY_ENCRYPTION_SECRET=replace-with-a-stable-random-secret-at-least-32-characters
+AI_EMBEDDING_DIMENSION=1024
 
 SMTP_HOST=email-smtp.ap-southeast-2.amazonaws.com
 SMTP_PORT=587
@@ -75,6 +76,30 @@ PUBLIC_FRONTEND_URL=https://your-learning-platform.example.com
 ```
 
 数据库和端口配置请以 `.env.example` 为准。如果本机已经占用 `3306` 或 `5432`，可以在 `.env` 中调整外部映射端口。
+
+## AI Provider 与模型选择
+
+平台只提供 Gemini、GLM 和 OpenRouter 三类受控 Provider，不支持 DeepSeek。Provider Key 由管理员在管理界面录入并加密保存；不要把真实 Key 写入 `.env`、源代码或 GitHub Actions 日志。
+
+普通用户在课程聊天中只选择聊天模型。每个聊天模型在模型目录中配有一个固定的 1024 维向量模型：
+
+| 聊天 Provider | 对应向量模型 |
+| --- | --- |
+| Gemini | Gemini Embedding 2 |
+| GLM | GLM Embedding-3 |
+| OpenRouter | OpenAI Text Embedding 3 Small via OpenRouter |
+
+前端会展示配对的向量模型和课程索引状态，但向量模型由后端派生，浏览器不能单独覆盖。同一知识块可保存三套独立向量，因此切换聊天模型时无需临时重建资料，也不会混用不同模型的向量空间。
+
+管理员配置顺序：
+
+1. 登录管理员工作区。
+2. 为要使用的 Provider 保存 API Key。
+3. 分别执行健康检查。
+4. 设置平台默认聊天模型。
+5. 等待演示课程在对应向量模型下的索引覆盖率达到 100%。
+
+详细调用逻辑见 [`docs/architecture/智能服务架构.md`](docs/architecture/智能服务架构.md)。
 
 ## 本地启动
 
@@ -186,8 +211,11 @@ npm run build
 Docker Compose 配置检查：
 
 ```bash
-docker compose --env-file .env -f infra/docker-compose.yml config
+docker compose --env-file .env -f infra/docker-compose.yml config --quiet
 ```
+
+对外演示前请按 [`docs/operations/Demo演示指南.md`](docs/operations/Demo演示指南.md) 完成三 Provider 模型切换和索引预检。
+旧环境升级或新增 Provider 凭据时，先按 [`docs/operations/多向量迁移与回填.md`](docs/operations/多向量迁移与回填.md) 完成回填门禁。
 
 ## 文档
 

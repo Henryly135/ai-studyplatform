@@ -3084,6 +3084,22 @@
   overflow-wrap: anywhere;
 }
 
+.course-chat-model-picker .course-chat-model-pair {
+  color: #0f766e;
+  font-weight: 750;
+}
+
+.course-chat-model-picker .course-chat-model-pair-warning {
+  color: #b45309;
+}
+
+.course-chat-model-pair span {
+  display: block;
+  margin-top: 0.2rem;
+  color: inherit;
+  font-weight: 600;
+}
+
 .course-chat-composer textarea {
   min-height: 86px;
   border: 0;

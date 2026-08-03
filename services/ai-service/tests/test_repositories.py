@@ -16,20 +16,22 @@ from app.repositories.learner_module_profile_assets_repository import LearnerMod
 
 
 class FakeResult:
-    rowcount = 3
+    def __init__(self, rowcount: int = 3) -> None:
+        self.rowcount = rowcount
 
     def all(self):
         return []
 
 
 class FakeSession:
-    def __init__(self, scalar_value=None, scalars_value=None) -> None:
+    def __init__(self, scalar_value=None, scalars_value=None, rowcount: int = 3) -> None:
         self.scalar_value = scalar_value
         self.scalars_value = scalars_value or []
         self.added = []
         self.deleted = []
         self.executed = []
         self.flush_calls = 0
+        self.rowcount = rowcount
 
     def get(self, model, obj_id):
         return SimpleNamespace(model=model, obj_id=obj_id)
@@ -42,7 +44,7 @@ class FakeSession:
 
     def execute(self, stmt):
         self.executed.append(stmt)
-        return FakeResult()
+        return FakeResult(self.rowcount)
 
     def add(self, obj) -> None:
         self.added.append(obj)
@@ -75,11 +77,9 @@ def test_chat_session_repository_create_update_record_and_list() -> None:
 
     created = repo.create(user_id=7, course_id=1, module_id=2, session_type="demo", title="Title")
     created.message_count = 0
-    repo.record_user_message(created, course_id=1, module_id=2, timestamp=now)
+    repo.record_user_message(created, timestamp=now)
     repo.update_activity(
         created,
-        course_id=1,
-        module_id=2,
         last_message_at=now,
         last_user_message_at=now,
         last_assistant_message_at=now,
@@ -90,6 +90,7 @@ def test_chat_session_repository_create_update_record_and_list() -> None:
     assert repo.get_by_id(1).obj_id == 1
     assert repo.list_by_user(7)[0].session_id == 1
     assert repo.list_by_user_and_module(user_id=7, module_id=2)[0].session_id == 1
+    assert (created.course_id, created.module_id) == (1, 2)
     assert created.message_count == 2
     assert created.summary_text == "summary"
 
@@ -99,6 +100,7 @@ def test_index_jobs_repository_create_update_list_delete_and_supersede() -> None
     now = datetime(2026, 4, 29, tzinfo=timezone.utc)
     session = FakeSession(scalars_value=[SimpleNamespace(job_id=1)])
     repo = AIIndexJobsRepository(session)
+    repo.lock_material_job_scope(material_id=4)
 
     job = repo.create_material_job(
         source_ref_id="1",
@@ -117,11 +119,22 @@ def test_index_jobs_repository_create_update_list_delete_and_supersede() -> None
 
     assert repo.get_by_id(1).obj_id == 1
     assert repo.list_replaceable_material_jobs(material_id=4)[0].job_id == 1
+    assert repo.list_backfill_candidate_material_jobs()[0].job_id == 1
     assert repo.list_blocked_jobs_for_modules(course_id=2, module_ids=[] ) == []
     assert repo.list_blocked_jobs_for_modules(course_id=2, module_ids=[3])[0].job_id == 1
+    assert repo.list_running_material_jobs(material_id=4)[0].job_id == 1
     assert repo.list_stale_running_jobs(locked_before=now)[0].job_id == 1
     assert repo.delete_by_material_id(material_id=4) == 3
     assert job.status == AIJobStatus.SUPERSEDED
+
+    claim_session = FakeSession(rowcount=1, scalar_value=9)
+    claim_repo = AIIndexJobsRepository(claim_session)
+    assert claim_repo.claim_queued_job(
+        job_id=9,
+        worker_id="worker",
+        claimed_at=now,
+    ) is True
+    assert claim_repo.has_newer_material_job(material_id=4, job_id=8) is True
 
 
 def test_knowledge_sources_repository_create_update_list_and_delete() -> None:
@@ -173,6 +186,7 @@ def test_knowledge_sources_repository_create_update_list_and_delete() -> None:
     assert repo.list_by_course_id(2)[0].source_id == 1
     assert repo.list_by_module_id(3)[0].source_id == 1
     assert repo.list_by_material_id(4)[0].source_id == 1
+    assert repo.list_material_sources()[0].source_id == 1
     assert repo.delete_by_type_and_ref(source_type=AIKnowledgeSourceType.MATERIAL, source_ref_id="1") == 3
     assert source.title == "Updated"
     assert source in session.deleted

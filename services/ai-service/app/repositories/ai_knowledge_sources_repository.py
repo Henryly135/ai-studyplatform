@@ -54,6 +54,47 @@ class AIKnowledgeSourcesRepository:
         )
         return list(self.session.scalars(stmt))
 
+    def list_material_sources(self) -> list[AIKnowledgeSource]:
+        stmt = (
+            select(AIKnowledgeSource)
+            .where(
+                AIKnowledgeSource.source_type == AIKnowledgeSourceType.MATERIAL,
+                AIKnowledgeSource.material_id.is_not(None),
+            )
+            .order_by(
+                AIKnowledgeSource.updated_at.asc(),
+                AIKnowledgeSource.source_id.asc(),
+            )
+        )
+        return list(self.session.scalars(stmt))
+
+    def has_material_source_snapshot(
+        self,
+        *,
+        source_id: int,
+        material_id: int,
+        course_id: int,
+        module_id: int,
+        source_version: str | None,
+        content_hash: str | None,
+    ) -> bool:
+        """Read whether a material source snapshot still exists in the database."""
+
+        stmt = (
+            select(AIKnowledgeSource.source_id)
+            .where(
+                AIKnowledgeSource.source_id == source_id,
+                AIKnowledgeSource.source_type == AIKnowledgeSourceType.MATERIAL,
+                AIKnowledgeSource.material_id == material_id,
+                AIKnowledgeSource.course_id == course_id,
+                AIKnowledgeSource.module_id == module_id,
+                AIKnowledgeSource.source_version == source_version,
+                AIKnowledgeSource.content_hash == content_hash,
+            )
+            .limit(1)
+        )
+        return self.session.scalar(stmt) is not None
+
     def create(
         self,
         *,

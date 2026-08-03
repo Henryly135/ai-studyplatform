@@ -4,6 +4,7 @@ import { Navigate, useLocation, useOutletContext, useParams } from "react-router
 import { updateModuleProgress } from "../../services/course";
 import type { CourseMaterial } from "../../types/course";
 import type { CourseOutletContext } from "./CourseLayout";
+import { getMaterialDownloadUrl } from "./courseMaterialUrls";
 
 function formatFileSize(value: unknown) {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
@@ -255,7 +256,7 @@ function CourseMaterialPage() {
                 <div className="course-material-actions">
                   <a className="course-primary-link" href={material.resourceUrl} target="_blank" rel="noreferrer">打开资料
                   </a>
-                  <a className="course-secondary-link" href={material.resourceUrl} download>
+                  <a className="course-secondary-link" href={getMaterialDownloadUrl(material.resourceUrl)} download>
                     {videoMaterial ? "Download video" : "下载文件"}
                   </a>
                 </div>

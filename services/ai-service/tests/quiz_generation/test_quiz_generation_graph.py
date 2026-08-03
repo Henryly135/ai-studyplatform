@@ -48,6 +48,11 @@ def test_quiz_generation_graph_runner(monkeypatch):
             topK=5,
             chunkCount=1,
             chunks=[],
+            chatModelId="glm:glm-4.7",
+            embeddingModelId="glm:embedding-3",
+            embeddingVersion="glm:embedding-3@1024",
+            indexStatus="ready",
+            indexCoverage=1.0,
         ),
     )
     monkeypatch.setattr(
@@ -138,7 +143,18 @@ def test_quiz_generation_graph_uses_attempt_purpose_for_learner_runs(monkeypatch
     )
     monkeypatch.setattr(
         "app.services.workflows.quiz_generation.nodes.retrieve_context.QuizGenerationRetrievalService.load_context",
-        lambda self, **_: RetrievalContextRead(usedRetrieval=False, queryText="", topK=5, chunkCount=0, chunks=[]),
+        lambda self, **_: RetrievalContextRead(
+            usedRetrieval=False,
+            queryText="",
+            topK=5,
+            chunkCount=0,
+            chunks=[],
+            chatModelId="glm:glm-4.7",
+            embeddingModelId="glm:embedding-3",
+            embeddingVersion="glm:embedding-3@1024",
+            indexStatus="ready",
+            indexCoverage=1.0,
+        ),
     )
     monkeypatch.setattr(
         "app.services.workflows.quiz_generation.nodes.plan_quiz.QuizGenerationPlanningService.build_plan",

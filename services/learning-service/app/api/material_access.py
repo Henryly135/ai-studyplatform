@@ -15,6 +15,7 @@ def download_local_material(
     object_path: str,
     expires: int = Query(...),
     signature: str = Query(...),
+    download: bool = False,
 ) -> FileResponse:
     if settings.object_storage_provider.strip().lower() != "local":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Material not found")
@@ -39,4 +40,23 @@ def download_local_material(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Material not found")
 
     media_type = mimetypes.guess_type(material_path.name)[0] or "application/octet-stream"
-    return FileResponse(material_path, media_type=media_type, filename=material_path.name)
+    safe_inline_media_types = {
+        "application/json",
+        "application/pdf",
+        "text/csv",
+        "text/markdown",
+        "text/plain",
+    }
+    can_preview_inline = (
+        media_type in safe_inline_media_types
+        or media_type.startswith("audio/")
+        or media_type.startswith("video/")
+        or (media_type.startswith("image/") and media_type != "image/svg+xml")
+    )
+    content_disposition_type = "inline" if can_preview_inline and not download else "attachment"
+    return FileResponse(
+        material_path,
+        media_type=media_type,
+        filename=material_path.name,
+        content_disposition_type=content_disposition_type,
+    )

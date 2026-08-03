@@ -109,6 +109,70 @@ def _filter_accessible_sessions(session_rows, current_user: dict) -> list:
     return accessible_sessions
 
 
+def _resolve_chat_context(
+    *,
+    payload: ChatRequest,
+    current_user: dict,
+    db: Session,
+) -> tuple[int | None, int | None, int | None]:
+    """Resolve an existing session's immutable scope before any chat writes."""
+
+    user_id = int(current_user["id"])
+    session_id = (
+        decode_session_uuid(payload.session_uuid)
+        if payload.session_uuid
+        else None
+    )
+
+    if session_id is not None:
+        requested_course_id = (
+            decode_course_uuid(payload.course_uuid)
+            if payload.course_uuid
+            else None
+        )
+        requested_module_id = (
+            decode_module_uuid(payload.module_uuid)
+            if payload.module_uuid
+            else None
+        )
+        session_row = AIChatSessionsRepository(db).get_by_id(session_id)
+        if session_row is None or session_row.user_id != user_id:
+            raise AIChatSessionError("Chat session is unavailable.")
+        if (
+            requested_course_id is not None
+            and requested_course_id != session_row.course_id
+        ):
+            raise AIChatSessionError("Chat session course context cannot change.")
+        if (
+            requested_module_id is not None
+            and requested_module_id != session_row.module_id
+        ):
+            raise AIChatSessionError("Chat session module context cannot change.")
+        if session_row.module_id is not None and session_row.course_id is None:
+            raise AIChatSessionError("Chat session has an invalid context.")
+
+        _ensure_session_context_access(session_row, current_user)
+        return session_id, session_row.course_id, session_row.module_id
+
+    if payload.module_uuid and not payload.course_uuid:
+        raise _http_error(
+            status.HTTP_400_BAD_REQUEST,
+            "AI_COURSE_CONTEXT_REQUIRED",
+            "module_uuid requires course_uuid.",
+        )
+    if payload.course_uuid:
+        LearningContextAccessClient().ensure_chat_context_access(
+            course_uuid=payload.course_uuid,
+            module_uuid=payload.module_uuid,
+            current_user=current_user,
+        )
+    return (
+        session_id,
+        decode_course_uuid(payload.course_uuid) if payload.course_uuid else None,
+        decode_module_uuid(payload.module_uuid) if payload.module_uuid else None,
+    )
+
+
 @router.post("/chat", response_model=ChatSuccessResponse)
 def chat(
     payload: ChatRequest,
@@ -116,24 +180,17 @@ def chat(
     db: Session = Depends(get_db_session),
 ) -> ChatSuccessResponse:
     try:
-        if payload.module_uuid and not payload.course_uuid:
-            raise _http_error(
-                status.HTTP_400_BAD_REQUEST,
-                "AI_COURSE_CONTEXT_REQUIRED",
-                "module_uuid requires course_uuid.",
-            )
-        if payload.course_uuid:
-            LearningContextAccessClient().ensure_chat_context_access(
-                course_uuid=payload.course_uuid,
-                module_uuid=payload.module_uuid,
-                current_user=current_user,
-            )
+        session_id, course_id, module_id = _resolve_chat_context(
+            payload=payload,
+            current_user=current_user,
+            db=db,
+        )
 
         service_payload = ChatServiceRequest(
-            session_id=decode_session_uuid(payload.session_uuid) if payload.session_uuid else None,
+            session_id=session_id,
             user_id=int(current_user["id"]),
-            course_id=decode_course_uuid(payload.course_uuid) if payload.course_uuid else None,
-            module_id=decode_module_uuid(payload.module_uuid) if payload.module_uuid else None,
+            course_id=course_id,
+            module_id=module_id,
             message=payload.message,
             model_id=payload.model_id,
         )
