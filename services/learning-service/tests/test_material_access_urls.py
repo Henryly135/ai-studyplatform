@@ -24,7 +24,7 @@ def _patch_local_material_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     monkeypatch.setattr(material_access_module, "settings", fake_settings)
 
 
-def test_local_material_access_url_is_signed_and_downloadable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_local_material_access_url_is_signed_and_previewed_inline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _patch_local_material_settings(monkeypatch, tmp_path)
     object_key = "course-one/module-one/notes.txt"
     material_path = tmp_path / object_key
@@ -44,6 +44,51 @@ def test_local_material_access_url_is_signed_and_downloadable(monkeypatch: pytes
         signature=query["signature"],
     )
     assert Path(response.path) == material_path.resolve()
+    assert response.headers["content-disposition"].startswith("inline;")
+
+
+def test_local_material_access_can_request_an_attachment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _patch_local_material_settings(monkeypatch, tmp_path)
+    object_key = "course-one/module-one/notes.txt"
+    material_path = tmp_path / object_key
+    material_path.parent.mkdir(parents=True)
+    material_path.write_text("signed material body", encoding="utf-8")
+
+    url = StorageService().get_material_access_url(metadata={"objectKey": object_key}, fallback_url=None)
+    route_path = url.split("?", 1)[0].removeprefix("/materials/")
+    query = dict(part.split("=", 1) for part in url.split("?", 1)[1].split("&"))
+
+    response = material_access_module.download_local_material(
+        object_path=route_path,
+        expires=int(query["expires"]),
+        signature=query["signature"],
+        download=True,
+    )
+
+    assert response.headers["content-disposition"].startswith("attachment;")
+
+
+def test_local_material_access_keeps_unsafe_inline_types_as_attachments(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_local_material_settings(monkeypatch, tmp_path)
+    object_key = "course-one/module-one/diagram.svg"
+    material_path = tmp_path / object_key
+    material_path.parent.mkdir(parents=True)
+    material_path.write_text("<svg xmlns='http://www.w3.org/2000/svg'></svg>", encoding="utf-8")
+
+    url = StorageService().get_material_access_url(metadata={"objectKey": object_key}, fallback_url=None)
+    route_path = url.split("?", 1)[0].removeprefix("/materials/")
+    query = dict(part.split("=", 1) for part in url.split("?", 1)[1].split("&"))
+
+    response = material_access_module.download_local_material(
+        object_path=route_path,
+        expires=int(query["expires"]),
+        signature=query["signature"],
+    )
+
+    assert response.headers["content-disposition"].startswith("attachment;")
 
 
 def test_local_material_access_rejects_expired_or_tampered_urls(
