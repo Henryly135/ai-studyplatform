@@ -813,7 +813,8 @@
 }
 
 .home-ai-panel-detail-mode {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  height: auto;
+  grid-template-rows: auto auto minmax(18rem, 32rem);
 }
 
 .home-ai-panel-heading {

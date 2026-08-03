@@ -5,6 +5,8 @@ import { updateModuleProgress } from "../../services/course";
 import type { CourseMaterial } from "../../types/course";
 import type { CourseOutletContext } from "./CourseLayout";
 import { getMaterialDownloadUrl } from "./courseMaterialUrls";
+import { MarkdownMaterialViewer } from "./MarkdownMaterialViewer";
+import { isMarkdownMaterial } from "./markdownMaterial";
 
 function formatFileSize(value: unknown) {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
@@ -188,6 +190,7 @@ function CourseMaterialPage() {
   const imageMaterial = isImageMaterial(material);
   const pdfMaterial = isPdfMaterial(material);
   const audioMaterial = isAudioMaterial(material);
+  const markdownMaterial = isMarkdownMaterial(material);
   const previewableDocumentMaterial = isPreviewableDocumentMaterial(material);
 
   return (
@@ -218,6 +221,12 @@ function CourseMaterialPage() {
                 <audio className="course-audio-player" controls preload="metadata" src={material.resourceUrl}>你的浏览器不支持内嵌音频播放，请使用打开资料链接。
                 </audio>
               </div>
+            ) : markdownMaterial ? (
+              <MarkdownMaterialViewer
+                key={`${material.materialUuid}:${material.resourceUrl}`}
+                resourceUrl={material.resourceUrl}
+                title={material.title}
+              />
             ) : previewableDocumentMaterial ? (
               <div className="course-document-stage">
                 <iframe
