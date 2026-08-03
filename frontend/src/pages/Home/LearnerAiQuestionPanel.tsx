@@ -16,11 +16,14 @@ type LearnerAiQuestionPanelProps = {
   question: string;
   status: string;
   isSending: boolean;
+  activeSessionUuid?: string | null;
+  activeSessionContext?: string;
   onCourseChange: (value: string) => void;
   onModuleChange: (value: string) => void;
   onModelChange: (value: string) => void;
   onQuestionChange: (value: string) => void;
   onSubmit: () => void;
+  onStartNewConversation?: () => void;
 };
 
 export function LearnerAiQuestionPanel({
@@ -33,12 +36,16 @@ export function LearnerAiQuestionPanel({
   question,
   status,
   isSending,
+  activeSessionUuid = null,
+  activeSessionContext = "",
   onCourseChange,
   onModuleChange,
   onModelChange,
   onQuestionChange,
   onSubmit,
+  onStartNewConversation,
 }: LearnerAiQuestionPanelProps) {
+  const isContinuingSession = Boolean(activeSessionUuid);
   const hasUsableSelectedModel = models.some(
     (model) => model.value === selectedModelId && !model.disabled
   );
@@ -55,48 +62,68 @@ export function LearnerAiQuestionPanel({
 
   return (
     <form className="home-ai-provider-card" onSubmit={handleSubmit}>
-      <div className="home-ai-panel-heading">
-        <h2>课程提问</h2>
-        <span>基于模块资料</span>
+      <div className="home-ai-panel-heading home-ai-question-heading">
+        <div>
+          <h2>{isContinuingSession ? "继续对话" : "新建课程提问"}</h2>
+          <span>
+            {isContinuingSession
+              ? activeSessionContext || "沿用当前历史会话的课程上下文"
+              : "基于模块资料"}
+          </span>
+        </div>
+        {isContinuingSession && onStartNewConversation ? (
+          <button
+            type="button"
+            className="home-ai-new-session-button"
+            onClick={onStartNewConversation}
+            disabled={isSending}
+          >
+            <span>新建会话</span>
+          </button>
+        ) : null}
       </div>
 
-      <div className="home-ai-default-model-row">
-        <label>
-          <span>课程</span>
-          <select
-            aria-label="提问课程"
-            value={selectedCourseUuid}
-            onChange={(event) => onCourseChange(event.target.value)}
-            disabled={courses.length === 0 || isSending}
-          >
-            {courses.length === 0 ? <option value="">暂无已加入课程</option> : null}
-            {courses.map((course) => (
-              <option key={course.value} value={course.value}>
-                {course.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      {!isContinuingSession ? (
+        <>
+          <div className="home-ai-default-model-row">
+            <label>
+              <span>课程</span>
+              <select
+                aria-label="提问课程"
+                value={selectedCourseUuid}
+                onChange={(event) => onCourseChange(event.target.value)}
+                disabled={courses.length === 0 || isSending}
+              >
+                {courses.length === 0 ? <option value="">暂无已加入课程</option> : null}
+                {courses.map((course) => (
+                  <option key={course.value} value={course.value}>
+                    {course.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
-      <div className="home-ai-default-model-row">
-        <label>
-          <span>模块</span>
-          <select
-            aria-label="提问模块"
-            value={selectedModuleUuid}
-            onChange={(event) => onModuleChange(event.target.value)}
-            disabled={modules.length === 0 || isSending}
-          >
-            {modules.length === 0 ? <option value="">暂无可用模块</option> : null}
-            {modules.map((module) => (
-              <option key={module.value} value={module.value}>
-                {module.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+          <div className="home-ai-default-model-row">
+            <label>
+              <span>模块</span>
+              <select
+                aria-label="提问模块"
+                value={selectedModuleUuid}
+                onChange={(event) => onModuleChange(event.target.value)}
+                disabled={modules.length === 0 || isSending}
+              >
+                {modules.length === 0 ? <option value="">暂无可用模块</option> : null}
+                {modules.map((module) => (
+                  <option key={module.value} value={module.value}>
+                    {module.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </>
+      ) : null}
 
       <div className="home-ai-default-model-row">
         <label>
@@ -120,7 +147,7 @@ export function LearnerAiQuestionPanel({
       <div className="home-ai-provider-actions">
         <input
           aria-label="询问课程内容"
-          placeholder="询问课程内容..."
+          placeholder={isContinuingSession ? "继续当前对话..." : "询问课程内容..."}
           value={question}
           onChange={(event) => onQuestionChange(event.target.value)}
           disabled={!selectedModuleUuid || isSending}

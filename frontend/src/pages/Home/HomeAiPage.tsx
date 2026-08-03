@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useOutletContext } from "react-router-dom";
-import { LuArrowLeft, LuDownload, LuRefreshCw, LuSearch } from "react-icons/lu";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { LuDownload, LuRefreshCw, LuSearch } from "react-icons/lu";
 
 import {
   checkAdminAiProviderCredentialHealth,
@@ -35,6 +33,7 @@ import {
   getEducatorQuizAnalytics,
   getEducatorTeachingInsights,
   getCourseByUuid,
+  getManagedCourseByUuid,
   getManagedCourses,
   getMyEnrolledCourses,
 } from "../../services/course";
@@ -69,7 +68,7 @@ import {
   isChatModelSelectable,
   resolveChatModelSelection,
 } from "../Course/courseChatModels";
-import { LearnerAiQuestionPanel } from "./LearnerAiQuestionPanel";
+import { HomeAiConversationPanel } from "./HomeAiConversationPanel";
 import {
   getLearnerAiModuleEntries,
   hydrateLearnerAiCourses,
@@ -245,6 +244,8 @@ function getLearnerAiModulePath(courseUuid: string, moduleUuid: string) {
 function HomeAiPage() {
   const { currentUser } = useOutletContext<HomeOutletContext>();
   const isLearner = currentUser.identity === "Learner";
+  const isEducator = currentUser.identity === "Educator";
+  const isChatUser = isLearner || isEducator;
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
   const [courses, setCourses] = useState<CourseRecord[]>([]);
   const [activeSession, setActiveSession] = useState<ChatSessionDetail | null>(null);
@@ -277,11 +278,13 @@ function HomeAiPage() {
   const [learnerQuestionSending, setLearnerQuestionSending] = useState(false);
 
   useEffect(() => {
-    if (!isLearner) {
+    if (!isChatUser) {
       return;
     }
 
     let cancelled = false;
+    setLoading(true);
+    setErrorMessage(null);
 
     void listChatSessions()
       .then((data) => {
@@ -303,7 +306,7 @@ function HomeAiPage() {
     return () => {
       cancelled = true;
     };
-  }, [isLearner]);
+  }, [isChatUser]);
 
   useEffect(() => {
     if (isLearner) {
@@ -570,14 +573,27 @@ function HomeAiPage() {
   );
 
   useEffect(() => {
-    if (!isLearner) {
+    if (!isChatUser) {
       return;
     }
 
     let cancelled = false;
 
-    void getMyEnrolledCourses()
-      .then((data) => hydrateLearnerAiCourses(data, getCourseByUuid))
+    const loadChatCourses = isLearner
+      ? getMyEnrolledCourses().then((data) => hydrateLearnerAiCourses(data, getCourseByUuid))
+      : getManagedCourses({ page: 1, pageSize: 100 }).then(async (response) =>
+          Promise.all(
+            response.items.map(async (course) => {
+              try {
+                return (await getManagedCourseByUuid(course.courseUuid)) ?? course;
+              } catch {
+                return course;
+              }
+            })
+          )
+        );
+
+    void loadChatCourses
       .then((data) => {
         if (!cancelled) {
           setCourses(data);
@@ -596,7 +612,7 @@ function HomeAiPage() {
     return () => {
       cancelled = true;
     };
-  }, [isLearner]);
+  }, [isChatUser, isLearner]);
 
   const workspaceCopy = useMemo(() => {
     if (currentUser.identity === "Educator") {
@@ -665,7 +681,9 @@ function HomeAiPage() {
   )
     ? selectedLearnerModuleUuid
     : selectedLearnerModules[0]?.moduleUuid ?? "";
-  const learnerModelScopeKey = `${effectiveSelectedLearnerCourseUuid}:${effectiveSelectedLearnerModuleUuid}`;
+  const chatCourseUuid = activeSession?.session.course_uuid ?? effectiveSelectedLearnerCourseUuid;
+  const chatModuleUuid = activeSession?.session.module_uuid ?? effectiveSelectedLearnerModuleUuid;
+  const learnerModelScopeKey = `${chatCourseUuid}:${chatModuleUuid}`;
   const activeLearnerModelCatalog =
     learnerModelCatalogScopeKey === learnerModelScopeKey ? learnerModelCatalog : null;
   const learnerModelOptions = useMemo(
@@ -681,24 +699,24 @@ function HomeAiPage() {
       ) ?? [],
     [activeLearnerModelCatalog]
   );
-  const activeLearnerQuestionStatus = !effectiveSelectedLearnerCourseUuid
+  const activeLearnerQuestionStatus = !chatCourseUuid
     ? "暂无可提问的已加入课程。"
-    : !effectiveSelectedLearnerModuleUuid
+    : !chatModuleUuid
       ? "当前课程暂无可提问模块。"
       : learnerModelCatalogScopeKey !== learnerModelScopeKey
         ? "正在加载可用模型..."
         : learnerQuestionStatus;
 
   useEffect(() => {
-    if (!isLearner || !effectiveSelectedLearnerCourseUuid || !effectiveSelectedLearnerModuleUuid) {
+    if (!isChatUser || !chatCourseUuid || !chatModuleUuid) {
       return;
     }
 
     let cancelled = false;
-    const requestedScopeKey = `${effectiveSelectedLearnerCourseUuid}:${effectiveSelectedLearnerModuleUuid}`;
+    const requestedScopeKey = `${chatCourseUuid}:${chatModuleUuid}`;
     void getAiModelCatalog({
-      courseUuid: effectiveSelectedLearnerCourseUuid,
-      moduleUuid: effectiveSelectedLearnerModuleUuid,
+      courseUuid: chatCourseUuid,
+      moduleUuid: chatModuleUuid,
     })
       .then((catalog) => {
         if (cancelled) {
@@ -722,7 +740,7 @@ function HomeAiPage() {
     return () => {
       cancelled = true;
     };
-  }, [effectiveSelectedLearnerCourseUuid, effectiveSelectedLearnerModuleUuid, isLearner]);
+  }, [chatCourseUuid, chatModuleUuid, isChatUser]);
 
   const educatorDashboard = useMemo(() => {
     const managedCourses = roleDashboard.managedCourses;
@@ -881,20 +899,34 @@ function HomeAiPage() {
     }));
 
   function getSessionContextLabel(session: ChatSessionSummary) {
-    return session.course_uuid
+    const courseLabel = session.course_uuid
       ? courseTitleMap.get(session.course_uuid) ?? "未知课程"
       : "未知课程";
+    const moduleLabel = session.course_uuid && session.module_uuid
+      ? courses
+          .find((course) => course.courseUuid === session.course_uuid)
+          ?.modules.find((module) => module.moduleUuid === session.module_uuid)?.title
+      : null;
+    return moduleLabel ? `${courseLabel} · ${moduleLabel}` : courseLabel;
   }
 
-  function handleBackToSessions() {
+  function handleStartNewConversation() {
     setActiveSession(null);
     setDetailErrorMessage(null);
     setDetailLoading(false);
+    setLearnerQuestion("");
+    setLearnerQuestionStatus("选择课程模块后即可提问。");
   }
 
   function handleOpenSession(sessionUuid: string) {
+    if (activeSession?.session.session_uuid === sessionUuid || detailLoading) {
+      return;
+    }
+
+    setActiveSession(null);
     setDetailLoading(true);
     setDetailErrorMessage(null);
+    setLearnerQuestionStatus("正在加载历史会话...");
 
     void getChatSessionDetail(sessionUuid)
       .then((detail) => {
@@ -905,6 +937,7 @@ function HomeAiPage() {
         if (detail.session.module_uuid) {
           setSelectedLearnerModuleUuid(detail.session.module_uuid);
         }
+        setLearnerQuestionStatus("可以继续提问。");
       })
       .catch((error) => {
         setDetailErrorMessage(
@@ -918,32 +951,34 @@ function HomeAiPage() {
 
   async function handleLearnerQuestionSubmit() {
     const message = learnerQuestion.trim();
+    const requestCourseUuid = activeSession?.session.course_uuid ?? effectiveSelectedLearnerCourseUuid;
+    const requestModuleUuid = activeSession?.session.module_uuid ?? effectiveSelectedLearnerModuleUuid;
+    const continuingSessionUuid = activeSession?.session.session_uuid ?? null;
     if (
       !message ||
-      !effectiveSelectedLearnerCourseUuid ||
-      !effectiveSelectedLearnerModuleUuid ||
+      !requestCourseUuid ||
+      !requestModuleUuid ||
       !selectedLearnerModelId ||
       learnerQuestionSending
     ) {
       return;
     }
 
-    const continuingSessionUuid =
-      activeSession?.session.module_uuid === effectiveSelectedLearnerModuleUuid
-        ? activeSession.session.session_uuid
-        : null;
     setLearnerQuestion("");
     setLearnerQuestionSending(true);
     setLearnerQuestionStatus(continuingSessionUuid ? "正在继续当前会话..." : "正在创建新会话...");
 
     try {
       const response = await sendChatMessage({
-        courseUuid: effectiveSelectedLearnerCourseUuid,
-        moduleUuid: effectiveSelectedLearnerModuleUuid,
+        courseUuid: requestCourseUuid,
+        moduleUuid: requestModuleUuid,
         message,
         sessionUuid: continuingSessionUuid,
         modelId: selectedLearnerModelId,
       });
+      if (continuingSessionUuid && response.session_uuid !== continuingSessionUuid) {
+        throw new Error("服务器未继续当前历史会话，请重试。 ");
+      }
       const [detail, updatedSessions] = await Promise.all([
         getChatSessionDetail(response.session_uuid),
         listChatSessions(),
@@ -1188,6 +1223,49 @@ function HomeAiPage() {
         </div>
 
         {roleDashboardError ? <p className="home-progress-alert">{roleDashboardError}</p> : null}
+
+        {isEducator ? (
+          <HomeAiConversationPanel
+            title="教师智能对话"
+            sessionCountLabel={loading ? "加载中..." : `${sessions.length} 个会话`}
+            sessions={sessions}
+            sessionsLoading={loading}
+            sessionsError={errorMessage}
+            activeSession={activeSession}
+            detailLoading={detailLoading}
+            detailErrorMessage={detailErrorMessage}
+            sessionContextLabel={getSessionContextLabel}
+            activeSessionContextLabel={activeSession ? getSessionContextLabel(activeSession.session) : ""}
+            courses={learnerCoursesWithModules.map((course) => ({
+              value: course.courseUuid,
+              label: course.title,
+            }))}
+            modules={selectedLearnerModules.map((module) => ({
+              value: module.moduleUuid,
+              label: module.title,
+            }))}
+            models={learnerModelOptions}
+            selectedCourseUuid={chatCourseUuid}
+            selectedModuleUuid={chatModuleUuid}
+            selectedModelId={selectedLearnerModelId}
+            question={learnerQuestion}
+            status={activeLearnerQuestionStatus}
+            isSending={learnerQuestionSending || detailLoading}
+            onCourseChange={(value) => {
+              setSelectedLearnerCourseUuid(value);
+              handleStartNewConversation();
+            }}
+            onModuleChange={(value) => {
+              setSelectedLearnerModuleUuid(value);
+              handleStartNewConversation();
+            }}
+            onModelChange={setSelectedLearnerModelId}
+            onQuestionChange={setLearnerQuestion}
+            onSubmit={() => void handleLearnerQuestionSubmit()}
+            onOpenSession={handleOpenSession}
+            onStartNewConversation={handleStartNewConversation}
+          />
+        ) : null}
 
         <div className="home-ai-grid">
           <article className="home-ai-panel">
@@ -1875,107 +1953,46 @@ function HomeAiPage() {
       </div>
 
       <div className="home-ai-grid">
-        <article className={`home-ai-panel ${activeSession ? "home-ai-panel-detail-mode" : ""}`}>
-          <LearnerAiQuestionPanel
-            courses={learnerCoursesWithModules.map((course) => ({
-              value: course.courseUuid,
-              label: course.title,
-            }))}
-            modules={selectedLearnerModules.map((module) => ({
-              value: module.moduleUuid,
-              label: module.title,
-            }))}
-            models={learnerModelOptions}
-            selectedCourseUuid={effectiveSelectedLearnerCourseUuid}
-            selectedModuleUuid={effectiveSelectedLearnerModuleUuid}
-            selectedModelId={selectedLearnerModelId}
-            question={learnerQuestion}
-            status={activeLearnerQuestionStatus}
-            isSending={learnerQuestionSending}
-            onCourseChange={(value) => {
-              setSelectedLearnerCourseUuid(value);
-              setActiveSession(null);
-            }}
-            onModuleChange={(value) => {
-              setSelectedLearnerModuleUuid(value);
-              setActiveSession(null);
-            }}
-            onModelChange={setSelectedLearnerModelId}
-            onQuestionChange={setLearnerQuestion}
-            onSubmit={() => void handleLearnerQuestionSubmit()}
-          />
-
-          {activeSession ? (
-            <>
-              <div className="home-ai-panel-heading home-ai-detail-heading">
-                <button type="button" className="home-ai-back" onClick={handleBackToSessions}>
-                  <LuArrowLeft size={18} aria-hidden="true" />
-                  <span>返回会话列表</span>
-                </button>
-                <div className="home-ai-detail-meta">
-                  <h2>{activeSession.session.title || "未命名会话"}</h2>
-                  <span>{formatSessionTimestamp(activeSession.session.last_message_at)}</span>
-                </div>
-              </div>
-
-              {detailErrorMessage ? <p className="home-ai-muted">{detailErrorMessage}</p> : null}
-
-              <div className="home-ai-detail-body">
-                {detailLoading ? <p className="home-ai-muted">正在加载对话...</p> : null}
-                {!detailLoading && activeSession.messages.length === 0 ? (
-                  <p className="home-ai-muted">该会话中没有消息。</p>
-                ) : null}
-
-                {!detailLoading && activeSession.messages.length > 0 ? (
-                  <div className="home-ai-message-list">
-                    {activeSession.messages.map((message) => (
-                      <article
-                        key={message.message_id}
-                        className={`home-ai-message home-ai-message-${message.role === "user" ? "user" : "assistant"}`}
-                      >
-                        <div className="home-ai-message-bubble">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {message.content_text}
-                          </ReactMarkdown>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="home-ai-panel-heading">
-                <h2>全部会话</h2>
-                <span>{loading ? "加载中..." : `${sessions.length} 个会话`}</span>
-              </div>
-
-              {loading ? <p className="home-ai-muted">正在加载会话...</p> : null}
-              {errorMessage ? <p className="home-ai-muted">{errorMessage}</p> : null}
-              {!loading && !errorMessage && sessions.length === 0 ? (
-                <p className="home-ai-muted">暂无智能会话。</p>
-              ) : null}
-
-              <div className="home-ai-session-list">
-                {sessions.map((session) => (
-                  <button
-                    key={session.session_uuid}
-                    type="button"
-                    className="home-ai-session-card"
-                    onClick={() => handleOpenSession(session.session_uuid)}
-                  >
-                    <div className="home-ai-session-meta">
-                      <strong>{session.title || "未命名会话"}</strong>
-                      <span>{formatSessionTimestamp(session.last_message_at)}</span>
-                    </div>
-                    <p className="home-ai-session-context">{getSessionContextLabel(session)}</p>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </article>
+        <HomeAiConversationPanel
+          title="我的智能对话"
+          sessionCountLabel={loading ? "加载中..." : `${sessions.length} 个会话`}
+          sessions={sessions}
+          sessionsLoading={loading}
+          sessionsError={errorMessage}
+          activeSession={activeSession}
+          detailLoading={detailLoading}
+          detailErrorMessage={detailErrorMessage}
+          sessionContextLabel={getSessionContextLabel}
+          activeSessionContextLabel={activeSession ? getSessionContextLabel(activeSession.session) : ""}
+          courses={learnerCoursesWithModules.map((course) => ({
+            value: course.courseUuid,
+            label: course.title,
+          }))}
+          modules={selectedLearnerModules.map((module) => ({
+            value: module.moduleUuid,
+            label: module.title,
+          }))}
+          models={learnerModelOptions}
+          selectedCourseUuid={chatCourseUuid}
+          selectedModuleUuid={chatModuleUuid}
+          selectedModelId={selectedLearnerModelId}
+          question={learnerQuestion}
+          status={activeLearnerQuestionStatus}
+          isSending={learnerQuestionSending || detailLoading}
+          onCourseChange={(value) => {
+            setSelectedLearnerCourseUuid(value);
+            handleStartNewConversation();
+          }}
+          onModuleChange={(value) => {
+            setSelectedLearnerModuleUuid(value);
+            handleStartNewConversation();
+          }}
+          onModelChange={setSelectedLearnerModelId}
+          onQuestionChange={setLearnerQuestion}
+          onSubmit={() => void handleLearnerQuestionSubmit()}
+          onOpenSession={handleOpenSession}
+          onStartNewConversation={handleStartNewConversation}
+        />
 
         <article className="home-ai-panel">
           <div className="home-ai-panel-heading">
