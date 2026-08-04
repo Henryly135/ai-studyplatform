@@ -156,7 +156,7 @@ VALUES
     ('forum.pin', 'Pin forum posts', 'Pin and unpin forum posts for courses you moderate'),
     ('notification.read', 'Read notifications', 'View and manage personal notifications'),
     ('notification.manage', 'Manage notifications', 'Create, update and delete system notifications'),
-    ('ai.chat.use', 'Use AI chat', 'Use learner-facing AI chatbot features'),
+    ('ai.chat.use', 'Use AI chat', 'Use AI chat features'),
     ('learner_profile.manage', 'Manage learner profile', 'Create and view learner global profile settings'),
     ('quiz.attempt', 'Attempt quiz', 'Start and submit learner quiz attempts'),
     ('ai.governance.manage', 'Manage AI governance', 'Retry AI indexing jobs and perform AI governance recovery actions'),
@@ -203,7 +203,8 @@ JOIN permissions p ON
         'forum.read',
         'forum.write',
         'forum.pin',
-        'notification.read'
+        'notification.read',
+        'ai.chat.use'
     ))
     OR (r.role_code = 'admin' AND p.permission_code IN (
         'user.read',

@@ -21,6 +21,9 @@ class QuizGenerationPlanningService:
     MAX_PROVIDER_ATTEMPTS = 3
     RETRY_BACKOFF_SECONDS = (1, 2)
 
+    def __init__(self, session=None) -> None:
+        self.session = session
+
     def build_plan(
         self,
         *,
@@ -37,9 +40,11 @@ class QuizGenerationPlanningService:
             profile_context=profile_context,
         )
         try:
-            return AIModelInvocationService().generate_json(
+            return AIModelInvocationService(self.session).generate_json(
                 prompt=prompt,
                 system_instruction=prompt_template.system_instruction,
+                model_id=retrieval_context.chatModelId,
+                user_id=None,
                 temperature=0.2,
                 max_output_tokens=1800,
                 validator=QuizGenerationPlanRead.model_validate,

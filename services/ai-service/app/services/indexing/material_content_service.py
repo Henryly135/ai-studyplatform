@@ -50,6 +50,7 @@ class MaterialContentService:
             content_type=(request.content_type or "").strip().lower() or None,
             object_key=request.object_key,
         )
+        content_text = content_text.replace("\r\n", "\n").replace("\r", "\n")
         if not content_text.strip():
             raise invalid_request_error("Extracted material content is empty")
 

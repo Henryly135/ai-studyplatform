@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useOutletContext } from "react-router-dom";
-import { LuArrowLeft, LuDownload, LuRefreshCw, LuSearch } from "react-icons/lu";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { LuDownload, LuRefreshCw, LuSearch } from "react-icons/lu";
 
 import {
   checkAdminAiProviderCredentialHealth,
@@ -27,12 +25,15 @@ import {
   listChatSessions,
   retryAdminAiIndexJob,
   searchAdminAiTelemetryFailures,
+  sendChatMessage,
 } from "../../services/chat";
 import {
   getEducatorAnalytics,
   getEducatorMaterialBriefs,
   getEducatorQuizAnalytics,
   getEducatorTeachingInsights,
+  getCourseByUuid,
+  getManagedCourseByUuid,
   getManagedCourses,
   getMyEnrolledCourses,
 } from "../../services/course";
@@ -47,6 +48,7 @@ import type {
   AdminAiTelemetrySummary,
   AdminAiTelemetryTrendPoint,
   AiModelCatalog,
+  AiModelCatalogModel,
   AiRuntimeHealth,
   ChatSessionDetail,
   ChatSessionSummary,
@@ -61,6 +63,16 @@ import type {
   TeachingInsightItem,
 } from "../../types/course";
 import type { HomeOutletContext } from "./HomeSectionPage";
+import {
+  formatRagOptionSuffix,
+  isChatModelSelectable,
+  resolveChatModelSelection,
+} from "../Course/courseChatModels";
+import { HomeAiConversationPanel } from "./HomeAiConversationPanel";
+import {
+  getLearnerAiModuleEntries,
+  hydrateLearnerAiCourses,
+} from "./learnerAiWorkspace";
 import "./HomePage.css";
 
 type RoleAiDashboardState = {
@@ -159,6 +171,26 @@ function formatPercent(value: number | null | undefined) {
   return `${Math.round(value)}%`;
 }
 
+function formatEmbeddingPair(model: AiModelCatalogModel | null) {
+  if (!model) {
+    return "尚未选择生成模型";
+  }
+
+  const embeddingName =
+    model.pairedEmbeddingModelName || model.pairedEmbeddingModelId || "配对向量模型待目录同步";
+  const dimension = model.embeddingDimension ? ` · ${model.embeddingDimension} 维` : "";
+  const coverage =
+    model.indexCoverage === null ? "" : ` · 索引覆盖 ${Math.round(model.indexCoverage * 100)}%`;
+
+  if (model.ragReady === true) {
+    return `${embeddingName}${dimension} · 资料检索就绪${coverage}`;
+  }
+  if (model.ragReady === false) {
+    return `${embeddingName}${dimension} · 资料检索尚未就绪${coverage}`;
+  }
+  return `${embeddingName}${dimension} · 资料检索状态待确认`;
+}
+
 function formatLatency(value: number | null | undefined) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return "暂无延迟数据";
@@ -212,6 +244,8 @@ function getLearnerAiModulePath(courseUuid: string, moduleUuid: string) {
 function HomeAiPage() {
   const { currentUser } = useOutletContext<HomeOutletContext>();
   const isLearner = currentUser.identity === "Learner";
+  const isEducator = currentUser.identity === "Educator";
+  const isChatUser = isLearner || isEducator;
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
   const [courses, setCourses] = useState<CourseRecord[]>([]);
   const [activeSession, setActiveSession] = useState<ChatSessionDetail | null>(null);
@@ -234,13 +268,23 @@ function HomeAiPage() {
   const [credentialActionError, setCredentialActionError] = useState<string | null>(null);
   const [credentialActionNotice, setCredentialActionNotice] = useState<string | null>(null);
   const [selectedDefaultModelId, setSelectedDefaultModelId] = useState("");
+  const [selectedLearnerCourseUuid, setSelectedLearnerCourseUuid] = useState("");
+  const [selectedLearnerModuleUuid, setSelectedLearnerModuleUuid] = useState("");
+  const [learnerModelCatalog, setLearnerModelCatalog] = useState<AiModelCatalog | null>(null);
+  const [learnerModelCatalogScopeKey, setLearnerModelCatalogScopeKey] = useState("");
+  const [selectedLearnerModelId, setSelectedLearnerModelId] = useState("");
+  const [learnerQuestion, setLearnerQuestion] = useState("");
+  const [learnerQuestionStatus, setLearnerQuestionStatus] = useState("选择课程模块后即可提问。");
+  const [learnerQuestionSending, setLearnerQuestionSending] = useState(false);
 
   useEffect(() => {
-    if (!isLearner) {
+    if (!isChatUser) {
       return;
     }
 
     let cancelled = false;
+    setLoading(true);
+    setErrorMessage(null);
 
     void listChatSessions()
       .then((data) => {
@@ -262,7 +306,7 @@ function HomeAiPage() {
     return () => {
       cancelled = true;
     };
-  }, [isLearner]);
+  }, [isChatUser]);
 
   useEffect(() => {
     if (isLearner) {
@@ -529,13 +573,27 @@ function HomeAiPage() {
   );
 
   useEffect(() => {
-    if (!isLearner) {
+    if (!isChatUser) {
       return;
     }
 
     let cancelled = false;
 
-    void getMyEnrolledCourses()
+    const loadChatCourses = isLearner
+      ? getMyEnrolledCourses().then((data) => hydrateLearnerAiCourses(data, getCourseByUuid))
+      : getManagedCourses({ page: 1, pageSize: 100 }).then(async (response) =>
+          Promise.all(
+            response.items.map(async (course) => {
+              try {
+                return (await getManagedCourseByUuid(course.courseUuid)) ?? course;
+              } catch {
+                return course;
+              }
+            })
+          )
+        );
+
+    void loadChatCourses
       .then((data) => {
         if (!cancelled) {
           setCourses(data);
@@ -554,7 +612,7 @@ function HomeAiPage() {
     return () => {
       cancelled = true;
     };
-  }, [isLearner]);
+  }, [isChatUser, isLearner]);
 
   const workspaceCopy = useMemo(() => {
     if (currentUser.identity === "Educator") {
@@ -580,7 +638,7 @@ function HomeAiPage() {
     return {
       badge: "智能助手",
       title: "智能工作区",
-      body: "查看课程聊天会话，并基于课程上下文继续学习。",
+      body: "选择课程模块直接提问，并基于课程资料继续学习。",
       primaryTitle: "全部会话",
       secondaryTitle: "模块推荐",
     };
@@ -597,16 +655,92 @@ function HomeAiPage() {
   }, [courses]);
 
   const learnerAiModuleEntries = useMemo(
-    () =>
-      courses
-        .flatMap((course) =>
-          course.modules
-            .filter((module) => module.status === "available" && !module.isLocked)
-            .map((module) => ({ course, module }))
-        )
-        .slice(0, 6),
+    () => getLearnerAiModuleEntries(courses).slice(0, 6),
     [courses]
   );
+
+  const learnerCoursesWithModules = useMemo(
+    () => courses.filter((course) => course.modules.some((module) => !module.isLocked)),
+    [courses]
+  );
+  const effectiveSelectedLearnerCourseUuid = learnerCoursesWithModules.some(
+    (course) => course.courseUuid === selectedLearnerCourseUuid
+  )
+    ? selectedLearnerCourseUuid
+    : learnerCoursesWithModules[0]?.courseUuid ?? "";
+  const selectedLearnerCourse = useMemo(
+    () => courses.find((course) => course.courseUuid === effectiveSelectedLearnerCourseUuid) ?? null,
+    [courses, effectiveSelectedLearnerCourseUuid]
+  );
+  const selectedLearnerModules = useMemo(
+    () => selectedLearnerCourse?.modules.filter((module) => !module.isLocked) ?? [],
+    [selectedLearnerCourse]
+  );
+  const effectiveSelectedLearnerModuleUuid = selectedLearnerModules.some(
+    (module) => module.moduleUuid === selectedLearnerModuleUuid
+  )
+    ? selectedLearnerModuleUuid
+    : selectedLearnerModules[0]?.moduleUuid ?? "";
+  const chatCourseUuid = activeSession?.session.course_uuid ?? effectiveSelectedLearnerCourseUuid;
+  const chatModuleUuid = activeSession?.session.module_uuid ?? effectiveSelectedLearnerModuleUuid;
+  const learnerModelScopeKey = `${chatCourseUuid}:${chatModuleUuid}`;
+  const activeLearnerModelCatalog =
+    learnerModelCatalogScopeKey === learnerModelScopeKey ? learnerModelCatalog : null;
+  const learnerModelOptions = useMemo(
+    () =>
+      activeLearnerModelCatalog?.providers.flatMap((provider) =>
+        provider.models
+          .filter((model) => model.capabilities.includes("chat"))
+          .map((model) => ({
+            value: model.modelId,
+            label: `${model.name}${formatRagOptionSuffix(model)}`,
+            disabled: !isChatModelSelectable(model),
+          }))
+      ) ?? [],
+    [activeLearnerModelCatalog]
+  );
+  const activeLearnerQuestionStatus = !chatCourseUuid
+    ? "暂无可提问的已加入课程。"
+    : !chatModuleUuid
+      ? "当前课程暂无可提问模块。"
+      : learnerModelCatalogScopeKey !== learnerModelScopeKey
+        ? "正在加载可用模型..."
+        : learnerQuestionStatus;
+
+  useEffect(() => {
+    if (!isChatUser || !chatCourseUuid || !chatModuleUuid) {
+      return;
+    }
+
+    let cancelled = false;
+    const requestedScopeKey = `${chatCourseUuid}:${chatModuleUuid}`;
+    void getAiModelCatalog({
+      courseUuid: chatCourseUuid,
+      moduleUuid: chatModuleUuid,
+    })
+      .then((catalog) => {
+        if (cancelled) {
+          return;
+        }
+        setLearnerModelCatalog(catalog);
+        setLearnerModelCatalogScopeKey(requestedScopeKey);
+        setSelectedLearnerModelId((current) => resolveChatModelSelection(catalog, current));
+        setLearnerQuestionStatus("可以开始提问。");
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setLearnerModelCatalog(null);
+        setLearnerModelCatalogScopeKey(requestedScopeKey);
+        setSelectedLearnerModelId("");
+        setLearnerQuestionStatus(error instanceof Error ? error.message : "模型目录加载失败。");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chatCourseUuid, chatModuleUuid, isChatUser]);
 
   const educatorDashboard = useMemo(() => {
     const managedCourses = roleDashboard.managedCourses;
@@ -734,8 +868,14 @@ function HomeAiPage() {
           modelId: model.modelId,
           name: model.name,
           isDefault: model.isDefault || model.modelId === modelCatalog.defaultModelId,
+          pairedEmbeddingModelId: model.pairedEmbeddingModelId,
+          pairedEmbeddingModelName: model.pairedEmbeddingModelName,
         }))
     ) ?? [];
+  const selectedDefaultModel =
+    modelCatalog?.providers
+      .flatMap((provider) => provider.models)
+      .find((model) => model.modelId === selectedDefaultModelId) ?? null;
   const credentialByProvider = new Map(roleDashboard.aiProviderCredentials.map((item) => [item.provider, item]));
   const providerCredentialEntries =
     modelCatalog?.providers.map((provider) => {
@@ -759,24 +899,45 @@ function HomeAiPage() {
     }));
 
   function getSessionContextLabel(session: ChatSessionSummary) {
-    return session.course_uuid
+    const courseLabel = session.course_uuid
       ? courseTitleMap.get(session.course_uuid) ?? "未知课程"
       : "未知课程";
+    const moduleLabel = session.course_uuid && session.module_uuid
+      ? courses
+          .find((course) => course.courseUuid === session.course_uuid)
+          ?.modules.find((module) => module.moduleUuid === session.module_uuid)?.title
+      : null;
+    return moduleLabel ? `${courseLabel} · ${moduleLabel}` : courseLabel;
   }
 
-  function handleBackToSessions() {
+  function handleStartNewConversation() {
     setActiveSession(null);
     setDetailErrorMessage(null);
     setDetailLoading(false);
+    setLearnerQuestion("");
+    setLearnerQuestionStatus("选择课程模块后即可提问。");
   }
 
   function handleOpenSession(sessionUuid: string) {
+    if (activeSession?.session.session_uuid === sessionUuid || detailLoading) {
+      return;
+    }
+
+    setActiveSession(null);
     setDetailLoading(true);
     setDetailErrorMessage(null);
+    setLearnerQuestionStatus("正在加载历史会话...");
 
     void getChatSessionDetail(sessionUuid)
       .then((detail) => {
         setActiveSession(detail);
+        if (detail.session.course_uuid) {
+          setSelectedLearnerCourseUuid(detail.session.course_uuid);
+        }
+        if (detail.session.module_uuid) {
+          setSelectedLearnerModuleUuid(detail.session.module_uuid);
+        }
+        setLearnerQuestionStatus("可以继续提问。");
       })
       .catch((error) => {
         setDetailErrorMessage(
@@ -786,6 +947,52 @@ function HomeAiPage() {
       .finally(() => {
         setDetailLoading(false);
       });
+  }
+
+  async function handleLearnerQuestionSubmit() {
+    const message = learnerQuestion.trim();
+    const requestCourseUuid = activeSession?.session.course_uuid ?? effectiveSelectedLearnerCourseUuid;
+    const requestModuleUuid = activeSession?.session.module_uuid ?? effectiveSelectedLearnerModuleUuid;
+    const continuingSessionUuid = activeSession?.session.session_uuid ?? null;
+    if (
+      !message ||
+      !requestCourseUuid ||
+      !requestModuleUuid ||
+      !selectedLearnerModelId ||
+      learnerQuestionSending
+    ) {
+      return;
+    }
+
+    setLearnerQuestion("");
+    setLearnerQuestionSending(true);
+    setLearnerQuestionStatus(continuingSessionUuid ? "正在继续当前会话..." : "正在创建新会话...");
+
+    try {
+      const response = await sendChatMessage({
+        courseUuid: requestCourseUuid,
+        moduleUuid: requestModuleUuid,
+        message,
+        sessionUuid: continuingSessionUuid,
+        modelId: selectedLearnerModelId,
+      });
+      if (continuingSessionUuid && response.session_uuid !== continuingSessionUuid) {
+        throw new Error("服务器未继续当前历史会话，请重试。 ");
+      }
+      const [detail, updatedSessions] = await Promise.all([
+        getChatSessionDetail(response.session_uuid),
+        listChatSessions(),
+      ]);
+      setActiveSession(detail);
+      setSessions(updatedSessions);
+      setDetailErrorMessage(null);
+      setLearnerQuestionStatus("助手已回复。");
+    } catch (error) {
+      setLearnerQuestion(message);
+      setLearnerQuestionStatus(error instanceof Error ? error.message : "消息发送失败。");
+    } finally {
+      setLearnerQuestionSending(false);
+    }
   }
 
   function formatTelemetryKind(value: string) {
@@ -800,7 +1007,6 @@ function HomeAiPage() {
       provider_adapter: "供应商适配器",
       multi_provider: "多供应商",
       gemini: "Gemini",
-      deepseek: "DeepSeek",
       glm: "GLM",
       openrouter: "OpenRouter",
     };
@@ -868,12 +1074,27 @@ function HomeAiPage() {
     setCredentialDrafts((current) => ({ ...current, [provider]: value }));
   }
 
-  async function refreshProviderCredentials() {
-    const response = await listAdminAiProviderCredentials("");
+  async function refreshProviderConfiguration() {
+    const [credentialsResponse, catalog] = await Promise.all([
+      listAdminAiProviderCredentials(""),
+      getAiModelCatalog(),
+    ]);
     setRoleDashboard((current) => ({
       ...current,
-      aiProviderCredentials: response.credentials,
+      aiProviderCredentials: credentialsResponse.credentials,
+      aiModelCatalog: catalog,
     }));
+    const availableModels = catalog.providers.flatMap((provider) =>
+      provider.models.filter((model) => model.available && model.capabilities.includes("chat"))
+    );
+    setSelectedDefaultModelId((current) =>
+      availableModels.some((model) => model.modelId === current)
+        ? current
+        : catalog.defaultModelId ??
+          availableModels.find((model) => model.isDefault)?.modelId ??
+          availableModels[0]?.modelId ??
+          ""
+    );
   }
 
   async function handleSaveProviderCredential(provider: string) {
@@ -894,13 +1115,7 @@ function HomeAiPage() {
         defaultModelId: selectedDefaultModelId || null,
       });
       setCredentialDrafts((current) => ({ ...current, [provider]: "" }));
-      setRoleDashboard((current) => ({
-        ...current,
-        aiProviderCredentials: [
-          ...current.aiProviderCredentials.filter((item) => item.provider !== credential.provider),
-          credential,
-        ],
-      }));
+      await refreshProviderConfiguration();
       setCredentialActionNotice(`${credential.label || credential.provider} 密钥已保存。`);
     } catch (error) {
       setCredentialActionError(error instanceof Error ? error.message : "保存供应商密钥失败。");
@@ -916,7 +1131,7 @@ function HomeAiPage() {
     setCredentialActionNotice(null);
     try {
       await deleteAdminAiProviderCredential("", provider);
-      await refreshProviderCredentials();
+      await refreshProviderConfiguration();
       setCredentialActionNotice(`${formatTelemetryKind(provider)} 密钥已删除。`);
     } catch (error) {
       setCredentialActionError(error instanceof Error ? error.message : "删除供应商密钥失败。");
@@ -932,7 +1147,7 @@ function HomeAiPage() {
     setCredentialActionNotice(null);
     try {
       const result = await checkAdminAiProviderCredentialHealth("", provider);
-      await refreshProviderCredentials();
+      await refreshProviderConfiguration();
       setCredentialActionNotice(
         `${formatTelemetryKind(provider)} 健康检查：${formatTelemetryKind(result.status)}${
           result.message ? ` · ${result.message}` : ""
@@ -952,25 +1167,8 @@ function HomeAiPage() {
     setCredentialActionNotice(null);
     try {
       const response = await setAdminAiDefaultModel("", { modelId: selectedDefaultModelId });
+      await refreshProviderConfiguration();
       setCredentialActionNotice(`默认模型已设置为 ${response.modelId}。`);
-      setRoleDashboard((current) =>
-        current.aiModelCatalog
-          ? {
-              ...current,
-              aiModelCatalog: {
-                ...current.aiModelCatalog,
-                defaultModelId: response.modelId,
-                providers: current.aiModelCatalog.providers.map((provider) => ({
-                  ...provider,
-                  models: provider.models.map((model) => ({
-                    ...model,
-                    isDefault: model.modelId === response.modelId,
-                  })),
-                })),
-              },
-            }
-          : current
-      );
     } catch (error) {
       setCredentialActionError(error instanceof Error ? error.message : "设置默认模型失败。");
     } finally {
@@ -1025,6 +1223,49 @@ function HomeAiPage() {
         </div>
 
         {roleDashboardError ? <p className="home-progress-alert">{roleDashboardError}</p> : null}
+
+        {isEducator ? (
+          <HomeAiConversationPanel
+            title="教师智能对话"
+            sessionCountLabel={loading ? "加载中..." : `${sessions.length} 个会话`}
+            sessions={sessions}
+            sessionsLoading={loading}
+            sessionsError={errorMessage}
+            activeSession={activeSession}
+            detailLoading={detailLoading}
+            detailErrorMessage={detailErrorMessage}
+            sessionContextLabel={getSessionContextLabel}
+            activeSessionContextLabel={activeSession ? getSessionContextLabel(activeSession.session) : ""}
+            courses={learnerCoursesWithModules.map((course) => ({
+              value: course.courseUuid,
+              label: course.title,
+            }))}
+            modules={selectedLearnerModules.map((module) => ({
+              value: module.moduleUuid,
+              label: module.title,
+            }))}
+            models={learnerModelOptions}
+            selectedCourseUuid={chatCourseUuid}
+            selectedModuleUuid={chatModuleUuid}
+            selectedModelId={selectedLearnerModelId}
+            question={learnerQuestion}
+            status={activeLearnerQuestionStatus}
+            isSending={learnerQuestionSending || detailLoading}
+            onCourseChange={(value) => {
+              setSelectedLearnerCourseUuid(value);
+              handleStartNewConversation();
+            }}
+            onModuleChange={(value) => {
+              setSelectedLearnerModuleUuid(value);
+              handleStartNewConversation();
+            }}
+            onModelChange={setSelectedLearnerModelId}
+            onQuestionChange={setLearnerQuestion}
+            onSubmit={() => void handleLearnerQuestionSubmit()}
+            onOpenSession={handleOpenSession}
+            onStartNewConversation={handleStartNewConversation}
+          />
+        ) : null}
 
         <div className="home-ai-grid">
           <article className="home-ai-panel">
@@ -1265,10 +1506,24 @@ function HomeAiPage() {
                         {availableDefaultModelOptions.map((model) => (
                           <option key={model.modelId} value={model.modelId}>
                             {model.providerLabel}: {model.name}
+                            {model.pairedEmbeddingModelName || model.pairedEmbeddingModelId
+                              ? ` → ${
+                                  model.pairedEmbeddingModelName || model.pairedEmbeddingModelId
+                                }`
+                              : ""}
                             {model.isDefault ? " (当前)" : ""}
                           </option>
                         ))}
                       </select>
+                      <small
+                        className={`home-ai-default-model-pair${
+                          selectedDefaultModel?.ragReady === false
+                            ? " home-ai-default-model-pair-warning"
+                            : ""
+                        }`}
+                      >
+                        配对向量：{formatEmbeddingPair(selectedDefaultModel)}
+                      </small>
                     </label>
                     <button
                       type="button"
@@ -1698,78 +1953,46 @@ function HomeAiPage() {
       </div>
 
       <div className="home-ai-grid">
-        <article className={`home-ai-panel ${activeSession ? "home-ai-panel-detail-mode" : ""}`}>
-          {activeSession ? (
-            <>
-              <div className="home-ai-panel-heading home-ai-detail-heading">
-                <button type="button" className="home-ai-back" onClick={handleBackToSessions}>
-                  <LuArrowLeft size={18} aria-hidden="true" />
-                  <span>返回会话列表</span>
-                </button>
-                <div className="home-ai-detail-meta">
-                  <h2>{activeSession.session.title || "未命名会话"}</h2>
-                  <span>{formatSessionTimestamp(activeSession.session.last_message_at)}</span>
-                </div>
-              </div>
-
-              {detailErrorMessage ? <p className="home-ai-muted">{detailErrorMessage}</p> : null}
-
-              <div className="home-ai-detail-body">
-                {detailLoading ? <p className="home-ai-muted">正在加载对话...</p> : null}
-                {!detailLoading && activeSession.messages.length === 0 ? (
-                  <p className="home-ai-muted">该会话中没有消息。</p>
-                ) : null}
-
-                {!detailLoading && activeSession.messages.length > 0 ? (
-                  <div className="home-ai-message-list">
-                    {activeSession.messages.map((message) => (
-                      <article
-                        key={message.message_id}
-                        className={`home-ai-message home-ai-message-${message.role === "user" ? "user" : "assistant"}`}
-                      >
-                        <div className="home-ai-message-bubble">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {message.content_text}
-                          </ReactMarkdown>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="home-ai-panel-heading">
-                <h2>全部会话</h2>
-                <span>{loading ? "加载中..." : `${sessions.length} 个会话`}</span>
-              </div>
-
-              {loading ? <p className="home-ai-muted">正在加载会话...</p> : null}
-              {errorMessage ? <p className="home-ai-muted">{errorMessage}</p> : null}
-              {!loading && !errorMessage && sessions.length === 0 ? (
-                <p className="home-ai-muted">暂无智能会话。</p>
-              ) : null}
-
-              <div className="home-ai-session-list">
-                {sessions.map((session) => (
-                  <button
-                    key={session.session_uuid}
-                    type="button"
-                    className="home-ai-session-card"
-                    onClick={() => handleOpenSession(session.session_uuid)}
-                  >
-                    <div className="home-ai-session-meta">
-                      <strong>{session.title || "未命名会话"}</strong>
-                      <span>{formatSessionTimestamp(session.last_message_at)}</span>
-                    </div>
-                    <p className="home-ai-session-context">{getSessionContextLabel(session)}</p>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </article>
+        <HomeAiConversationPanel
+          title="我的智能对话"
+          sessionCountLabel={loading ? "加载中..." : `${sessions.length} 个会话`}
+          sessions={sessions}
+          sessionsLoading={loading}
+          sessionsError={errorMessage}
+          activeSession={activeSession}
+          detailLoading={detailLoading}
+          detailErrorMessage={detailErrorMessage}
+          sessionContextLabel={getSessionContextLabel}
+          activeSessionContextLabel={activeSession ? getSessionContextLabel(activeSession.session) : ""}
+          courses={learnerCoursesWithModules.map((course) => ({
+            value: course.courseUuid,
+            label: course.title,
+          }))}
+          modules={selectedLearnerModules.map((module) => ({
+            value: module.moduleUuid,
+            label: module.title,
+          }))}
+          models={learnerModelOptions}
+          selectedCourseUuid={chatCourseUuid}
+          selectedModuleUuid={chatModuleUuid}
+          selectedModelId={selectedLearnerModelId}
+          question={learnerQuestion}
+          status={activeLearnerQuestionStatus}
+          isSending={learnerQuestionSending || detailLoading}
+          onCourseChange={(value) => {
+            setSelectedLearnerCourseUuid(value);
+            handleStartNewConversation();
+          }}
+          onModuleChange={(value) => {
+            setSelectedLearnerModuleUuid(value);
+            handleStartNewConversation();
+          }}
+          onModelChange={setSelectedLearnerModelId}
+          onQuestionChange={setLearnerQuestion}
+          onSubmit={() => void handleLearnerQuestionSubmit()}
+          onOpenSession={handleOpenSession}
+          onStartNewConversation={handleStartNewConversation}
+        />
 
         <article className="home-ai-panel">
           <div className="home-ai-panel-heading">

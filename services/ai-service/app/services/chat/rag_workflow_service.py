@@ -5,7 +5,6 @@ from time import perf_counter, sleep
 import re
 from uuid import uuid4
 
-from fastapi import HTTPException
 from google.genai import errors as genai_errors
 from langchain_core.messages import BaseMessage
 from sqlalchemy.orm import Session
@@ -14,8 +13,6 @@ from app.core.config import settings
 from app.core.prompts import get_prompt_template
 from app.models.ai_prompt_logs import AIPromptStatus
 from app.services.provider_error_messages import (
-    AI_EMBEDDING_PROVIDER_UNAVAILABLE,
-    AI_EMBEDDING_PROVIDER_UNSUPPORTED,
     AI_PROVIDER_CONFIGURATION_UNAVAILABLE,
     AI_PROVIDER_TEMPORARILY_UNAVAILABLE,
 )
@@ -561,12 +558,6 @@ class RAGWorkflowService:
             self._retriever = CustomPgvectorRetriever(self.session)
         return self._retriever
 
-    @staticmethod
-    def _is_embedding_unavailable_error(exc: HTTPException) -> bool:
-        detail = exc.detail if isinstance(exc.detail, dict) else {}
-        message = str(detail.get("message") or exc.detail or "")
-        return message in {AI_EMBEDDING_PROVIDER_UNAVAILABLE, AI_EMBEDDING_PROVIDER_UNSUPPORTED}
-
     def execute_chat_workflow(
         self,
         *,
@@ -591,25 +582,28 @@ class RAGWorkflowService:
 
         retrieval_result: RetrievalResult | None = None
         if course_id is not None and not is_time_sensitive_non_course:
-            try:
-                retrieval_result = self.retriever.invoke(
-                    CustomPgvectorRetrieverInput(
-                        user_id=user_id,
-                        query_text=current_user_message.strip(),
-                        course_id=course_id,
-                        module_id=module_id,
-                        session_id=session_id,
-                        message_id=message_id,
-                        top_k=settings.ai_retrieval_top_k,
-                    )
+            retrieval_result = self.retriever.invoke(
+                CustomPgvectorRetrieverInput(
+                    user_id=user_id,
+                    model_user_id=user_id,
+                    query_text=current_user_message.strip(),
+                    course_id=course_id,
+                    module_id=module_id,
+                    session_id=session_id,
+                    message_id=message_id,
+                    top_k=settings.ai_retrieval_top_k,
+                    chat_model_id=model_id,
+                    readiness_purpose="chat",
                 )
-            except HTTPException as exc:
-                if not self._is_embedding_unavailable_error(exc):
-                    raise
-                retrieval_result = None
+            )
 
         use_retrieval = False if is_time_sensitive_non_course else should_use_retrieval(
             current_user_message, retrieval_result
+        )
+        generation_model_id = (
+            retrieval_result.chat_model_id
+            if retrieval_result is not None
+            else model_id
         )
         prompt_template_name = "chat_rag_v1" if use_retrieval else "chat_reply_v1"
         reply_result = generate_chat_reply(
@@ -619,7 +613,7 @@ class RAGWorkflowService:
             conversation_history=conversation_history,
             db=self.session,
             user_id=user_id,
-            model_id=model_id,
+            model_id=generation_model_id,
         )
         retrieval_context_text = (
             build_rag_user_prompt(

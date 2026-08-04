@@ -1,30 +1,38 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import sqrt
-from time import perf_counter
-from uuid import uuid4
 
-from google import genai
-from google.genai import types
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.ai_prompt_logs import AIPromptStatus
-from app.services.providers.credentials import ProviderCredentialService, redact_secret_text
-from app.services.providers.model_service import AIModelCatalogService
-from app.services.providers.types import ProviderConfigurationError
-from app.services.indexing.langchain_embedding_service import LangChainEmbeddingService
 from app.services.provider_error_messages import (
     AI_EMBEDDING_PROVIDER_UNAVAILABLE,
-    AI_EMBEDDING_PROVIDER_UNSUPPORTED,
+    AI_PROVIDER_QUOTA_UNAVAILABLE,
 )
-from platform_common.errors import invalid_request_error
+from app.services.providers.model_service import (
+    AIEmbeddingInvocationService,
+    AIModelCatalogService,
+)
+from app.services.providers.types import (
+    ProviderConfigurationError,
+    ProviderInvocationError,
+    ProviderQuotaError,
+)
+from platform_common.errors import http_error, invalid_request_error
+
+
+@dataclass(frozen=True)
+class EmbeddingModelTarget:
+    model_id: str
+    display_name: str
+    embedding_version: str
+    dimension: int
 
 
 @dataclass(frozen=True)
 class EmbeddingResult:
-    embedding_model: str
+    embedding_model_id: str
     embedding_version: str
     vector: list[float]
     task_type: str
@@ -35,6 +43,14 @@ class EmbeddingResult:
     status: AIPromptStatus
     error_message: str | None
     trace_id: str
+    provider_input_tokens: int | None = None
+    provider_total_tokens: int | None = None
+
+    @property
+    def embedding_model(self) -> str:
+        """Compatibility alias for telemetry callers during migration."""
+
+        return self.embedding_model_id
 
 
 @dataclass(frozen=True)
@@ -46,64 +62,104 @@ class TokenCountResult:
 
 
 class EmbeddingService:
-    def __init__(self, session: Session | None = None) -> None:
-        if settings.ai_embedding_provider.strip().lower() != "gemini":
-            raise invalid_request_error(AI_EMBEDDING_PROVIDER_UNSUPPORTED)
-        if session is None:
-            raise invalid_request_error(AI_EMBEDDING_PROVIDER_UNAVAILABLE)
-        AIModelCatalogService(session).ensure_seeded()
-        try:
-            credentials = ProviderCredentialService(session).get_credentials_for_provider("gemini")
-        except ProviderConfigurationError as exc:
-            raise invalid_request_error(AI_EMBEDDING_PROVIDER_UNAVAILABLE) from exc
-        self.client = genai.Client(api_key=credentials.api_key)
-        self.langchain_embeddings = LangChainEmbeddingService(credentials.api_key)
+    """Catalog-driven embedding facade shared by indexing and retrieval."""
 
-    def count_document_tokens(self, *, text: str) -> TokenCountResult:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+        self.catalog = AIModelCatalogService(session)
+        self.catalog.ensure_seeded()
+        self.invocation = AIEmbeddingInvocationService(session)
+
+    def list_available_embedding_models(self) -> list[EmbeddingModelTarget]:
+        return [
+            EmbeddingModelTarget(
+                model_id=resolved.model.model_id,
+                display_name=resolved.model.display_name,
+                embedding_version=(
+                    f"{resolved.model.model_id}@{resolved.model.embedding_dimension}"
+                ),
+                dimension=int(resolved.model.embedding_dimension or 0),
+            )
+            for resolved in self.catalog.list_available_embedding_models()
+        ]
+
+    def count_document_tokens(
+        self,
+        *,
+        text: str,
+        embedding_model_id: str | None = None,
+    ) -> TokenCountResult:
         normalized_text = text.strip()
         if not normalized_text:
             raise invalid_request_error("text is required for token counting")
-
-        request_json = {
-            "model": settings.ai_embedding_model,
-            "contents_preview": normalized_text[:500],
-        }
-        provider_input_tokens: int | None = None
-        provider_total_tokens: int | None = None
-        response_json: dict[str, object] | None = None
-
-        try:
-            response = self.client.models.count_tokens(
-                model=settings.ai_embedding_model,
-                contents=normalized_text,
-            )
-            provider_total_tokens = self._extract_token_count(response)
-            provider_input_tokens = provider_total_tokens
-            response_json = {
-                "provider_count_tokens_supported": provider_total_tokens is not None,
-                "provider_total_tokens": provider_total_tokens,
-            }
-        except Exception as exc:
-            response_json = {
-                "provider_count_tokens_supported": False,
-                "provider_error": redact_secret_text(f"{type(exc).__name__}: {exc}"),
-            }
-
         return TokenCountResult(
-            provider_input_tokens=provider_input_tokens,
-            provider_total_tokens=provider_total_tokens,
-            request_json=request_json,
-            response_json=response_json,
+            provider_input_tokens=None,
+            provider_total_tokens=None,
+            request_json={
+                "modelId": embedding_model_id,
+                "contentsPreview": normalized_text[:500],
+                "mode": "provider_usage_from_embedding_response",
+            },
+            response_json={
+                "providerCountTokensSupported": False,
+            },
         )
 
-    def embed_query(self, *, text: str) -> EmbeddingResult:
-        return self._embed_text(text=text, title=None, task_type="RETRIEVAL_QUERY")
+    def embed_query(
+        self,
+        *,
+        text: str,
+        chat_model_id: str | None = None,
+        user_id: int | None = None,
+        embedding_model_id: str | None = None,
+    ) -> EmbeddingResult:
+        selected_embedding_model_id = embedding_model_id
+        if selected_embedding_model_id is None:
+            try:
+                pair = self.catalog.resolve_model_pair(
+                    user_id=user_id,
+                    requested_model_id=chat_model_id,
+                )
+            except ProviderConfigurationError as exc:
+                raise http_error(
+                    status_code=503,
+                    code="AI_EMBEDDING_PROVIDER_UNAVAILABLE",
+                    message=AI_EMBEDDING_PROVIDER_UNAVAILABLE,
+                ) from exc
+            selected_embedding_model_id = pair.embedding.model.model_id
+        return self._embed_text(
+            text=text,
+            title=None,
+            task_type="RETRIEVAL_QUERY",
+            embedding_model_id=selected_embedding_model_id,
+        )
 
-    def embed_document(self, *, text: str, title: str | None = None) -> EmbeddingResult:
+    def embed_document(
+        self,
+        *,
+        text: str,
+        title: str | None = None,
+        embedding_model_id: str | None = None,
+    ) -> EmbeddingResult:
+        selected_embedding_model_id = embedding_model_id
+        if selected_embedding_model_id is None:
+            try:
+                pair = self.catalog.resolve_model_pair(
+                    user_id=None,
+                    requested_model_id=None,
+                )
+            except ProviderConfigurationError as exc:
+                raise http_error(
+                    status_code=503,
+                    code="AI_EMBEDDING_PROVIDER_UNAVAILABLE",
+                    message=AI_EMBEDDING_PROVIDER_UNAVAILABLE,
+                ) from exc
+            selected_embedding_model_id = pair.embedding.model.model_id
         return self._embed_text(
             text=text,
             title=title,
             task_type=settings.ai_embedding_task_type,
+            embedding_model_id=selected_embedding_model_id,
         )
 
     def _embed_text(
@@ -112,138 +168,43 @@ class EmbeddingService:
         text: str,
         title: str | None,
         task_type: str,
+        embedding_model_id: str,
     ) -> EmbeddingResult:
         normalized_text = text.strip()
         if not normalized_text:
             raise invalid_request_error("text is required for embedding")
-
-        if settings.ai_embedding_orchestrator.strip().lower() == "langchain":
-            return self._embed_text_via_langchain(
+        try:
+            result = self.invocation.embed_text(
                 text=normalized_text,
-                title=title,
+                model_id=embedding_model_id,
                 task_type=task_type,
+                title=title,
             )
-
-        config_kwargs: dict[str, object] = {
-            "task_type": task_type,
-            "output_dimensionality": settings.ai_embedding_output_dimension,
-        }
-        normalized_title = (title or "").strip()
-        if normalized_title and task_type == "RETRIEVAL_DOCUMENT":
-            config_kwargs["title"] = normalized_title
-
-        trace_id = str(uuid4())
-        request_json = {
-            "model": settings.ai_embedding_model,
-            "contents_preview": normalized_text[:500],
-            "config": config_kwargs,
-        }
-        started_at = perf_counter()
-        response = self.client.models.embed_content(
-            model=settings.ai_embedding_model,
-            contents=normalized_text,
-            config=types.EmbedContentConfig(**config_kwargs),
-        )
-        latency_ms = int((perf_counter() - started_at) * 1000)
-        if not response.embeddings:
-            raise invalid_request_error("Embedding provider returned no embeddings")
-
-        vector = list(response.embeddings[0].values)
-        if len(vector) != settings.ai_embedding_dimension:
-            raise invalid_request_error(
-                f"Embedding dimension mismatch: expected {settings.ai_embedding_dimension}, got {len(vector)}"
-            )
+        except ProviderQuotaError as exc:
+            raise http_error(
+                status_code=429,
+                code="AI_QUOTA_EXCEEDED",
+                message=AI_PROVIDER_QUOTA_UNAVAILABLE,
+            ) from exc
+        except (ProviderConfigurationError, ProviderInvocationError) as exc:
+            raise http_error(
+                status_code=503,
+                code="AI_EMBEDDING_PROVIDER_UNAVAILABLE",
+                message=AI_EMBEDDING_PROVIDER_UNAVAILABLE,
+            ) from exc
 
         return EmbeddingResult(
-            embedding_model=settings.ai_embedding_model,
-            embedding_version=settings.ai_embedding_version,
-            vector=self._normalize_vector(vector),
-            task_type=task_type,
-            output_dimensionality=settings.ai_embedding_output_dimension,
-            latency_ms=latency_ms,
-            request_json=request_json,
-            response_json={
-                "embedding_count": len(response.embeddings),
-                "embedding_length": len(vector),
-            },
-            status=AIPromptStatus.SUCCESS,
-            error_message=None,
-            trace_id=trace_id,
-        )
-
-    def _embed_text_via_langchain(
-        self,
-        *,
-        text: str,
-        title: str | None,
-        task_type: str,
-    ) -> EmbeddingResult:
-        trace_id = str(uuid4())
-        started_at = perf_counter()
-        if task_type == "RETRIEVAL_QUERY":
-            result = self.langchain_embeddings.embed_query(text=text)
-        else:
-            result = self.langchain_embeddings.embed_document(
-                text=text,
-                title=title,
-                task_type=task_type,
-            )
-        latency_ms = int((perf_counter() - started_at) * 1000)
-        vector = result.vector
-        if len(vector) != settings.ai_embedding_dimension:
-            raise invalid_request_error(
-                f"Embedding dimension mismatch: expected {settings.ai_embedding_dimension}, got {len(vector)}"
-            )
-
-        request_json = dict(result.request_json)
-        request_json["trace_id"] = trace_id
-        return EmbeddingResult(
-            embedding_model=settings.ai_embedding_model,
-            embedding_version=settings.ai_embedding_version,
-            vector=self._normalize_vector(vector),
-            task_type=task_type,
-            output_dimensionality=settings.ai_embedding_output_dimension,
-            latency_ms=latency_ms,
-            request_json=request_json,
+            embedding_model_id=result.model_id,
+            embedding_version=result.embedding_version,
+            vector=result.vector,
+            task_type=result.task_type,
+            output_dimensionality=result.output_dimension,
+            latency_ms=result.latency_ms,
+            request_json=result.request_json,
             response_json=result.response_json,
             status=AIPromptStatus.SUCCESS,
             error_message=None,
-            trace_id=trace_id,
+            trace_id=result.trace_id,
+            provider_input_tokens=result.input_tokens,
+            provider_total_tokens=result.total_tokens,
         )
-
-    def _extract_token_count(self, response: object) -> int | None:
-        if response is None:
-            return None
-
-        total_tokens = getattr(response, "total_tokens", None)
-        if isinstance(total_tokens, int):
-            return total_tokens
-
-        if isinstance(response, dict):
-            value = response.get("total_tokens")
-            if isinstance(value, int):
-                return value
-
-        to_dict = getattr(response, "to_dict", None)
-        if callable(to_dict):
-            response_dict = to_dict()
-            if isinstance(response_dict, dict):
-                value = response_dict.get("total_tokens")
-                if isinstance(value, int):
-                    return value
-
-        to_json_dict = getattr(response, "to_json_dict", None)
-        if callable(to_json_dict):
-            response_dict = to_json_dict()
-            if isinstance(response_dict, dict):
-                value = response_dict.get("total_tokens")
-                if isinstance(value, int):
-                    return value
-
-        return None
-
-    def _normalize_vector(self, vector: list[float]) -> list[float]:
-        magnitude = sqrt(sum(value * value for value in vector))
-        if magnitude == 0:
-            raise invalid_request_error("Embedding vector magnitude is zero")
-        return [value / magnitude for value in vector]

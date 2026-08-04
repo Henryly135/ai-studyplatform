@@ -4,13 +4,22 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
+from app.core.time import now_local
+from app.models.ai_knowledge_chunks import AIKnowledgeChunk
 from app.models.ai_knowledge_sources import (
     AIKnowledgeSource,
     AIKnowledgeSourceType,
     AIPublishStatus,
     AIVisibilityScope,
 )
-from app.repositories.ai_knowledge_chunks_repository import AIKnowledgeChunksRepository, ChunkCreate
+from app.repositories.ai_knowledge_chunks_repository import (
+    AIKnowledgeChunksRepository,
+    ChunkCreate,
+    ChunkEmbeddingCreate,
+)
+from app.repositories.ai_knowledge_source_embedding_statuses_repository import (
+    AIKnowledgeSourceEmbeddingStatusesRepository,
+)
 from app.repositories.ai_knowledge_sources_repository import AIKnowledgeSourcesRepository
 from platform_common.errors import invalid_request_error
 
@@ -44,6 +53,7 @@ class KnowledgeIndexingResult:
     source_created: bool
     deleted_chunk_count: int
     chunk_count: int
+    created_chunks: list[AIKnowledgeChunk]
 
 
 @dataclass(frozen=True)
@@ -63,6 +73,7 @@ class KnowledgeIndexingService:
         self.session = session
         self.sources = AIKnowledgeSourcesRepository(session)
         self.chunks = AIKnowledgeChunksRepository(session)
+        self.embedding_statuses = AIKnowledgeSourceEmbeddingStatusesRepository(session)
 
     def replace_source_chunks(
         self,
@@ -75,6 +86,7 @@ class KnowledgeIndexingService:
 
         source, source_created = self._upsert_source(source_data=source_data)
         deleted_chunk_count = self.chunks.delete_by_source_id(source.source_id)
+        self.embedding_statuses.delete_by_source_id(source.source_id)
 
         prepared_chunks = [
             self._bind_chunk_to_source(source=source, chunk=chunk)
@@ -88,7 +100,141 @@ class KnowledgeIndexingService:
             source_created=source_created,
             deleted_chunk_count=deleted_chunk_count,
             chunk_count=len(created_chunks),
+            created_chunks=created_chunks,
         )
+
+    def mark_embedding_index_running(
+        self,
+        *,
+        source_id: int,
+        embedding_model_id: str,
+        embedding_version: str,
+        expected_chunk_count: int,
+    ) -> None:
+        self.embedding_statuses.upsert(
+            source_id=source_id,
+            embedding_model_id=embedding_model_id,
+            embedding_version=embedding_version,
+            status="running",
+            expected_chunk_count=expected_chunk_count,
+            indexed_chunk_count=0,
+            last_error=None,
+            started_at=now_local(),
+            finished_at=None,
+        )
+
+    def write_source_embeddings(
+        self,
+        *,
+        source_id: int,
+        embedding_model_id: str,
+        embedding_version: str,
+        embeddings_by_chunk_index: dict[int, list[float]],
+    ) -> int:
+        chunks = self.chunks.list_by_source_id(source_id)
+        chunk_by_index = {chunk.chunk_index: chunk for chunk in chunks}
+        expected_indexes = set(chunk_by_index)
+        provided_indexes = set(embeddings_by_chunk_index)
+        if provided_indexes != expected_indexes:
+            missing = sorted(expected_indexes - provided_indexes)
+            extra = sorted(provided_indexes - expected_indexes)
+            raise invalid_request_error(
+                f"Embedding chunk indexes do not match source chunks; missing={missing}, extra={extra}"
+            )
+
+        self.chunks.delete_embeddings_by_source_and_model(
+            source_id=source_id,
+            embedding_model_id=embedding_model_id,
+        )
+        rows = self.chunks.create_many_embeddings(
+            [
+                ChunkEmbeddingCreate(
+                    chunk_id=chunk_by_index[chunk_index].chunk_id,
+                    embedding_model_id=embedding_model_id,
+                    embedding_version=embedding_version,
+                    embedding=embeddings_by_chunk_index[chunk_index],
+                )
+                for chunk_index in sorted(expected_indexes)
+            ]
+        )
+        self.embedding_statuses.upsert(
+            source_id=source_id,
+            embedding_model_id=embedding_model_id,
+            embedding_version=embedding_version,
+            status="success",
+            expected_chunk_count=len(chunks),
+            indexed_chunk_count=len(rows),
+            last_error=None,
+            finished_at=now_local(),
+        )
+        self.session.flush()
+        return len(rows)
+
+    def mark_embedding_index_failed(
+        self,
+        *,
+        source_id: int,
+        embedding_model_id: str,
+        embedding_version: str,
+        expected_chunk_count: int,
+        indexed_chunk_count: int,
+        last_error: str,
+    ) -> None:
+        self.embedding_statuses.upsert(
+            source_id=source_id,
+            embedding_model_id=embedding_model_id,
+            embedding_version=embedding_version,
+            status="failed",
+            expected_chunk_count=expected_chunk_count,
+            indexed_chunk_count=indexed_chunk_count,
+            last_error=last_error,
+            finished_at=now_local(),
+        )
+
+    def mark_source_index_stale(
+        self,
+        *,
+        source: AIKnowledgeSource,
+        pending_content_hash: str,
+        pending_source_version: str | None,
+    ) -> int:
+        """Keep the last good rows recoverable but exclude stale content from RAG."""
+
+        stale_at = now_local()
+        metadata = (
+            dict(source.metadata_json)
+            if isinstance(source.metadata_json, dict)
+            else {}
+        )
+        source.metadata_json = {
+            **metadata,
+            "indexStale": True,
+            "indexStaleReason": "replacement_index_failed",
+            "pendingContentHash": pending_content_hash,
+            "pendingSourceVersion": pending_source_version,
+            "indexStaleAt": stale_at.isoformat(),
+        }
+        deactivated_count = 0
+        for chunk in self.chunks.list_by_source_id(source.source_id):
+            if chunk.is_active:
+                chunk.is_active = False
+                deactivated_count += 1
+        for embedding_status in self.embedding_statuses.list_by_source_id(
+            source.source_id
+        ):
+            self.embedding_statuses.upsert(
+                source_id=source.source_id,
+                embedding_model_id=embedding_status.embedding_model_id,
+                embedding_version=embedding_status.embedding_version,
+                status="failed",
+                expected_chunk_count=embedding_status.expected_chunk_count,
+                indexed_chunk_count=0,
+                last_error="Source content changed before replacement embeddings were ready.",
+                started_at=embedding_status.started_at,
+                finished_at=stale_at,
+            )
+        self.session.flush()
+        return deactivated_count
 
     def delete_source(
         self,
@@ -159,11 +305,6 @@ class KnowledgeIndexingService:
                 raise invalid_request_error("chunk_text is required for every chunk")
             if not chunk.chunk_hash.strip():
                 raise invalid_request_error("chunk_hash is required for every chunk")
-            if not chunk.embedding_model.strip():
-                raise invalid_request_error("embedding_model is required for every chunk")
-            if not chunk.embedding:
-                raise invalid_request_error("embedding must contain at least one dimension for every chunk")
-
     def _upsert_source(
         self,
         *,

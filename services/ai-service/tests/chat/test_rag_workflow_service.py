@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from app.models.ai_prompt_logs import AIPromptStatus
 from app.services.chat.rag_retrieval_service import RetrievalResult, RetrievedChunk
@@ -10,6 +12,7 @@ from app.services.chat.rag_workflow_service import (
     AIChatQuotaError,
     AIModelInvocationError,
     ChatWorkflowResult,
+    RAGWorkflowService,
     _build_time_sensitive_unavailable_reply,
     _classify_provider_error,
     _extract_query_keywords,
@@ -43,7 +46,13 @@ def _retrieval_result(*, score: float = 0.9, text: str = "neural network optimiz
         query_text="query",
         retrieved_chunks=[chunk] if score >= 0.45 else [],
         raw_retrieved_chunks=[chunk],
+        chat_model_id="glm:glm-4.7",
         query_embedding_model="embedding",
+        query_embedding_version="embedding@1024",
+        index_status="ready",
+        indexed_chunk_count=1,
+        total_chunk_count=1,
+        index_coverage=1.0,
         latency_ms=1,
         filters_json={},
         retrieval_trace_json={"results": []},
@@ -173,6 +182,93 @@ def test_chat_workflow_sources_only_return_when_retrieval_was_used() -> None:
         }
     ]
     assert without_sources.sources == []
+
+
+def test_chat_workflow_uses_snapshot_model_for_empty_scope_plain_fallback(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+    empty_result = replace(
+        _retrieval_result(),
+        retrieved_chunks=[],
+        raw_retrieved_chunks=[],
+        chat_model_id="glm:glm-4.7",
+        index_status="empty",
+        indexed_chunk_count=0,
+        total_chunk_count=0,
+        index_coverage=0.0,
+    )
+
+    class FakeRetriever:
+        def invoke(self, payload):
+            captured["payload"] = payload
+            return empty_result
+
+    def fake_generate_chat_reply(**kwargs):
+        captured["generation"] = kwargs
+        return SimpleNamespace(reply="plain reply")
+
+    monkeypatch.setattr(
+        "app.services.chat.rag_workflow_service.generate_chat_reply",
+        fake_generate_chat_reply,
+    )
+    service = RAGWorkflowService.__new__(RAGWorkflowService)
+    service.session = object()
+    service.history_service = SimpleNamespace(
+        list_visible_history=lambda **_: []
+    )
+    service._retriever = FakeRetriever()
+
+    result = service.execute_chat_workflow(
+        user_id=7,
+        session_id=17,
+        message_id=19,
+        current_user_message="What does this module cover?",
+        course_id=11,
+        module_id=13,
+        model_id=None,
+    )
+
+    payload = captured["payload"]
+    assert payload.model_user_id == 7
+    assert payload.readiness_purpose == "chat"
+    assert captured["generation"]["model_id"] == "glm:glm-4.7"
+    assert result.used_retrieval is False
+    assert result.prompt_template_name == "chat_reply_v1"
+
+
+def test_chat_workflow_does_not_swallow_index_readiness_errors() -> None:
+    error = HTTPException(
+        status_code=503,
+        detail={
+            "code": "AI_RAG_INDEX_NOT_READY",
+            "message": "status=partial",
+        },
+    )
+
+    class FakeRetriever:
+        def invoke(self, _payload):
+            raise error
+
+    service = RAGWorkflowService.__new__(RAGWorkflowService)
+    service.session = object()
+    service.history_service = SimpleNamespace(
+        list_visible_history=lambda **_: []
+    )
+    service._retriever = FakeRetriever()
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.execute_chat_workflow(
+            user_id=7,
+            session_id=17,
+            message_id=19,
+            current_user_message="What does this module cover?",
+            course_id=11,
+            module_id=13,
+            model_id=None,
+        )
+
+    assert exc_info.value is error
 
 
 def test_invoke_with_short_retries_retries_transient_failures(monkeypatch) -> None:

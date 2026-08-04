@@ -57,3 +57,10 @@ class RecoverStaleIndexJobsResponse(BaseModel):
     recoveredJobIds: list[int]
     recoveredCount: int
     dispatchedCount: int
+
+
+class ReindexAllMaterialsResponse(BaseModel):
+    jobIds: list[int]
+    queuedCount: int
+    skippedCount: int
+    dispatchedCount: int

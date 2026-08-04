@@ -48,6 +48,11 @@ class AIModelCatalog(Base):
     supports_rag_answer: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     supports_rag_indexing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     embedding_dimension: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    paired_embedding_model_id: Mapped[str | None] = mapped_column(
+        String(120),
+        ForeignKey("ai_model_catalog.model_id", ondelete="SET NULL"),
+        nullable=True,
+    )
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
     unavailable_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
