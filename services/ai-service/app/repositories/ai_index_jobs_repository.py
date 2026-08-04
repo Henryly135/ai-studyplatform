@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import Select, delete, select
+from sqlalchemy import Select, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.models.ai_index_jobs import AIIndexJob, AIIndexJobType, AIIndexSourceType, AIJobStatus
@@ -15,6 +15,118 @@ class AIIndexJobsRepository:
 
     def get_by_id(self, job_id: int) -> AIIndexJob | None:
         return self.session.get(AIIndexJob, job_id)
+
+    def lock_material_job_scope(self, *, material_id: int) -> None:
+        """Serialize job creation for one material within the current transaction."""
+
+        self.session.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    func.hashtextextended(
+                        f"ai-index-material:{material_id}",
+                        0,
+                    )
+                )
+            )
+        )
+
+    def claim_queued_job(
+        self,
+        *,
+        job_id: int,
+        worker_id: str,
+        claimed_at: datetime,
+    ) -> bool:
+        stmt = (
+            update(AIIndexJob)
+            .where(
+                AIIndexJob.job_id == job_id,
+                AIIndexJob.status == AIJobStatus.QUEUED,
+            )
+            .values(
+                status=AIJobStatus.RUNNING,
+                worker_id=worker_id,
+                next_retry_at=None,
+                locked_at=claimed_at,
+                started_at=claimed_at,
+                finished_at=None,
+                error_message=None,
+                attempt_count=AIIndexJob.attempt_count + 1,
+            )
+        )
+        result = self.session.execute(stmt)
+        self.session.flush()
+        return int(result.rowcount or 0) == 1
+
+    def has_newer_material_job(
+        self,
+        *,
+        material_id: int,
+        job_id: int,
+    ) -> bool:
+        stmt = (
+            select(AIIndexJob.job_id)
+            .where(
+                AIIndexJob.material_id == material_id,
+                AIIndexJob.job_id > job_id,
+                AIIndexJob.status.not_in(
+                    [AIJobStatus.SUPERSEDED, AIJobStatus.CANCELLED]
+                ),
+            )
+            .limit(1)
+        )
+        return self.session.scalar(stmt) is not None
+
+    def get_running_material_job_for_lease(
+        self,
+        *,
+        job_id: int,
+        material_id: int,
+        expected_worker_id: str,
+        expected_attempt_count: int,
+    ) -> AIIndexJob | None:
+        """Return the authoritative row only while the claimed lease still owns it."""
+
+        stmt = (
+            select(AIIndexJob)
+            .where(
+                AIIndexJob.job_id == job_id,
+                AIIndexJob.material_id == material_id,
+                AIIndexJob.status == AIJobStatus.RUNNING,
+                AIIndexJob.worker_id == expected_worker_id,
+                AIIndexJob.attempt_count == expected_attempt_count,
+            )
+            .limit(1)
+            .execution_options(populate_existing=True)
+        )
+        return self.session.scalar(stmt)
+
+    def get_stale_running_job_for_recovery(
+        self,
+        *,
+        job_id: int,
+        material_id: int,
+        locked_before: datetime,
+        expected_worker_id: str | None,
+        expected_attempt_count: int,
+    ) -> AIIndexJob | None:
+        """Re-read a stale lease after the material advisory lock is held."""
+
+        stmt = (
+            select(AIIndexJob)
+            .where(
+                AIIndexJob.job_id == job_id,
+                AIIndexJob.material_id == material_id,
+                AIIndexJob.status == AIJobStatus.RUNNING,
+                AIIndexJob.locked_at.is_not(None),
+                AIIndexJob.locked_at < locked_before,
+                AIIndexJob.worker_id == expected_worker_id,
+                AIIndexJob.attempt_count == expected_attempt_count,
+            )
+            .limit(1)
+            .execution_options(populate_existing=True)
+        )
+        return self.session.scalar(stmt)
 
     def list_replaceable_material_jobs(self, *, material_id: int) -> list[AIIndexJob]:
         stmt = (
@@ -32,6 +144,77 @@ class AIIndexJobsRepository:
             .order_by(AIIndexJob.created_at.desc(), AIIndexJob.job_id.desc())
         )
         return list(self.session.scalars(stmt))
+
+    def has_running_material_job(self, *, material_id: int) -> bool:
+        stmt = (
+            select(AIIndexJob.job_id)
+            .where(
+                AIIndexJob.material_id == material_id,
+                AIIndexJob.status == AIJobStatus.RUNNING,
+            )
+            .limit(1)
+        )
+        return self.session.scalar(stmt) is not None
+
+    def list_running_material_jobs(
+        self,
+        *,
+        material_id: int | None = None,
+    ) -> list[AIIndexJob]:
+        stmt = select(AIIndexJob).where(
+            AIIndexJob.status == AIJobStatus.RUNNING,
+            AIIndexJob.material_id.is_not(None),
+        )
+        if material_id is not None:
+            stmt = stmt.where(AIIndexJob.material_id == material_id)
+        stmt = stmt.order_by(
+            AIIndexJob.job_id.desc(),
+        )
+        return list(self.session.scalars(stmt))
+
+    def list_backfill_candidate_material_jobs(self) -> list[AIIndexJob]:
+        stmt = (
+            select(AIIndexJob)
+            .where(
+                AIIndexJob.material_id.is_not(None),
+                AIIndexJob.status.in_(
+                    [
+                        AIJobStatus.RUNNING,
+                        AIJobStatus.QUEUED,
+                        AIJobStatus.BLOCKED,
+                        AIJobStatus.FAILED,
+                        AIJobStatus.SUCCESS,
+                    ]
+                ),
+            )
+            .order_by(AIIndexJob.job_id.desc())
+        )
+        return list(self.session.scalars(stmt))
+
+    def get_latest_backfill_candidate_material_job(
+        self,
+        *,
+        material_id: int,
+    ) -> AIIndexJob | None:
+        stmt = (
+            select(AIIndexJob)
+            .where(
+                AIIndexJob.material_id == material_id,
+                AIIndexJob.status.in_(
+                    [
+                        AIJobStatus.RUNNING,
+                        AIJobStatus.QUEUED,
+                        AIJobStatus.BLOCKED,
+                        AIJobStatus.FAILED,
+                        AIJobStatus.SUCCESS,
+                    ]
+                ),
+            )
+            .order_by(AIIndexJob.job_id.desc())
+            .limit(1)
+            .execution_options(populate_existing=True)
+        )
+        return self.session.scalar(stmt)
 
     def delete_by_material_id(self, *, material_id: int) -> int:
         stmt = delete(AIIndexJob).where(AIIndexJob.material_id == material_id)

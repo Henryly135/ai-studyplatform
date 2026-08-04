@@ -16,7 +16,13 @@ from app.schemas.ai_models import (
     AdminAIProvidersResponse,
 )
 from app.services.providers.credentials import ProviderCredentialService, redact_secret_text
-from app.services.providers.model_service import AIModelCatalogService, AIModelInvocationService
+from app.services.indexing.index_job_service import IndexJobService
+from app.services.providers.model_registry import SUPPORTED_PROVIDER_KEYS
+from app.services.providers.model_service import (
+    AIEmbeddingInvocationService,
+    AIModelCatalogService,
+    AIModelInvocationService,
+)
 from app.services.providers.types import ProviderConfigurationError, ProviderInvocationError, ProviderQuotaError
 from platform_common.permissions.codes import AI_GOVERNANCE_MANAGE
 
@@ -57,7 +63,11 @@ def list_admin_ai_providers(
     repo = AIModelCatalogRepository(db)
     defaults = repo.get_defaults()
     return AdminAIProvidersResponse(
-        providers=[_serialize_provider(repo, provider) for provider in repo.list_providers()],
+        providers=[
+            _serialize_provider(repo, provider)
+            for provider in repo.list_providers()
+            if provider.provider_key in SUPPORTED_PROVIDER_KEYS
+        ],
         defaultChatModelId=defaults.default_chat_model_id if defaults else None,
         defaultEmbeddingModelId=defaults.default_embedding_model_id if defaults else None,
     )
@@ -79,6 +89,8 @@ def upsert_admin_ai_provider_credential(
             base_url_override=payload.baseUrl,
             is_enabled=payload.enabled,
         )
+        if payload.enabled:
+            IndexJobService(db).reindex_all_materials()
     except ProviderConfigurationError as exc:
         raise _http_error(status.HTTP_400_BAD_REQUEST, "AI_PROVIDER_CONFIGURATION_INVALID", str(exc)) from exc
     repo = AIModelCatalogRepository(db)
@@ -101,7 +113,16 @@ def delete_admin_ai_provider_credential(
 ) -> AdminAIProviderCredentialResponse:
     _ = current_user
     AIModelCatalogService(db).ensure_seeded()
-    ProviderCredentialService(db).delete_credentials(provider_key=provider_key)
+    try:
+        ProviderCredentialService(db).delete_credentials(
+            provider_key=provider_key
+        )
+    except ProviderConfigurationError as exc:
+        raise _http_error(
+            status.HTTP_400_BAD_REQUEST,
+            "AI_PROVIDER_CONFIGURATION_INVALID",
+            str(exc),
+        ) from exc
     provider = AIModelCatalogRepository(db).get_provider(provider_key)
     return AdminAIProviderCredentialResponse(
         provider=provider_key,
@@ -122,23 +143,74 @@ def health_check_admin_ai_provider(
     _ = current_user
     catalog = AIModelCatalogService(db)
     catalog.ensure_seeded()
+    if provider_key not in SUPPORTED_PROVIDER_KEYS:
+        raise _http_error(
+            status.HTTP_400_BAD_REQUEST,
+            "AI_PROVIDER_UNSUPPORTED",
+            "该供应商不在当前版本的支持列表中。",
+        )
     repo = AIModelCatalogRepository(db)
+    models = repo.list_models()
+    models_by_id = {
+        model.model_id: model
+        for model in models
+    }
     provider_models = [
-        model for model in repo.list_models() if model.provider_key == provider_key and model.supports_chat
+        model
+        for model in models
+        if (
+            model.provider_key == provider_key
+            and model.supports_chat
+            and model.is_enabled
+            and model.backend_supported
+            and not model.display_only
+            and model.paired_embedding_model_id
+            and (
+                embedding_model := models_by_id.get(
+                    model.paired_embedding_model_id
+                )
+            )
+            is not None
+            and embedding_model.provider_key == provider_key
+            and embedding_model.is_enabled
+            and embedding_model.backend_supported
+            and not embedding_model.display_only
+            and embedding_model.supports_embedding
+            and embedding_model.supports_rag_indexing
+        )
     ]
     if not provider_models:
         raise _http_error(status.HTTP_400_BAD_REQUEST, "AI_PROVIDER_UNSUPPORTED", "该供应商没有可用的聊天模型。")
-    model_id = provider_models[0].model_id
+    chat_model = provider_models[0]
+    model_id = chat_model.model_id
     try:
         AIModelInvocationService(db).generate_text(
             prompt="Reply with OK.",
             system_instruction="You are checking whether an AI provider is reachable.",
             model_id=model_id,
-            max_output_tokens=16,
+            max_output_tokens=64,
             temperature=0,
+            bypass_health_status_for_health_check=True,
         )
+        embedding_model_id = chat_model.paired_embedding_model_id
+        if not embedding_model_id:
+            raise ProviderConfigurationError(
+                "The provider chat model has no paired embedding model."
+            )
+        embedding_result = AIEmbeddingInvocationService(db).embed_text(
+            text="AI provider embedding health check.",
+            model_id=embedding_model_id,
+            task_type="RETRIEVAL_QUERY",
+            bypass_health_status_for_health_check=True,
+        )
+        if embedding_result.output_dimension != 1024:
+            raise ProviderInvocationError(
+                "AI provider health check returned an unexpected embedding dimension.",
+                provider_error_type="invalid_provider_response",
+            )
         repo.update_credential_health(provider_key=provider_key, health_status="ready", last_error=None)
         db.commit()
+        IndexJobService(db).reindex_all_materials()
         return AdminAIProviderHealthCheckResponse(provider=provider_key, status="ready", message="供应商连接正常。")
     except ProviderQuotaError as exc:
         repo.update_credential_health(provider_key=provider_key, health_status="quota", last_error="供应商额度已受限。")
@@ -167,15 +239,12 @@ def update_admin_ai_defaults(
         if "defaultChatModelId" in payload.model_fields_set
         else current_defaults.default_chat_model_id if current_defaults else None
     )
-    next_embedding_model_id = (
-        payload.defaultEmbeddingModelId
-        if "defaultEmbeddingModelId" in payload.model_fields_set
-        else current_defaults.default_embedding_model_id if current_defaults else None
-    )
     try:
         catalog.set_defaults(
             default_chat_model_id=next_chat_model_id,
-            default_embedding_model_id=next_embedding_model_id,
+            # Embedding defaults are always derived from the authoritative
+            # chat-to-embedding catalog pair.
+            default_embedding_model_id=None,
         )
     except ProviderConfigurationError as exc:
         raise _http_error(status.HTTP_400_BAD_REQUEST, "AI_DEFAULT_MODEL_INVALID", str(exc)) from exc

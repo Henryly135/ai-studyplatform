@@ -81,10 +81,10 @@ class QuizGenerationGraphRunner:
         return retrieve_context_node(state=state, session=self.session)
 
     def _plan_quiz(self, state: QuizGenerationWorkflowState) -> QuizGenerationWorkflowState:
-        return plan_quiz_node(state=state)
+        return plan_quiz_node(state=state, session=self.session)
 
     def _generate_quiz(self, state: QuizGenerationWorkflowState) -> QuizGenerationWorkflowState:
-        return generate_quiz_node(state=state)
+        return generate_quiz_node(state=state, session=self.session)
 
     def _validate_quiz(self, state: QuizGenerationWorkflowState) -> QuizGenerationWorkflowState:
         return validate_quiz_node(state=state)

@@ -125,7 +125,7 @@ export interface AdminAiProviderCredentialHealthResponse {
   provider: string;
   status: string;
   ok: boolean;
-  checkedAt: string;
+  checkedAt: string | null;
   message: string | null;
 }
 

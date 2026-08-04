@@ -69,18 +69,14 @@ class AIChatSessionsRepository:
         self,
         session_row: AIChatSession,
         *,
-        course_id: int | None,
-        module_id: int | None,
         last_message_at: datetime,
         last_user_message_at: datetime,
         last_assistant_message_at: datetime,
         message_increment: int,
         summary_text: str | None = None,
     ) -> AIChatSession:
-        """Used by chat services after writing messages to update session activity fields."""
+        """Update activity without changing the session's authorization scope."""
         # Session summary is a lightweight recap of the latest exchange
-        session_row.course_id = course_id
-        session_row.module_id = module_id
         session_row.last_message_at = last_message_at
         session_row.last_user_message_at = last_user_message_at
         session_row.last_assistant_message_at = last_assistant_message_at
@@ -93,13 +89,9 @@ class AIChatSessionsRepository:
         self,
         session_row: AIChatSession,
         *,
-        course_id: int | None,
-        module_id: int | None,
         timestamp: datetime,
     ) -> AIChatSession:
-        """Persist session activity after only a user message has been written."""
-        session_row.course_id = course_id
-        session_row.module_id = module_id
+        """Persist user activity without changing the session's scope."""
         session_row.last_message_at = timestamp
         session_row.last_user_message_at = timestamp
         session_row.message_count += 1

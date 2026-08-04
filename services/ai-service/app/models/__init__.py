@@ -5,6 +5,8 @@ from app.models.ai_embedding_logs import AIEmbeddingLog
 from app.models.ai_feedback import AIFeedback
 from app.models.ai_index_jobs import AIIndexJob
 from app.models.ai_knowledge_chunks import AIKnowledgeChunk
+from app.models.ai_knowledge_chunk_embeddings import AIKnowledgeChunkEmbedding
+from app.models.ai_knowledge_source_embedding_statuses import AIKnowledgeSourceEmbeddingStatus
 from app.models.ai_knowledge_sources import AIKnowledgeSource
 from app.models.ai_model_catalog import (
     AIModelCatalog,
@@ -29,6 +31,8 @@ __all__ = [
     "AIConsumedEvent",
     "AIKnowledgeSource",
     "AIKnowledgeChunk",
+    "AIKnowledgeChunkEmbedding",
+    "AIKnowledgeSourceEmbeddingStatus",
     "AIModelProvider",
     "AIModelCatalog",
     "AIProviderCredential",

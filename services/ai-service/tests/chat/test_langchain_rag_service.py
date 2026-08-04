@@ -33,7 +33,13 @@ def _retrieval_result() -> RetrievalResult:
             )
         ],
         raw_retrieved_chunks=[],
+        chat_model_id="glm:glm-4.7",
         query_embedding_model="embedding-model",
+        query_embedding_version="embedding-model@1024",
+        index_status="ready",
+        indexed_chunk_count=1,
+        total_chunk_count=1,
+        index_coverage=1.0,
         latency_ms=12,
         filters_json={},
         retrieval_trace_json={},

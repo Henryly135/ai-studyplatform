@@ -3,140 +3,202 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from app.models.ai_prompt_logs import AIPromptStatus
 from app.services.indexing.embedding_service import EmbeddingService
+from app.services.providers.types import (
+    ProviderConfigurationError,
+    ProviderInvocationError,
+    ProviderQuotaError,
+)
 
 
-def _settings(**overrides):
-    values = {
-        "ai_embedding_orchestrator": "direct",
-        "ai_embedding_model": "embedding-model",
-        "ai_embedding_version": "embedding-v1",
-        "ai_embedding_output_dimension": 2,
-        "ai_embedding_dimension": 2,
-        "ai_embedding_task_type": "RETRIEVAL_DOCUMENT",
-    }
-    values.update(overrides)
-    return SimpleNamespace(**values)
-
-
-def test_extract_token_count_supports_object_dict_and_serializers() -> None:
-    # Tests all supported provider token-count response shapes.
-    service = EmbeddingService.__new__(EmbeddingService)
-
-    assert service._extract_token_count(SimpleNamespace(total_tokens=7)) == 7
-    assert service._extract_token_count({"total_tokens": 8}) == 8
-    assert service._extract_token_count(SimpleNamespace(to_dict=lambda: {"total_tokens": 9})) == 9
-    assert service._extract_token_count(SimpleNamespace(to_json_dict=lambda: {"total_tokens": 10})) == 10
-    assert service._extract_token_count(None) is None
-
-
-def test_normalize_vector_returns_unit_vector_and_rejects_zero() -> None:
-    # Tests vector normalization and zero-vector validation.
-    service = EmbeddingService.__new__(EmbeddingService)
-
-    assert service._normalize_vector([3.0, 4.0]) == [0.6, 0.8]
-    with pytest.raises(Exception) as exc_info:
-        service._normalize_vector([0.0, 0.0])
-    assert "Embedding vector magnitude is zero" in str(exc_info.value)
-
-
-def test_count_document_tokens_returns_provider_count(monkeypatch) -> None:
-    # Tests successful Gemini token counting with request/response metadata.
-    service = EmbeddingService.__new__(EmbeddingService)
-    service.client = SimpleNamespace(
-        models=SimpleNamespace(count_tokens=lambda **_: SimpleNamespace(total_tokens=12))
+def _invocation_result(model_id: str = "glm:embedding-3"):
+    return SimpleNamespace(
+        model_id=model_id,
+        embedding_version=f"{model_id}@1024",
+        vector=[0.5] * 1024,
+        task_type="RETRIEVAL_QUERY",
+        output_dimension=1024,
+        latency_ms=12,
+        request_json={"modelId": model_id},
+        response_json={"embeddingDimension": 1024},
+        trace_id="trace",
+        input_tokens=7,
+        total_tokens=7,
     )
-    monkeypatch.setattr("app.services.indexing.embedding_service.settings", _settings())
-
-    result = service.count_document_tokens(text="  hello  ")
-
-    assert result.provider_input_tokens == 12
-    assert result.provider_total_tokens == 12
-    assert result.request_json["contents_preview"] == "hello"
-    assert result.response_json["provider_count_tokens_supported"] is True
 
 
-def test_count_document_tokens_records_provider_error(monkeypatch) -> None:
-    # Tests that token-count provider failures are returned as metadata, not raised.
+def test_list_available_embedding_models_exposes_catalog_identity_and_version() -> None:
+    service = EmbeddingService.__new__(EmbeddingService)
+    service.catalog = SimpleNamespace(
+        list_available_embedding_models=lambda: [
+            SimpleNamespace(
+                model=SimpleNamespace(
+                    model_id="glm:embedding-3",
+                    display_name="GLM Embedding-3",
+                    embedding_dimension=1024,
+                )
+            )
+        ]
+    )
+
+    targets = service.list_available_embedding_models()
+
+    assert targets[0].model_id == "glm:embedding-3"
+    assert targets[0].embedding_version == "glm:embedding-3@1024"
+    assert targets[0].dimension == 1024
+
+
+def test_count_document_tokens_is_provider_neutral() -> None:
     service = EmbeddingService.__new__(EmbeddingService)
 
-    def _raise(**_):
-        raise RuntimeError("provider down")
-
-    service.client = SimpleNamespace(models=SimpleNamespace(count_tokens=_raise))
-    monkeypatch.setattr("app.services.indexing.embedding_service.settings", _settings())
-
-    result = service.count_document_tokens(text="hello")
+    result = service.count_document_tokens(
+        text="  hello  ",
+        embedding_model_id="openrouter:openai/text-embedding-3-small",
+    )
 
     assert result.provider_input_tokens is None
     assert result.provider_total_tokens is None
-    assert result.response_json["provider_count_tokens_supported"] is False
-    assert "provider down" in result.response_json["provider_error"]
+    assert result.request_json["modelId"] == "openrouter:openai/text-embedding-3-small"
+    assert result.response_json["providerCountTokensSupported"] is False
 
 
-def test_embed_text_direct_normalizes_provider_embedding(monkeypatch) -> None:
-    # Tests direct provider embedding path with dimension validation and normalization.
+def test_embed_query_resolves_chat_pair_and_invokes_that_embedding_model() -> None:
     service = EmbeddingService.__new__(EmbeddingService)
-    service.client = SimpleNamespace(
-        models=SimpleNamespace(
-            embed_content=lambda **_: SimpleNamespace(
-                embeddings=[SimpleNamespace(values=[3.0, 4.0])]
+    pair_calls = []
+    invocation_calls = []
+    service.catalog = SimpleNamespace(
+        resolve_model_pair=lambda **kwargs: (
+            pair_calls.append(kwargs)
+            or SimpleNamespace(
+                embedding=SimpleNamespace(
+                    model=SimpleNamespace(model_id="glm:embedding-3")
+                )
             )
         )
     )
-    monkeypatch.setattr("app.services.indexing.embedding_service.settings", _settings())
+    service.invocation = SimpleNamespace(
+        embed_text=lambda **kwargs: (
+            invocation_calls.append(kwargs) or _invocation_result()
+        )
+    )
 
-    result = service._embed_text(text=" hello ", title="Doc", task_type="RETRIEVAL_DOCUMENT")
+    result = service.embed_query(
+        text="question",
+        chat_model_id="glm:glm-4.7",
+        user_id=9,
+    )
 
-    assert result.vector == [0.6, 0.8]
-    assert result.embedding_model == "embedding-model"
+    assert pair_calls == [
+        {"user_id": 9, "requested_model_id": "glm:glm-4.7"}
+    ]
+    assert invocation_calls[0]["model_id"] == "glm:embedding-3"
+    assert invocation_calls[0]["task_type"] == "RETRIEVAL_QUERY"
+    assert result.embedding_model_id == "glm:embedding-3"
+    assert result.embedding_model == "glm:embedding-3"
     assert result.status == AIPromptStatus.SUCCESS
-    assert result.request_json["config"]["title"] == "Doc"
+    assert result.provider_input_tokens == 7
 
 
-def test_embed_text_rejects_blank_and_dimension_mismatch(monkeypatch) -> None:
-    # Tests blank embedding input and provider dimension mismatch errors.
+def test_embed_query_accepts_authoritative_embedding_model_id_directly() -> None:
     service = EmbeddingService.__new__(EmbeddingService)
-    service.client = SimpleNamespace(
-        models=SimpleNamespace(embed_content=lambda **_: SimpleNamespace(embeddings=[SimpleNamespace(values=[1.0])]))
+    service.catalog = SimpleNamespace(
+        resolve_model_pair=lambda **_: pytest.fail("pair should not be resolved")
     )
-    monkeypatch.setattr("app.services.indexing.embedding_service.settings", _settings())
+    calls = []
+    service.invocation = SimpleNamespace(
+        embed_text=lambda **kwargs: (
+            calls.append(kwargs)
+            or _invocation_result("gemini:gemini-embedding-2")
+        )
+    )
 
-    with pytest.raises(Exception) as blank_error:
-        service._embed_text(text=" ", title=None, task_type="RETRIEVAL_QUERY")
-    with pytest.raises(Exception) as dimension_error:
-        service._embed_text(text="hello", title=None, task_type="RETRIEVAL_QUERY")
+    result = service.embed_query(
+        text="question",
+        embedding_model_id="gemini:gemini-embedding-2",
+    )
 
-    assert "text is required for embedding" in str(blank_error.value)
-    assert "Embedding dimension mismatch" in str(dimension_error.value)
+    assert calls[0]["model_id"] == "gemini:gemini-embedding-2"
+    assert result.embedding_model_id == "gemini:gemini-embedding-2"
 
 
-def test_embed_text_via_langchain_uses_query_or_document_method(monkeypatch) -> None:
-    # Tests langchain embedding path chooses query/document methods and normalizes vectors.
+def test_embed_query_maps_unavailable_pair_to_stable_api_error() -> None:
     service = EmbeddingService.__new__(EmbeddingService)
-    calls: list[str] = []
-    service.langchain_embeddings = SimpleNamespace(
-        embed_query=lambda text: calls.append(f"query:{text}") or SimpleNamespace(
-            vector=[0.0, 2.0],
-            request_json={"mode": "query"},
-            response_json={"ok": True},
-        ),
-        embed_document=lambda **kwargs: calls.append(f"document:{kwargs['title']}") or SimpleNamespace(
-            vector=[2.0, 0.0],
-            request_json={"mode": "document"},
-            response_json={"ok": True},
-        ),
-    )
-    monkeypatch.setattr(
-        "app.services.indexing.embedding_service.settings",
-        _settings(ai_embedding_orchestrator="langchain"),
+
+    def _raise(**_):
+        raise ProviderConfigurationError("missing credential")
+
+    service.catalog = SimpleNamespace(resolve_model_pair=_raise)
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.embed_query(text="question", chat_model_id="glm:glm-4.7")
+
+    assert exc_info.value.status_code == 503
+    assert (
+        exc_info.value.detail["code"]
+        == "AI_EMBEDDING_PROVIDER_UNAVAILABLE"
     )
 
-    query_result = service._embed_text(text="query", title=None, task_type="RETRIEVAL_QUERY")
-    document_result = service._embed_text(text="doc", title="Doc", task_type="RETRIEVAL_DOCUMENT")
 
-    assert query_result.vector == [0.0, 1.0]
-    assert document_result.vector == [1.0, 0.0]
-    assert calls == ["query:query", "document:Doc"]
+@pytest.mark.parametrize(
+    ("provider_error", "status_code", "error_code"),
+    [
+        (
+            ProviderConfigurationError("missing credential"),
+            503,
+            "AI_EMBEDDING_PROVIDER_UNAVAILABLE",
+        ),
+        (
+            ProviderInvocationError(
+                "timeout",
+                provider_error_type="provider_timeout",
+            ),
+            503,
+            "AI_EMBEDDING_PROVIDER_UNAVAILABLE",
+        ),
+        (
+            ProviderQuotaError("quota"),
+            429,
+            "AI_QUOTA_EXCEEDED",
+        ),
+    ],
+)
+def test_embed_query_preserves_provider_failure_classification(
+    provider_error,
+    status_code,
+    error_code,
+) -> None:
+    service = EmbeddingService.__new__(EmbeddingService)
+
+    def raise_provider_error(**_):
+        raise provider_error
+
+    service.invocation = SimpleNamespace(embed_text=raise_provider_error)
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.embed_query(
+            text="question",
+            embedding_model_id="glm:embedding-3",
+        )
+
+    assert exc_info.value.status_code == status_code
+    assert exc_info.value.detail["code"] == error_code
+
+
+def test_embed_text_rejects_blank_content_before_provider_call() -> None:
+    service = EmbeddingService.__new__(EmbeddingService)
+    service.invocation = SimpleNamespace(
+        embed_text=lambda **_: pytest.fail("provider should not be called")
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        service._embed_text(
+            text=" ",
+            title=None,
+            task_type="RETRIEVAL_QUERY",
+            embedding_model_id="glm:embedding-3",
+        )
+
+    assert "text is required for embedding" in str(exc_info.value)

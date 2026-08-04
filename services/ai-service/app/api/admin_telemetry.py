@@ -14,7 +14,7 @@ from app.schemas.admin_telemetry import (
     AdminAITelemetryTrendResponse,
     AdminAIProviderConfigResponse,
 )
-from app.schemas.index_jobs import RetryIndexJobResponse
+from app.schemas.index_jobs import ReindexAllMaterialsResponse, RetryIndexJobResponse
 from app.services.admin_telemetry_service import AdminAITelemetryService
 from app.services.indexing.index_job_service import IndexJobService
 from platform_common.permissions.codes import AI_GOVERNANCE_MANAGE, AUDIT_LOG_READ
@@ -191,3 +191,17 @@ def retry_ai_index_job_from_audit(
 ) -> RetryIndexJobResponse:
     _ = current_user
     return IndexJobService(db).retry_job(job_id=job_id)
+
+
+@router.post(
+    "/index-jobs/reindex-all",
+    response_model=ReindexAllMaterialsResponse,
+    summary="Backfill all material vectors [Admin]",
+    description="Queues every canonical material source for all configured paired embedding models.",
+)
+def reindex_all_ai_materials(
+    current_user: dict = Depends(require_ai_governance_manage_permission),
+    db: Session = Depends(get_db_session),
+) -> ReindexAllMaterialsResponse:
+    _ = current_user
+    return IndexJobService(db).reindex_all_materials()

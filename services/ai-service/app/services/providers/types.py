@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Protocol
 
 
 @dataclass(frozen=True)
@@ -11,6 +12,7 @@ class ModelProviderDefinition:
     default_base_url: str | None
     backend_supported: bool
     display_order: int
+    require_json_parameter_support: bool = False
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,7 @@ class ModelDefinition:
     embedding_dimension: int | None = None
     display_order: int = 100
     unavailable_reason: str | None = None
+    paired_embedding_model_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +67,35 @@ class TextGenerationRequest:
     temperature: float = 0.5
     max_output_tokens: int = 900
     json_mode: bool = False
+    require_parameter_support: bool = False
+
+
+@dataclass(frozen=True)
+class EmbeddingRequest:
+    provider_key: str
+    model_name: str
+    api_key: str
+    base_url: str | None
+    text: str
+    output_dimension: int
+    task_type: str = "RETRIEVAL_DOCUMENT"
+    title: str | None = None
+
+
+@dataclass(frozen=True)
+class ProviderEmbeddingResult:
+    vector: list[float]
+    usage: ProviderUsage = field(default_factory=ProviderUsage)
+    request_json: dict | None = None
+    response_json: dict | None = None
+
+
+class ChatAdapter(Protocol):
+    def generate_text(self, request: TextGenerationRequest) -> ProviderTextResult: ...
+
+
+class EmbeddingAdapter(Protocol):
+    def embed(self, request: EmbeddingRequest) -> ProviderEmbeddingResult: ...
 
 
 class ProviderConfigurationError(RuntimeError):

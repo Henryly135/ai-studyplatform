@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_identity_permission
-from app.core.config import settings
 from app.core.uuid_codec import encode_session_uuid
 from app.db.session import get_db_session
 from app.schemas.demo import AIHealthResponse, ChatResponse, ChatServiceRequest
@@ -38,19 +37,18 @@ def _demo_payload_for_authenticated_user(payload: ChatServiceRequest, current_us
 
 @router.get("/health", response_model=AIHealthResponse)
 def demo_health(db: Session = Depends(get_db_session)) -> AIHealthResponse:
-    default_item = None
-    if hasattr(db, "get"):
-        catalog = AIModelCatalogService(db)
-        catalog.ensure_seeded()
-        payload = catalog.list_model_status()
-        default_model_id = payload.get("defaultChatModelId")
-        default_item = next((item for item in payload["items"] if item["modelId"] == default_model_id), None)
-    elif settings.gemini_api_key:
-        default_item = {
-            "provider": "gemini",
-            "modelName": settings.ai_demo_model_name,
-            "available": True,
-        }
+    catalog = AIModelCatalogService(db)
+    catalog.ensure_seeded()
+    payload = catalog.list_model_status()
+    default_model_id = payload.get("defaultChatModelId")
+    default_item = next(
+        (
+            item
+            for item in payload["items"]
+            if item["modelId"] == default_model_id
+        ),
+        None,
+    )
     if default_item is None or not default_item["available"]:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

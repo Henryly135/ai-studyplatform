@@ -45,6 +45,9 @@ class QuizGenerationRetrievalService:
                 session_id=None,
                 message_id=None,
                 top_k=5,
+                chat_model_id=None,
+                model_user_id=None,
+                readiness_purpose="quiz",
             )
         )
 
@@ -65,4 +68,9 @@ class QuizGenerationRetrievalService:
             topK=5,
             chunkCount=len(chunks),
             chunks=chunks,
+            chatModelId=retrieval_result.chat_model_id,
+            embeddingModelId=retrieval_result.query_embedding_model,
+            embeddingVersion=retrieval_result.query_embedding_version,
+            indexStatus=retrieval_result.index_status,
+            indexCoverage=retrieval_result.index_coverage,
         )

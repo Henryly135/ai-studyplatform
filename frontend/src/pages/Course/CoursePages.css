@@ -3084,6 +3084,22 @@
   overflow-wrap: anywhere;
 }
 
+.course-chat-model-picker .course-chat-model-pair {
+  color: #0f766e;
+  font-weight: 750;
+}
+
+.course-chat-model-picker .course-chat-model-pair-warning {
+  color: #b45309;
+}
+
+.course-chat-model-pair span {
+  display: block;
+  margin-top: 0.2rem;
+  color: inherit;
+  font-weight: 600;
+}
+
 .course-chat-composer textarea {
   min-height: 86px;
   border: 0;
@@ -4299,6 +4315,217 @@ a.course-material-card-link.course-material-card-quiz:hover {
   background: transparent;
 }
 
+.course-markdown-stage {
+  min-height: 700px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 1rem;
+  background: #ffffff;
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.06);
+}
+
+.course-markdown-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.course-markdown-view-toggle,
+.course-markdown-retry {
+  min-height: 2.2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.8rem;
+  border: 1px solid transparent;
+  border-radius: 0.65rem;
+  background: transparent;
+  color: #475569;
+  font: 750 0.82rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.course-markdown-view-toggle:hover:not(:disabled) {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.course-markdown-view-toggle-active {
+  border-color: rgba(15, 118, 110, 0.22);
+  background: #ffffff;
+  color: #0f766e;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.course-markdown-view-toggle:focus-visible,
+.course-markdown-retry:focus-visible {
+  outline: 3px solid rgba(15, 118, 110, 0.18);
+  outline-offset: 2px;
+}
+
+.course-markdown-view-toggle:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.course-markdown-document {
+  min-height: 0;
+  overflow: auto;
+  padding: clamp(1.25rem, 3vw, 2.5rem);
+  background: #ffffff;
+}
+
+.course-markdown-preview {
+  width: min(100%, 56rem);
+  margin: 0 auto;
+  color: #1e293b;
+  font: 500 1rem/1.75 "IBM Plex Sans", "Segoe UI", sans-serif;
+  overflow-wrap: anywhere;
+}
+
+.course-markdown-preview h1,
+.course-markdown-preview h2,
+.course-markdown-preview h3,
+.course-markdown-preview h4 {
+  margin: 1.5em 0 0.65em;
+  color: #0f172a;
+  font-family: "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+  line-height: 1.25;
+}
+
+.course-markdown-preview h1:first-child,
+.course-markdown-preview h2:first-child,
+.course-markdown-preview h3:first-child {
+  margin-top: 0;
+}
+
+.course-markdown-preview h1 {
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #e2e8f0;
+  font-size: clamp(1.75rem, 3vw, 2.35rem);
+}
+
+.course-markdown-preview h2 {
+  font-size: 1.45rem;
+}
+
+.course-markdown-preview h3 {
+  font-size: 1.15rem;
+}
+
+.course-markdown-preview p,
+.course-markdown-preview ul,
+.course-markdown-preview ol,
+.course-markdown-preview blockquote,
+.course-markdown-preview pre,
+.course-markdown-preview table {
+  margin: 0 0 1rem;
+}
+
+.course-markdown-preview ul,
+.course-markdown-preview ol {
+  padding-left: 1.5rem;
+}
+
+.course-markdown-preview li + li {
+  margin-top: 0.35rem;
+}
+
+.course-markdown-preview blockquote {
+  padding: 0.25rem 1rem;
+  border-left: 4px solid #14b8a6;
+  background: #f0fdfa;
+  color: #334155;
+}
+
+.course-markdown-preview code,
+.course-markdown-source {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.course-markdown-preview code {
+  padding: 0.15rem 0.35rem;
+  border-radius: 0.35rem;
+  background: #f1f5f9;
+  color: #be123c;
+  font-size: 0.9em;
+}
+
+.course-markdown-preview pre {
+  overflow-x: auto;
+  padding: 1rem;
+  border-radius: 0.8rem;
+  background: #0f172a;
+}
+
+.course-markdown-preview pre code {
+  padding: 0;
+  background: transparent;
+  color: #e2e8f0;
+}
+
+.course-markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.course-markdown-preview th,
+.course-markdown-preview td {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #cbd5e1;
+  text-align: left;
+}
+
+.course-markdown-preview th {
+  background: #f1f5f9;
+}
+
+.course-markdown-preview a {
+  color: #0369a1;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.course-markdown-source {
+  min-width: 100%;
+  margin: 0;
+  color: #1e293b;
+  font-size: 0.9rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+
+.course-markdown-status {
+  min-height: 32rem;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.65rem;
+  color: #64748b;
+  text-align: center;
+}
+
+.course-markdown-status p {
+  margin: 0;
+}
+
+.course-markdown-status-error strong {
+  color: #991b1b;
+}
+
+.course-markdown-retry {
+  border-color: #cbd5e1;
+  background: #ffffff;
+  color: #0f766e;
+}
+
 .course-audio-stage {
   padding: 1rem;
   border: 1px solid rgba(148, 163, 184, 0.18);
@@ -4782,9 +5009,14 @@ a.course-material-card-link.course-material-card-quiz:hover {
 
   .course-document-stage,
   .course-audio-stage,
+  .course-markdown-stage,
   .course-document-viewer,
   .course-image-viewer {
     min-height: 55vh;
+  }
+
+  .course-markdown-document {
+    padding: 1rem;
   }
 
   .course-chat-sidebar {

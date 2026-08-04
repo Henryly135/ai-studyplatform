@@ -213,8 +213,8 @@ describe("admin service normalization", () => {
         mockJsonResponse({
           providers: [
             {
-              provider: "deepseek",
-              providerLabel: "DeepSeek",
+              provider: "glm",
+              providerLabel: "GLM",
               backendSupported: true,
               configured: "true",
               apiKeyHint: "****1234",
@@ -227,7 +227,7 @@ describe("admin service normalization", () => {
       )
       .mockResolvedValueOnce(
         mockJsonResponse({
-          provider: "deepseek",
+          provider: "glm",
           configured: true,
           apiKeyHint: "****5678",
           healthStatus: "ready",
@@ -236,40 +236,39 @@ describe("admin service normalization", () => {
       .mockResolvedValueOnce(mockJsonResponse({ detail: "deleted" }))
       .mockResolvedValueOnce(
         mockJsonResponse({
-          provider: "deepseek",
-          ok: "true",
+          provider: "glm",
           status: "ready",
-          checked_at: "2026-07-02T01:00:00Z",
           message: 123,
         })
       )
       .mockResolvedValueOnce(
         mockJsonResponse({
-          defaultChatModelId: "deepseek:deepseek-v4-flash",
+          defaultChatModelId: "glm:glm-4.7",
         })
       );
     vi.stubGlobal("fetch", fetchMock);
 
     const credentials = await listAdminAiProviderCredentials("");
     const saved = await saveAdminAiProviderCredential("", {
-      provider: "deepseek",
+      provider: "glm",
       apiKey: "test-key",
-      defaultModelId: "deepseek:deepseek-v4-flash",
+      defaultModelId: "glm:glm-4.7",
     });
-    await deleteAdminAiProviderCredential("", "deepseek");
-    const health = await checkAdminAiProviderCredentialHealth("", "deepseek");
-    const defaultModel = await setAdminAiDefaultModel("", { modelId: "deepseek:deepseek-v4-flash" });
+    await deleteAdminAiProviderCredential("", "glm");
+    const health = await checkAdminAiProviderCredentialHealth("", "glm");
+    const defaultModel = await setAdminAiDefaultModel("", { modelId: "glm:glm-4.7" });
 
     expect(credentials.credentials[0].configured).toBe(true);
     expect(credentials.credentials[0].backendSupported).toBe(true);
     expect(credentials.credentials[0].keyPreview).toBe("****1234");
     expect(saved.keyPreview).toBe("****5678");
     expect(health.ok).toBe(true);
+    expect(health.checkedAt).toBeNull();
     expect(health.message).toBe("123");
-    expect(defaultModel.modelId).toBe("deepseek:deepseek-v4-flash");
+    expect(defaultModel.modelId).toBe("glm:glm-4.7");
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "/api/ai/admin/ai/providers/deepseek/credential",
+      "/api/ai/admin/ai/providers/glm/credential",
       expect.objectContaining({
         method: "PUT",
         body: JSON.stringify({
@@ -284,7 +283,7 @@ describe("admin service normalization", () => {
       "/api/ai/admin/ai/defaults",
       expect.objectContaining({
         method: "PATCH",
-        body: JSON.stringify({ defaultChatModelId: "deepseek:deepseek-v4-flash" }),
+        body: JSON.stringify({ defaultChatModelId: "glm:glm-4.7" }),
       })
     );
   });

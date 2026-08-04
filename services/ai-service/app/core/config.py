@@ -27,14 +27,8 @@ class Settings:
     ai_db_name: str = get_env("AI_DB_NAME", default="learning_platform_ai")
     ai_db_echo: bool = get_env("AI_DB_ECHO", default="false").lower() == "true"
     ai_db_pool_pre_ping: bool = get_env("AI_DB_POOL_PRE_PING", default="true").lower() == "true"
-    ai_embedding_provider: str = get_env("AI_EMBEDDING_PROVIDER", default="gemini")
-    ai_embedding_model: str = get_env("AI_EMBEDDING_MODEL", default="gemini-embedding-001")
-    ai_embedding_dimension: int = int(get_env("AI_EMBEDDING_DIMENSION", default="1536"))
-    ai_embedding_output_dimension: int = int(get_env("AI_EMBEDDING_OUTPUT_DIMENSION", default="1536"))
+    ai_embedding_dimension: int = int(get_env("AI_EMBEDDING_DIMENSION", default="1024"))
     ai_embedding_task_type: str = get_env("AI_EMBEDDING_TASK_TYPE", default="RETRIEVAL_DOCUMENT")
-    ai_embedding_version: str = get_env("AI_EMBEDDING_VERSION", default="gemini-embedding-001@1536")
-    ai_embedding_batch_size: int = int(get_env("AI_EMBEDDING_BATCH_SIZE", default="16"))
-    ai_embedding_orchestrator: str = get_env("AI_EMBEDDING_ORCHESTRATOR", default="provider_adapter")
     ai_chunk_size_chars: int = int(get_env("AI_CHUNK_SIZE_CHARS", default="1200"))
     ai_chunk_overlap_chars: int = int(get_env("AI_CHUNK_OVERLAP_CHARS", default="200"))
     ai_retrieval_top_k: int = int(get_env("AI_RETRIEVAL_TOP_K", default="5"))
@@ -42,16 +36,9 @@ class Settings:
     ai_chat_max_output_tokens: int = int(get_env("AI_CHAT_MAX_OUTPUT_TOKENS", default="900"))
     ai_chat_temperature: float = float(get_env("AI_CHAT_TEMPERATURE", default="0.5"))
     ai_chat_timeout_seconds: int = int(get_env("AI_CHAT_TIMEOUT_SECONDS", default="60"))
-    ai_chat_orchestrator: str = get_env("AI_CHAT_ORCHESTRATOR", default="provider_adapter")
     ai_default_chat_model: str = get_env(
         "AI_DEFAULT_CHAT_MODEL",
-        "AI_DEMO_MODEL_NAME",
-        default="gemini-2.5-flash-lite",
-    )
-    ai_default_embedding_model: str = get_env(
-        "AI_DEFAULT_EMBEDDING_MODEL",
-        "AI_EMBEDDING_MODEL",
-        default="gemini-embedding-001",
+        default="gemini-3.5-flash-lite",
     )
     ai_model_catalog_seed_enabled: bool = get_env("AI_MODEL_CATALOG_SEED_ENABLED", default="true").lower() == "true"
     ai_provider_key_encryption_secret: str = get_env("AI_PROVIDER_KEY_ENCRYPTION_SECRET", default="")
@@ -109,8 +96,6 @@ class Settings:
         "AI_PROFILE_ROOT_PATH",
         default=str((Path(__file__).resolve().parents[2] / ".data" / "ai-profile-assets").resolve()),
     )
-    gemini_api_key: str = get_env("GEMINI_API_KEY", default="")
-    ai_demo_model_name: str = get_env("AI_DEMO_MODEL_NAME", "MODEL_NAME", default="gemini-2.5-flash")
     langgraph_checkpoint_enabled: bool = get_env("LANGGRAPH_CHECKPOINT_ENABLED", default="true").lower() == "true"
     langgraph_checkpoint_redis_url: str = get_env(
         "LANGGRAPH_CHECKPOINT_REDIS_URL",

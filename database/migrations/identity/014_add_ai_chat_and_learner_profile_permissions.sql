@@ -1,6 +1,6 @@
 INSERT INTO permissions (permission_code, permission_name, description)
 VALUES
-    ('ai.chat.use', 'Use AI chat', 'Use learner-facing AI chatbot features'),
+    ('ai.chat.use', 'Use AI chat', 'Use AI chat features'),
     ('learner_profile.manage', 'Manage learner profile', 'Create and view learner global profile settings'),
     ('quiz.attempt', 'Attempt quiz', 'Start and submit learner quiz attempts')
 ON DUPLICATE KEY UPDATE

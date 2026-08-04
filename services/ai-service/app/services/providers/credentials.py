@@ -63,12 +63,8 @@ class ProviderCredentialService:
         self.cipher = ProviderCredentialCipher()
 
     def get_credentials_for_provider(self, provider_key: str) -> ProviderCredentials:
+        definition = self._require_supported_provider(provider_key)
         provider = self.repo.get_provider(provider_key)
-        definition = PROVIDER_DEFINITION_BY_KEY.get(provider_key)
-        if provider is None and definition is None:
-            raise ProviderConfigurationError("AI provider is not supported.")
-        if definition is not None and not definition.backend_supported:
-            raise ProviderConfigurationError("AI provider is display-only in this release.")
 
         credential = self.repo.get_credential(provider_key)
         if credential is None or not credential.is_enabled or not credential.encrypted_api_key:
@@ -90,6 +86,7 @@ class ProviderCredentialService:
         base_url_override: str | None,
         is_enabled: bool,
     ):
+        self._require_supported_provider(provider_key)
         provider = self.repo.get_provider(provider_key)
         if provider is None:
             raise ProviderConfigurationError("AI provider is not supported.")
@@ -108,6 +105,18 @@ class ProviderCredentialService:
         return credential
 
     def delete_credentials(self, *, provider_key: str) -> bool:
+        self._require_supported_provider(provider_key)
         deleted = self.repo.delete_credential(provider_key)
         self.session.commit()
         return deleted
+
+    @staticmethod
+    def _require_supported_provider(provider_key: str):
+        definition = PROVIDER_DEFINITION_BY_KEY.get(provider_key)
+        if definition is None:
+            raise ProviderConfigurationError("AI provider is not supported.")
+        if not definition.backend_supported:
+            raise ProviderConfigurationError(
+                "AI provider is display-only in this release."
+            )
+        return definition

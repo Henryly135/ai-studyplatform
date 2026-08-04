@@ -1,10 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LuArrowLeft, LuArrowUp, LuX } from "react-icons/lu";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { getAiModelCatalog, getChatSessionDetail, listModuleChatSessions, sendChatMessage } from "../../services/chat";
-import type { AiModelCatalog, CourseChatMessage, ChatSessionSummary } from "../../types/chat";
+import type {
+  AiModelCatalog,
+  CourseChatMessage,
+  ChatSessionSummary,
+} from "../../types/chat";
+import {
+  formatRagOptionSuffix,
+  formatRagStatusText,
+  isChatModelSelectable,
+  resolveChatModelSelection,
+} from "./courseChatModels";
+import {
+  runScopedCourseChatLoad,
+  runScopedCourseChatSend,
+} from "./courseChatAsyncScope";
 
 type CourseChatSidebarProps = {
   isOpen: boolean;
@@ -64,10 +78,29 @@ function CourseChatSidebar({
   const [isSending, setIsSending] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<AiModelCatalog | null>(null);
   const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
+  const [modelCatalogScopeKey, setModelCatalogScopeKey] = useState<string | null>(null);
   const [selectedModelId, setSelectedModelId] = useState("");
-  const [modelSelectionTouched, setModelSelectionTouched] = useState(false);
   const messageViewportRef = useRef<HTMLDivElement | null>(null);
+  const currentAsyncScopeToken = useMemo(
+    () => Symbol(`${courseUuid}:${moduleUuid}:${isOpen ? "open" : "closed"}`),
+    [courseUuid, isOpen, moduleUuid]
+  );
+  const activeAsyncScopeTokenRef = useRef(currentAsyncScopeToken);
   const isViewingSession = activeSessionUuid !== null;
+  const currentModelCatalogScopeKey = `${courseUuid}:${moduleUuid}`;
+  const activeModelCatalog =
+    modelCatalogScopeKey === currentModelCatalogScopeKey ? modelCatalog : null;
+  const activeModelCatalogError =
+    modelCatalogScopeKey === currentModelCatalogScopeKey ? modelCatalogError : null;
+
+  useLayoutEffect(() => {
+    activeAsyncScopeTokenRef.current = currentAsyncScopeToken;
+    return () => {
+      if (activeAsyncScopeTokenRef.current === currentAsyncScopeToken) {
+        activeAsyncScopeTokenRef.current = Symbol("disposed-course-chat-scope");
+      }
+    };
+  }, [currentAsyncScopeToken]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -116,8 +149,13 @@ function CourseChatSidebar({
     }
 
     let cancelled = false;
+    const requestedScopeKey = `${courseUuid}:${moduleUuid}`;
+    setModelCatalog(null);
+    setModelCatalogError(null);
+    setModelCatalogScopeKey(null);
+    setSelectedModelId("");
 
-    void getAiModelCatalog()
+    void getAiModelCatalog({ courseUuid, moduleUuid })
       .then((catalog) => {
         if (cancelled) {
           return;
@@ -125,21 +163,8 @@ function CourseChatSidebar({
 
         setModelCatalog(catalog);
         setModelCatalogError(null);
-        setSelectedModelId((current) => {
-          const availableModels = catalog.providers.flatMap((provider) =>
-            provider.models.filter((model) => model.available && model.capabilities.includes("chat"))
-          );
-          const currentStillAvailable = availableModels.some((model) => model.modelId === current);
-          if (currentStillAvailable) {
-            return current;
-          }
-          return (
-            availableModels.find((model) => model.modelId === catalog.userSelectedModelId)?.modelId ??
-            availableModels.find((model) => model.modelId === catalog.defaultModelId || model.isDefault)?.modelId ??
-            availableModels[0]?.modelId ??
-            ""
-          );
-        });
+        setModelCatalogScopeKey(requestedScopeKey);
+        setSelectedModelId((current) => resolveChatModelSelection(catalog, current));
       })
       .catch((error) => {
         if (cancelled) {
@@ -149,22 +174,25 @@ function CourseChatSidebar({
         setModelCatalog(null);
         setSelectedModelId("");
         setModelCatalogError(error instanceof Error ? error.message : "模型目录加载失败。");
+        setModelCatalogScopeKey(requestedScopeKey);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [isOpen]);
+  }, [courseUuid, isOpen, moduleUuid]);
 
   useEffect(() => {
+    setSessions([]);
     setActiveSessionUuid(null);
     setMessages([]);
     setComposerValue("");
-    setModelSelectionTouched(false);
+    setIsLoadingSessionDetail(false);
+    setIsSending(false);
     if (isOpen) {
       setStatus("选择一个会话，或发送新消息开始另一个会话。");
     }
-  }, [moduleUuid, isOpen]);
+  }, [courseUuid, moduleUuid, isOpen]);
 
   useEffect(() => {
     if (!messageViewportRef.current) {
@@ -178,42 +206,56 @@ function CourseChatSidebar({
     () => sessions.find((entry) => entry.session_uuid === activeSessionUuid) ?? null,
     [sessions, activeSessionUuid]
   );
+  const selectedModel = useMemo(
+    () =>
+      activeModelCatalog?.providers
+        .flatMap((provider) => provider.models)
+        .find((model) => model.modelId === selectedModelId) ?? null,
+    [activeModelCatalog, selectedModelId]
+  );
+  const hasUsableSelectedModel = selectedModel
+    ? isChatModelSelectable(selectedModel)
+    : false;
 
   const loadSession = async (sessionUuid: string) => {
+    const requestScopeToken = currentAsyncScopeToken;
     setIsLoadingSessionDetail(true);
     setStatus("正在加载会话...");
 
-    try {
-      const detail = await getChatSessionDetail(sessionUuid);
-      setActiveSessionUuid(detail.session.session_uuid);
-      setMessages(
-        detail.messages
-          .filter((entry) => entry.role === "user" || entry.role === "assistant")
-          .map((entry) => ({
-            id: entry.message_id,
-            role: entry.role === "assistant" ? "assistant" : "user",
-            text: entry.content_text,
-          }))
-      );
-      setStatus("会话已加载。");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "所选会话加载失败。");
-    } finally {
-      setIsLoadingSessionDetail(false);
-    }
-  };
-
-  const refreshSessions = async (nextActiveSessionUuid: string | null) => {
-    const updatedSessions = await listModuleChatSessions(moduleUuid);
-    setSessions(updatedSessions);
-    if (nextActiveSessionUuid) {
-      setActiveSessionUuid(nextActiveSessionUuid);
-    }
+    await runScopedCourseChatLoad({
+      load: () => getChatSessionDetail(sessionUuid),
+      isCurrent: () => activeAsyncScopeTokenRef.current === requestScopeToken,
+      onSuccess: (detail) => {
+        setActiveSessionUuid(detail.session.session_uuid);
+        setMessages(
+          detail.messages
+            .filter((entry) => entry.role === "user" || entry.role === "assistant")
+            .map((entry) => ({
+              id: entry.message_id,
+              role: entry.role === "assistant" ? "assistant" : "user",
+              text: entry.content_text,
+            }))
+        );
+        setStatus("会话已加载。");
+      },
+      onError: (error) => {
+        setStatus(error instanceof Error ? error.message : "所选会话加载失败。");
+      },
+      onSettled: () => {
+        setIsLoadingSessionDetail(false);
+      },
+    });
   };
 
   const handleSend = async () => {
+    const requestScopeToken = currentAsyncScopeToken;
     const trimmedMessage = composerValue.trim();
-    if (!trimmedMessage || isSending || isLoadingSessionDetail) {
+    if (
+      !trimmedMessage ||
+      isSending ||
+      isLoadingSessionDetail ||
+      !hasUsableSelectedModel
+    ) {
       return;
     }
 
@@ -226,38 +268,44 @@ function CourseChatSidebar({
     setIsSending(true);
     setStatus(activeSessionUuid ? "正在发送到当前会话..." : "正在创建新会话...");
 
-    try {
-      const response = await sendChatMessage({
-        courseUuid,
-        moduleUuid,
-        message: trimmedMessage,
-        sessionUuid: activeSessionUuid,
-        modelId: modelSelectionTouched ? selectedModelId || undefined : undefined,
-      });
-
-      await refreshSessions(response.session_uuid);
-      setActiveSessionUuid(response.session_uuid);
-      setMessages((current) => [
-        ...current,
-        {
-          id: response.assistant_message_id,
-          role: "assistant",
-          text: response.reply,
-        },
-      ]);
-      setStatus("助手已回复。");
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "消息发送失败。");
-      if (wasViewingSession) {
-        setMessages((current) => current.slice(0, -1));
-      } else {
-        setActiveSessionUuid(null);
-        setMessages([]);
-      }
-      setComposerValue(trimmedMessage);
-    } finally {
-      setIsSending(false);
-    }
+    await runScopedCourseChatSend({
+      send: () =>
+        sendChatMessage({
+          courseUuid,
+          moduleUuid,
+          message: trimmedMessage,
+          sessionUuid: activeSessionUuid,
+          modelId: selectedModelId,
+        }),
+      refresh: () => listModuleChatSessions(moduleUuid),
+      isCurrent: () => activeAsyncScopeTokenRef.current === requestScopeToken,
+      onSuccess: (response, updatedSessions) => {
+        setSessions(updatedSessions);
+        setActiveSessionUuid(response.session_uuid);
+        setMessages((current) => [
+          ...current,
+          {
+            id: response.assistant_message_id,
+            role: "assistant",
+            text: response.reply,
+          },
+        ]);
+        setStatus("助手已回复。");
+      },
+      onError: (error) => {
+        setStatus(error instanceof Error ? error.message : "消息发送失败。");
+        if (wasViewingSession) {
+          setMessages((current) => current.slice(0, -1));
+        } else {
+          setActiveSessionUuid(null);
+          setMessages([]);
+        }
+        setComposerValue(trimmedMessage);
+      },
+      onSettled: () => {
+        setIsSending(false);
+      },
+    });
   };
 
   return (
@@ -369,29 +417,48 @@ function CourseChatSidebar({
               <span>模型</span>
               <select
                 value={selectedModelId}
-                onChange={(event) => {
-                  setSelectedModelId(event.target.value);
-                  setModelSelectionTouched(true);
-                }}
-                disabled={isSending || !modelCatalog}
+                onChange={(event) => setSelectedModelId(event.target.value)}
+                disabled={isSending || !activeModelCatalog}
               >
-                {!modelCatalog ? <option value="">默认模型</option> : null}
-                {modelCatalog?.providers.map((provider) => (
+                {!activeModelCatalog ? <option value="">默认模型</option> : null}
+                {activeModelCatalog?.providers.map((provider) => (
                   <optgroup key={provider.provider} label={provider.label || provider.provider}>
                     {provider.models
                       .filter((model) => model.capabilities.includes("chat"))
                       .map((model) => (
-                        <option key={model.modelId} value={model.modelId} disabled={!model.available}>
+                        <option
+                          key={model.modelId}
+                          value={model.modelId}
+                          disabled={!isChatModelSelectable(model)}
+                        >
                           {model.name}
-                          {model.modelId === modelCatalog.userSelectedModelId ? " (已选)" : ""}
-                          {model.isDefault || model.modelId === modelCatalog.defaultModelId ? " (默认)" : ""}
+                          {model.modelId === activeModelCatalog.userSelectedModelId ? " (已选)" : ""}
+                          {model.isDefault || model.modelId === activeModelCatalog.defaultModelId ? " (默认)" : ""}
+                          {formatRagOptionSuffix(model)}
                           {!model.available && model.unavailableReason ? ` - ${model.unavailableReason}` : ""}
                         </option>
                       ))}
                   </optgroup>
                 ))}
               </select>
-              {modelCatalogError ? <small>{modelCatalogError}</small> : null}
+              {selectedModel ? (
+                <small
+                  className={`course-chat-model-pair${
+                    selectedModel.ragReady === false ? " course-chat-model-pair-warning" : ""
+                  }`}
+                  aria-live="polite"
+                >
+                  向量模型：
+                  {selectedModel.pairedEmbeddingModelName ||
+                    selectedModel.pairedEmbeddingModelId ||
+                    "待模型目录同步"}
+                  {selectedModel.embeddingDimension
+                    ? ` · ${selectedModel.embeddingDimension} 维`
+                    : ""}
+                  <span>{formatRagStatusText(selectedModel)}</span>
+                </small>
+              ) : null}
+              {activeModelCatalogError ? <small>{activeModelCatalogError}</small> : null}
             </label>
             <div className="course-chat-composer-row">
               <textarea
@@ -403,13 +470,23 @@ function CourseChatSidebar({
                     void handleSend();
                   }
                 }}
-                placeholder="询问这个模块..."
-                disabled={isSending}
+                placeholder={
+                  hasUsableSelectedModel
+                    ? "询问这个模块..."
+                    : activeModelCatalogError
+                      ? "模型目录不可用，暂时无法发送"
+                      : !activeModelCatalog
+                        ? "正在准备可用模型..."
+                        : selectedModel
+                          ? "当前模型暂不可用"
+                          : "当前没有可用模型"
+                }
+                disabled={isSending || !hasUsableSelectedModel}
               />
               <button
                 type="submit"
                 className="course-chat-send"
-                disabled={!composerValue.trim() || isSending}
+                disabled={!composerValue.trim() || isSending || !hasUsableSelectedModel}
                 aria-label="发送消息"
               >
                 <LuArrowUp size={18} aria-hidden="true" />
