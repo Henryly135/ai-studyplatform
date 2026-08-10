@@ -86,8 +86,8 @@ class Settings:
     ).lower() == "true"
     object_storage_provider: str = get_env("OBJECT_STORAGE_PROVIDER", default="local")
     minio_endpoint: str = get_env("MINIO_ENDPOINT", default=DEFAULT_MINIO_ENDPOINT)
-    minio_access_key: str = get_env("MINIO_ACCESS_KEY", default="minioadmin")
-    minio_secret_key: str = get_env("MINIO_SECRET_KEY", default="minioadmin")
+    minio_access_key: str = get_env("MINIO_ACCESS_KEY", default="")
+    minio_secret_key: str = get_env("MINIO_SECRET_KEY", default="")
     minio_bucket: str = get_env("MINIO_BUCKET", default="learning-materials")
     ai_profile_bucket: str = get_env("AI_PROFILE_BUCKET", default="ai-profile-assets")
     minio_public_base_url: str = get_env("MINIO_PUBLIC_BASE_URL", default="")
