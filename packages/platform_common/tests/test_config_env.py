@@ -133,6 +133,20 @@ def test_production_security_config_rejects_placeholder_and_short_values(monkeyp
     assert "INTERNAL_API_TOKEN must be at least 32 characters" in message
 
 
+def test_production_security_config_rejects_common_minio_defaults(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+
+    with pytest.raises(ValueError, match="MINIO_ACCESS_KEY"):
+        validate_production_security_config(
+            service_name="test-service",
+            required_values={
+                "MINIO_ACCESS_KEY": "minioadmin",
+                "MINIO_SECRET_KEY": "minioadmin",
+            },
+            min_lengths={"MINIO_SECRET_KEY": 16},
+        )
+
+
 def test_production_security_config_rejects_unsafe_public_urls(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
 
