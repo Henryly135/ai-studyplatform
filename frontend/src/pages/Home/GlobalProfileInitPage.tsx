@@ -2,8 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { LuCircleCheckBig } from "react-icons/lu";
 
-import { initializeGlobalProfile } from "../../services/profile";
-import type { GlobalProfileInitRequest } from "../../types/profile";
+import {
+  getMyGlobalProfile,
+  initializeGlobalProfile,
+  resetGlobalProfile,
+  updateGlobalProfile,
+} from "../../services/profile";
+import type { GlobalProfileInitRequest, GlobalProfileRead } from "../../types/profile";
 import type { HomeOutletContext } from "./HomeSectionPage";
 
 const POST_PROFILE_INIT_REDIRECT_STORAGE_KEY = "postProfileInitRedirect";
@@ -53,12 +58,29 @@ const FIELD_CONFIG: ProfileFieldConfig[] = [
   },
 ];
 
-const INITIAL_FORM: ProfileFieldState = {
-  supportRole: { selectedOption: "", otherValue: "" },
-  helpStyle: { selectedOption: "", otherValue: "" },
-  learningFocus: { selectedOption: "", otherValue: "" },
-  responseTone: { selectedOption: "", otherValue: "" },
-};
+function createInitialForm(): ProfileFieldState {
+  return {
+    supportRole: { selectedOption: "", otherValue: "" },
+    helpStyle: { selectedOption: "", otherValue: "" },
+    learningFocus: { selectedOption: "", otherValue: "" },
+    responseTone: { selectedOption: "", otherValue: "" },
+  };
+}
+
+function profileToForm(profile: GlobalProfileRead): ProfileFieldState {
+  const preferences = profile.preferences ?? {};
+  return FIELD_CONFIG.reduce<ProfileFieldState>((next, field) => {
+    const value = preferences[field.key]?.trim() ?? "";
+    const matchedOption = field.options.find(
+      (option) => option !== OTHER_OPTION && option.toLowerCase() === value.toLowerCase()
+    );
+    next[field.key] = {
+      selectedOption: matchedOption ?? (value ? OTHER_OPTION : ""),
+      otherValue: matchedOption ? "" : value,
+    };
+    return next;
+  }, createInitialForm());
+}
 
 function getRedirectTarget() {
   return localStorage.getItem(POST_PROFILE_INIT_REDIRECT_STORAGE_KEY) || "/home";
@@ -75,10 +97,50 @@ function resolveFieldValue(field: ProfileFieldSelection) {
 function GlobalProfileInitPage() {
   const navigate = useNavigate();
   const { currentUser } = useOutletContext<HomeOutletContext>();
-  const [form, setForm] = useState<ProfileFieldState>(INITIAL_FORM);
+  const [form, setForm] = useState<ProfileFieldState>(createInitialForm);
+  const [existingProfile, setExistingProfile] = useState<GlobalProfileRead | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [overwriteConfirmOpen, setOverwriteConfirmOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [successBehavior, setSuccessBehavior] = useState<"redirect" | "stay">("redirect");
+
+  useEffect(() => {
+    if (currentUser.identity !== "Learner") {
+      return undefined;
+    }
+
+    let cancelled = false;
+    setProfileLoading(true);
+    setErrorMessage(null);
+
+    getMyGlobalProfile()
+      .then((profile) => {
+        if (cancelled) {
+          return;
+        }
+        const hasExistingProfile = !profile.isDefaultProfile;
+        setExistingProfile(hasExistingProfile ? profile : null);
+        setForm(hasExistingProfile ? profileToForm(profile) : createInitialForm());
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setErrorMessage(error instanceof Error ? error.message : "读取学习画像失败。");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setProfileLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser.identity]);
 
   useEffect(() => {
     if (!successMessage) {
@@ -86,15 +148,19 @@ function GlobalProfileInitPage() {
     }
 
     const timeoutId = window.setTimeout(() => {
-      const target = getRedirectTarget();
-      localStorage.removeItem(POST_PROFILE_INIT_REDIRECT_STORAGE_KEY);
-      navigate(target, { replace: true });
+      if (successBehavior === "redirect") {
+        const target = getRedirectTarget();
+        localStorage.removeItem(POST_PROFILE_INIT_REDIRECT_STORAGE_KEY);
+        navigate(target, { replace: true });
+      } else {
+        setSuccessMessage(null);
+      }
     }, SUCCESS_TOAST_DISPLAY_MS);
 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [navigate, successMessage]);
+  }, [navigate, successBehavior, successMessage]);
 
   const payloadPreview = useMemo<GlobalProfileInitRequest>(
     () => ({
@@ -140,6 +206,31 @@ function GlobalProfileInitPage() {
     navigate(target, { replace: true });
   };
 
+  const saveProfile = async () => {
+    setErrorMessage(null);
+    setOverwriteConfirmOpen(false);
+    try {
+      setSubmitting(true);
+      if (existingProfile) {
+        const updatedProfile = await updateGlobalProfile(payloadPreview);
+        setExistingProfile(updatedProfile);
+        setForm(profileToForm(updatedProfile));
+        setSuccessBehavior("stay");
+        setSuccessMessage("学习画像已更新。");
+        setSubmitting(false);
+      } else {
+        await initializeGlobalProfile(payloadPreview);
+        setSuccessBehavior("redirect");
+        setSuccessMessage("学习画像初始化成功。");
+      }
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "保存学习画像失败。"
+      );
+      setSubmitting(false);
+    }
+  };
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setErrorMessage(null);
@@ -149,15 +240,30 @@ function GlobalProfileInitPage() {
       return;
     }
 
+    if (existingProfile && !overwriteConfirmOpen) {
+      setOverwriteConfirmOpen(true);
+      return;
+    }
+
+    setOverwriteConfirmOpen(false);
+    await saveProfile();
+  };
+
+  const handleReset = async () => {
+    setErrorMessage(null);
     try {
-      setSubmitting(true);
-      await initializeGlobalProfile(payloadPreview);
-      setSuccessMessage("学习画像初始化成功。");
+      setResetting(true);
+      await resetGlobalProfile();
+      setExistingProfile(null);
+      setForm(createInitialForm());
+      setResetConfirmOpen(false);
+      setOverwriteConfirmOpen(false);
+      setSuccessBehavior("stay");
+      setSuccessMessage("重置成功，已恢复默认画像。");
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Failed to initialize your profile."
-      );
-      setSubmitting(false);
+      setErrorMessage(error instanceof Error ? error.message : "重置学习画像失败。");
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -178,11 +284,24 @@ function GlobalProfileInitPage() {
       <div className="home-profile-init-card">
         <div className="home-profile-init-hero">
           <span className="home-content-badge">学生画像</span>
-          <h1>初始化学习画像</h1>
+          <h1>{existingProfile ? "编辑学习画像" : "初始化学习画像"}</h1>
           <p>
-            一次性设置偏好，让智能助手在之后的学习活动中更稳定地支持你。
+            {existingProfile
+              ? "调整你的偏好后保存，智能助手会使用新的设置。"
+              : "一次性设置偏好，让智能助手在之后的学习活动中更稳定地支持你。"}
           </p>
         </div>
+
+        {profileLoading ? (
+          <p className="home-profile-init-loading" role="status">正在读取当前学习画像…</p>
+        ) : null}
+
+        {existingProfile ? (
+          <div className="home-profile-init-warning" role="note">
+            <strong>保存提示</strong>
+            <p>再次保存会覆盖当前学习画像，保存前会请你确认。</p>
+          </div>
+        ) : null}
 
         <form className="home-profile-init-form" onSubmit={handleSubmit}>
           {FIELD_CONFIG.map((field) => {
@@ -202,7 +321,7 @@ function GlobalProfileInitPage() {
                         type="button"
                         className={`home-profile-init-option ${selected ? "home-profile-init-option-active" : ""}`}
                         onClick={() => handleOptionSelect(field.key, option)}
-                        disabled={submitting}
+                        disabled={profileLoading || submitting || resetting}
                         aria-pressed={selected}
                       >
                         {option}
@@ -219,7 +338,7 @@ function GlobalProfileInitPage() {
                       value={fieldState.otherValue}
                       onChange={(event) => handleOtherValueChange(field.key, event)}
                       placeholder={field.otherPlaceholder}
-                      disabled={submitting}
+                      disabled={profileLoading || submitting || resetting}
                     />
                   </label>
                 ) : null}
@@ -233,16 +352,82 @@ function GlobalProfileInitPage() {
             </div>
           ) : null}
 
+          {overwriteConfirmOpen ? (
+            <div className="home-profile-init-overwrite-confirm" role="alertdialog" aria-label="确认覆盖学习画像">
+              <p>
+                <strong>确认覆盖当前学习画像？</strong>
+                <span>保存后会使用当前填写内容替换现有画像。</span>
+              </p>
+              <div className="home-profile-init-overwrite-actions">
+                <button
+                  type="button"
+                  className="home-profile-init-secondary"
+                  onClick={() => setOverwriteConfirmOpen(false)}
+                  disabled={submitting || resetting}
+                >
+                  返回修改
+                </button>
+                <button
+                  type="button"
+                  className="home-profile-init-primary"
+                  onClick={() => void saveProfile()}
+                  disabled={submitting || resetting}
+                >
+                  {submitting ? "正在保存…" : "确认覆盖并保存"}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="home-profile-init-reset">
+            {resetConfirmOpen ? (
+              <div className="home-profile-init-reset-confirm" role="alertdialog" aria-label="确认重置学习画像">
+                <p>
+                  {existingProfile
+                    ? "确认重置当前学习画像吗？"
+                    : "确认清空当前填写内容吗？"}
+                </p>
+                <div className="home-profile-init-reset-confirm-actions">
+                  <button
+                    type="button"
+                    className="home-profile-init-secondary"
+                    onClick={() => setResetConfirmOpen(false)}
+                    disabled={resetting || submitting}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="home-profile-init-danger"
+                    onClick={handleReset}
+                    disabled={resetting || submitting}
+                  >
+                    {resetting ? "正在重置…" : "确认重置"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="home-profile-init-reset-button"
+                onClick={() => setResetConfirmOpen(true)}
+                disabled={profileLoading || submitting || resetting}
+              >
+                重置画像
+              </button>
+            )}
+          </div>
+
           <div className="home-profile-init-actions">
             <button
               type="button"
               className="home-profile-init-secondary"
               onClick={handleSkip}
-              disabled={submitting}
+              disabled={profileLoading || submitting || resetting}
             >暂时跳过
             </button>
-            <button type="submit" className="home-profile-init-primary" disabled={submitting}>
-              {submitting ? "Saving profile..." : "Complete learning profile"}
+            <button type="submit" className="home-profile-init-primary" disabled={profileLoading || submitting || resetting || overwriteConfirmOpen}>
+              {submitting ? "正在保存…" : existingProfile ? "保存学习画像" : "完成学习画像"}
             </button>
           </div>
         </form>

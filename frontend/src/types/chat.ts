@@ -20,6 +20,11 @@ export type ChatSessionMessage = {
   message_type: string;
   parent_message_id: number | null;
   content_text: string;
+  request_id: string | null;
+  generation_status: "pending" | "completed" | "failed" | string;
+  retryable: boolean;
+  error_code: string | null;
+  error_message: string | null;
   created_at: string;
 };
 
@@ -31,8 +36,30 @@ export type ChatSessionDetail = {
 export type ChatResponse = {
   session_uuid: string;
   user_message_id: number;
-  assistant_message_id: number;
-  reply: string;
+  assistant_message_id: number | null;
+  reply: string | null;
+  sources: Array<Record<string, unknown>>;
+  model_id: string | null;
+  model_name: string | null;
+  provider: string | null;
+  request_id: string | null;
+  status: "pending" | "completed" | "failed" | string;
+  retryable: boolean;
+  error_code: string | null;
+  error_message: string | null;
+};
+
+export type ChatSendPayload = {
+  courseUuid: string | null;
+  moduleUuid: string;
+  message: string;
+  sessionUuid?: string | null;
+  modelId: string;
+  requestId?: string;
+};
+
+export type StableChatSendPayload = ChatSendPayload & {
+  requestId: string;
 };
 
 export type AiModelCatalogModel = {
@@ -323,4 +350,9 @@ export type CourseChatMessage = {
   id: number;
   role: "user" | "assistant";
   text: string;
+  requestId?: string | null;
+  generationStatus?: "pending" | "completed" | "failed" | string;
+  retryable?: boolean;
+  errorMessage?: string | null;
+  deliveryRequest?: StableChatSendPayload;
 };

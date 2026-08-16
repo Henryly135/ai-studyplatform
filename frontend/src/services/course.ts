@@ -145,6 +145,8 @@ type ApiMaterial = {
   materialType?: string | null;
   resource_url?: string | null;
   resourceUrl?: string | null;
+  download_url?: string | null;
+  downloadUrl?: string | null;
   sort_order?: number | null;
   sortOrder?: number | null;
   metadata_json?: Record<string, unknown> | null;
@@ -233,6 +235,7 @@ function normalizeMaterial(material: ApiMaterial, index: number): CourseMaterial
     title: material.title?.trim() || `Material ${index + 1}`,
     materialType: material.materialType?.trim() || material.material_type?.trim() || "",
     resourceUrl: material.resourceUrl?.trim() || material.resource_url?.trim() || "",
+    downloadUrl: material.downloadUrl?.trim() || material.download_url?.trim() || null,
     sortOrder: material.sortOrder ?? material.sort_order ?? index + 1,
     metadataJson: material.metadataJson ?? material.metadata_json ?? null,
   };
@@ -1140,6 +1143,19 @@ export async function getManagedCourses(options?: {
   }
 
   return normalizePaginatedCoursePayload(payload);
+}
+
+export async function getAllManagedCourses(options?: { search?: string }): Promise<CourseRecord[]> {
+  const firstPage = await getManagedCourses({ search: options?.search, page: 1, pageSize: 100 });
+  if (firstPage.totalPages <= 1) {
+    return firstPage.items;
+  }
+  const remainingPages = await Promise.all(
+    Array.from({ length: firstPage.totalPages - 1 }, (_, index) =>
+      getManagedCourses({ search: options?.search, page: index + 2, pageSize: 100 })
+    )
+  );
+  return [firstPage, ...remainingPages].flatMap((page) => page.items);
 }
 
 export async function getManagedCourseByUuid(courseUuid: string): Promise<CourseRecord | null> {

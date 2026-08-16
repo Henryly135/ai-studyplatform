@@ -50,3 +50,6 @@ coverage.json
 
 # Uploaded learning materials
 storage/learning-materials/
+
+# Local Demo guides and course packages belong in the project delivery folder.
+docs/demo/

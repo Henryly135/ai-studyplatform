@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi import HTTPException
 
 from app.api import material_access as material_access_module
+from app.services import material_access_session as material_session_module
 from app.services import storage_service as storage_module
-from app.services.storage_service import StorageService
+from app.services.storage_service import MaterialContentSource, StorageService, validate_material_proxy_access_url
 
 
 def _patch_local_material_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -22,6 +25,7 @@ def _patch_local_material_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     )
     monkeypatch.setattr(storage_module, "settings", fake_settings)
     monkeypatch.setattr(material_access_module, "settings", fake_settings)
+    monkeypatch.setattr(material_session_module, "settings", fake_settings)
 
 
 def test_local_material_access_url_is_signed_and_previewed_inline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -124,6 +128,206 @@ def test_local_material_access_url_rejects_path_traversal(monkeypatch: pytest.Mo
 
     with pytest.raises(ValueError):
         StorageService().get_material_access_url(metadata={"objectKey": "../secret.txt"}, fallback_url=None)
+
+
+def test_material_proxy_url_hides_storage_key_and_binds_the_authenticated_subject(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_local_material_settings(monkeypatch, tmp_path)
+
+    url = StorageService().get_material_proxy_access_url(
+        material_uuid="material-public-id",
+        user_id=7,
+        identity="Learner",
+    )
+
+    assert url.startswith("/materials/access/material-public-id?")
+    assert "course-one" not in url
+    assert "notes.txt" not in url
+    query = parse_qs(urlparse(url).query)
+    grant = validate_material_proxy_access_url(
+        material_uuid="material-public-id",
+        user_id=int(query["userId"][0]),
+        identity=query["identity"][0],
+        expires=int(query["expires"][0]),
+        signature=query["signature"][0],
+        download=False,
+    )
+
+    assert grant.user_id == 7
+    assert grant.identity == "Learner"
+
+    with pytest.raises(ValueError):
+        validate_material_proxy_access_url(
+            material_uuid="different-material",
+            user_id=7,
+            identity="Learner",
+            expires=int(query["expires"][0]),
+            signature=query["signature"][0],
+            download=False,
+        )
+
+
+def test_material_proxy_rechecks_catalog_authorization_before_file_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_local_material_settings(monkeypatch, tmp_path)
+    material_path = tmp_path / "course-one" / "module-one" / "notes.txt"
+    material_path.parent.mkdir(parents=True)
+    material_path.write_text("protected material", encoding="utf-8")
+
+    checked_subjects: list[dict] = []
+
+    class FakeCatalog:
+        def __init__(self, _session) -> None:
+            pass
+
+        def get_accessible_material_by_uuid(self, *, material_uuid: str, current_user: dict):
+            checked_subjects.append({"material_uuid": material_uuid, **current_user})
+            return SimpleNamespace(metadata_json={"objectKey": "course-one/module-one/notes.txt"})
+
+    source = SimpleNamespace(
+        provider="local",
+        absolute_path=material_path,
+        filename="notes.txt",
+        content_type="text/plain",
+        size_bytes=material_path.stat().st_size,
+    )
+    fake_storage = SimpleNamespace(resolve_managed_material_content=lambda **_kwargs: source)
+    monkeypatch.setattr(material_access_module, "CourseCatalogService", FakeCatalog)
+    monkeypatch.setattr(material_access_module, "StorageService", lambda: fake_storage)
+    monkeypatch.setattr(
+        material_access_module,
+        "IdentityUserClient",
+        lambda: SimpleNamespace(
+            lookup_users_by_ids=lambda **_kwargs: {
+                7: {"accountStatus": "active", "roleCodes": ["learner"]}
+            }
+        ),
+    )
+
+    expires = int(time.time()) + 300
+    signature = storage_module.sign_material_proxy_access_url(
+        material_uuid="material-public-id",
+        user_id=7,
+        identity="Learner",
+        expires_at=expires,
+        download=False,
+    )
+    material_access_session = material_session_module.create_material_access_session(
+        user_id=7,
+        identity="Learner",
+        expires_at=expires,
+    )
+    response = material_access_module.proxy_material_access(
+        material_uuid="material-public-id",
+        request=SimpleNamespace(headers={}),
+        user_id=7,
+        identity="Learner",
+        expires=expires,
+        signature=signature,
+        download=False,
+        material_access_session=material_access_session,
+        session=SimpleNamespace(),
+    )
+
+    assert checked_subjects == [{"material_uuid": "material-public-id", "id": 7, "identity": "Learner"}]
+    assert Path(response.path) == material_path.resolve()
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_material_proxy_rejects_a_session_after_the_identity_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_local_material_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        material_access_module,
+        "IdentityUserClient",
+        lambda: SimpleNamespace(
+            lookup_users_by_ids=lambda **_kwargs: {
+                7: {"accountStatus": "disabled", "roleCodes": ["learner"]}
+            }
+        ),
+    )
+    expires = int(time.time()) + 300
+    signature = storage_module.sign_material_proxy_access_url(
+        material_uuid="material-public-id",
+        user_id=7,
+        identity="Learner",
+        expires_at=expires,
+        download=False,
+    )
+    material_access_session = material_session_module.create_material_access_session(
+        user_id=7,
+        identity="Learner",
+        expires_at=expires,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        material_access_module.proxy_material_access(
+            material_uuid="material-public-id",
+            request=SimpleNamespace(headers={}),
+            user_id=7,
+            identity="Learner",
+            expires=expires,
+            signature=signature,
+            download=False,
+            material_access_session=material_access_session,
+            session=SimpleNamespace(),
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+def test_minio_proxy_streams_single_byte_range_without_exposing_a_signed_object_url() -> None:
+    class FakeUpstreamResponse:
+        def __init__(self) -> None:
+            self.closed = False
+            self.released = False
+
+        def stream(self, _chunk_size: int):
+            yield b"bcd"
+
+        def close(self) -> None:
+            self.closed = True
+
+        def release_conn(self) -> None:
+            self.released = True
+
+    upstream = FakeUpstreamResponse()
+    open_calls: list[dict] = []
+    fake_storage = SimpleNamespace(
+        open_managed_material_stream=lambda **kwargs: open_calls.append(kwargs) or upstream,
+    )
+    source = MaterialContentSource(
+        provider="minio",
+        bucket="learning-materials",
+        object_key="course-one/module-one/notes.txt",
+        filename="notes.txt",
+        content_type="text/plain",
+        size_bytes=10,
+    )
+
+    response = material_access_module._deliver_managed_material(
+        storage=fake_storage,
+        source=source,
+        download=False,
+        range_header="bytes=1-3",
+    )
+
+    async def collect_body() -> bytes:
+        return b"".join([chunk async for chunk in response.body_iterator])
+
+    assert response.status_code == 206
+    assert response.headers["content-range"] == "bytes 1-3/10"
+    assert response.headers["content-length"] == "3"
+    assert asyncio.run(collect_body()) == b"bcd"
+    assert open_calls == [{"source": source, "offset": 1, "length": 3}]
+    assert upstream.closed is True
+    assert upstream.released is True
 
 
 class _FakeMinioClient:

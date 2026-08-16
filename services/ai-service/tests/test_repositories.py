@@ -32,11 +32,13 @@ class FakeSession:
         self.executed = []
         self.flush_calls = 0
         self.rowcount = rowcount
+        self.scalar_statements = []
 
     def get(self, model, obj_id):
         return SimpleNamespace(model=model, obj_id=obj_id)
 
     def scalar(self, stmt):
+        self.scalar_statements.append(stmt)
         return self.scalar_value
 
     def scalars(self, stmt):
@@ -67,6 +69,18 @@ def test_chat_message_repository_create_and_list_visible() -> None:
     assert created in session.added
     assert visible[0].message_id == 1
     assert session.flush_calls == 1
+
+
+def test_chat_message_retry_lookup_locks_and_refreshes_the_row() -> None:
+    expected = SimpleNamespace(message_id=7)
+    session = FakeSession(scalar_value=expected)
+
+    result = AIChatMessagesRepository(session).get_by_id_for_update(7)
+
+    statement = session.scalar_statements[-1]
+    assert result is expected
+    assert statement._for_update_arg is not None
+    assert statement.get_execution_options()["populate_existing"] is True
 
 
 def test_chat_session_repository_create_update_record_and_list() -> None:

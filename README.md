@@ -62,6 +62,7 @@ copy .env.example .env
 DEFAULT_ADMIN_EMAIL=your.project.email@gmail.com
 DEFAULT_ADMIN_PASSWORD=your-system-admin-password
 DEFAULT_ADMIN_FULL_NAME='System Admin'
+LOCAL_DEMO_SINGLE_ACCOUNT_ENABLED=false
 
 AI_PROVIDER_KEY_ENCRYPTION_SECRET=replace-with-a-stable-random-secret-at-least-32-characters
 AI_EMBEDDING_DIMENSION=1024
@@ -214,7 +215,6 @@ Docker Compose 配置检查：
 docker compose --env-file .env -f infra/docker-compose.yml config --quiet
 ```
 
-对外演示前请按 [`docs/operations/Demo演示指南.md`](docs/operations/Demo演示指南.md) 完成三 Provider 模型切换和索引预检。
 旧环境升级或新增 Provider 凭据时，先按 [`docs/operations/多向量迁移与回填.md`](docs/operations/多向量迁移与回填.md) 完成回填门禁。
 
 ## 文档

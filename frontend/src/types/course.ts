@@ -4,6 +4,7 @@ export type CourseMaterial = {
   title: string;
   materialType: string;
   resourceUrl: string;
+  downloadUrl?: string | null;
   sortOrder: number;
   metadataJson: Record<string, unknown> | null;
 };

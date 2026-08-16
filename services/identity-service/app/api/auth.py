@@ -6,7 +6,18 @@ from sqlalchemy.orm import Session
 from app.core.deps import require_access_token, require_auth
 from app.core.public_url import PublicFrontendUrlNotConfiguredError, resolve_trusted_public_frontend_base_url
 from app.db.session import get_db_session
-from app.schemas.auth import ChangePasswordRequest, EducatorInviteRegisterRequest, ForgotPasswordRequest, LoginRequest, MeResponse, RegisterRequest, ResetPasswordRequest, TokenResponse, PermissionListResponse
+from app.schemas.auth import (
+    ChangePasswordRequest,
+    EducatorInviteRegisterRequest,
+    ForgotPasswordRequest,
+    LoginRequest,
+    MeResponse,
+    PermissionListResponse,
+    RegisterRequest,
+    ResetPasswordRequest,
+    SwitchRoleRequest,
+    TokenResponse,
+)
 from app.services.auth_service import AuthService
 from app.services.auth_service import AuthServiceError
 
@@ -73,6 +84,18 @@ def resend_verification(payload: dict, request: Request, session: Session = Depe
 @router.get("/me", response_model=MeResponse)
 def me(current_user: dict = Depends(require_auth)):
     return current_user
+
+
+@router.post("/switch-role", response_model=TokenResponse)
+def switch_role(
+    req: SwitchRoleRequest,
+    token: str = Depends(require_access_token),
+    session: Session = Depends(get_db_session),
+):
+    try:
+        return AuthService(session).switch_role(token=token, identity=req.identity)
+    except AuthServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.post("/forgot-password")

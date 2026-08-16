@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.schemas.profiles import GlobalProfileInitRequest, ModuleProfileInitBatchRequest
+from app.schemas.profiles import GlobalProfileInitRequest, GlobalProfileUpdateRequest, ModuleProfileInitBatchRequest
 from app.services.profiles.global_profile_service import GlobalProfileService
 from app.services.profiles.module_profile_service import ModuleProfileService
 
@@ -29,11 +29,18 @@ def test_global_profile_initialize_creates_new_profile(monkeypatch) -> None:
     # Tests global profile initialization creates asset storage and repository mapping.
     session = FakeSession()
     service = GlobalProfileService(session)
-    asset = SimpleNamespace(learner_id=7, version=1, object_key="global/7/skill_v1.md", created_at=None, updated_at=None)
+    asset = SimpleNamespace(
+        learner_id=7,
+        version=1,
+        object_key="global/7/skill_v1.md",
+        preferences={"supportRole": "coach", "helpStyle": "steps", "learningFocus": "concepts", "responseTone": "calm"},
+        created_at=None,
+        updated_at=None,
+    )
     service.assets = SimpleNamespace(
         get_active_by_learner=lambda learner_id: None,
         get_next_version=lambda learner_id: 1,
-        create=lambda **_: asset,
+        create=lambda **kwargs: asset,
     )
     service.asset_storage = SimpleNamespace(
         ensure_default_template_asset=lambda content: "template-key",
@@ -59,6 +66,70 @@ def test_global_profile_initialize_creates_new_profile(monkeypatch) -> None:
     assert result.isDefaultProfile is False
     assert session.commit_calls == 1
     assert session.refreshed == [asset]
+
+
+def test_global_profile_update_archives_existing_and_creates_next_version() -> None:
+    session = FakeSession()
+    service = GlobalProfileService(session)
+    existing = SimpleNamespace(learner_id=7, version=1, object_key="global/7/skill_v1.md")
+    replacement = SimpleNamespace(
+        learner_id=7,
+        version=2,
+        object_key="global/7/skill_v2.md",
+        preferences={"supportRole": "mentor", "helpStyle": "concise", "learningFocus": "projects", "responseTone": "direct"},
+        created_at=None,
+        updated_at=None,
+    )
+    archived = []
+    service.assets = SimpleNamespace(
+        get_active_by_learner=lambda learner_id: existing,
+        get_next_version=lambda learner_id: 2,
+        archive_active_for_learner=lambda learner_id: archived.append(learner_id),
+        create=lambda **kwargs: replacement,
+    )
+    saved = []
+    service.asset_storage = SimpleNamespace(
+        ensure_default_template_asset=lambda content: None,
+        get_profile_object_key=lambda learner_id, version: "global/7/skill_v2.md",
+        save_profile=lambda **kwargs: saved.append(kwargs),
+    )
+    service.generator = SimpleNamespace(
+        load_default_template=lambda: "# Default",
+        generate_profile=lambda preferences: "# Generated v2",
+    )
+
+    result = service.update_for_learner(
+        learner_id=7,
+        payload=GlobalProfileUpdateRequest(
+            supportRole="mentor",
+            helpStyle="concise",
+            learningFocus="projects",
+            responseTone="direct",
+        ),
+    )
+
+    assert result.version == 2
+    assert result.preferences["supportRole"] == "mentor"
+    assert archived == [7]
+    assert saved == [{"object_key": "global/7/skill_v2.md", "content": "# Generated v2"}]
+    assert session.commit_calls == 1
+    assert session.refreshed == [replacement]
+
+
+def test_global_profile_reset_archives_active_and_returns_default() -> None:
+    session = FakeSession()
+    service = GlobalProfileService(session)
+    archived = []
+    service.assets = SimpleNamespace(archive_active_for_learner=lambda learner_id: archived.append(learner_id))
+    service.generator = SimpleNamespace(load_default_template=lambda: "# Default")
+    service.asset_storage = SimpleNamespace(ensure_default_template_asset=lambda content: None)
+
+    result = service.reset_for_learner(learner_id=7)
+
+    assert result.isDefaultProfile is True
+    assert result.preferences == {}
+    assert archived == [7]
+    assert session.commit_calls == 1
 
 
 def test_global_profile_initialize_rejects_existing_valid_profile() -> None:
@@ -93,7 +164,7 @@ def test_global_profile_get_returns_default_or_existing_and_deletes_broken_asset
     service.assets = SimpleNamespace(get_active_by_learner=lambda learner_id: None)
     assert service.get_for_learner(learner_id=7).isDefaultProfile is True
 
-    asset = SimpleNamespace(profile_asset_id=1, learner_id=7, version=2, object_key="key", created_at=None, updated_at=None)
+    asset = SimpleNamespace(profile_asset_id=1, learner_id=7, version=2, object_key="key", preferences={}, created_at=None, updated_at=None)
     service.assets = SimpleNamespace(get_active_by_learner=lambda learner_id: asset)
     assert service.get_for_learner(learner_id=7).content == "# Existing"
 

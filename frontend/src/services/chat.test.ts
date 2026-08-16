@@ -9,6 +9,7 @@ import {
   getAdminAiTelemetrySummary,
   getAdminAiTelemetryTrends,
   searchAdminAiTelemetryFailures,
+  resolveChatSendPayload,
   sendChatMessage,
 } from "./chat";
 
@@ -497,6 +498,7 @@ describe("admin AI provider health normalization", () => {
       moduleUuid: "module-1",
       message: "Hi",
       modelId: "glm:glm-4.7",
+      requestId: "chat-request-001",
     });
 
     expect(result.reply).toBe("Hello");
@@ -510,8 +512,57 @@ describe("admin AI provider health normalization", () => {
           module_uuid: "module-1",
           message: "Hi",
           model_id: "glm:glm-4.7",
+          request_id: "chat-request-001",
         }),
       })
     );
+  });
+
+  it("reuses the same request id when an uncertain delivery is retried unchanged", () => {
+    const previous = {
+      courseUuid: "course-1",
+      moduleUuid: "module-1",
+      message: "Did this arrive?",
+      sessionUuid: "session-1",
+      modelId: "gemini:flash",
+      requestId: "request-original",
+    };
+
+    const resolved = resolveChatSendPayload(
+      {
+        courseUuid: "course-1",
+        moduleUuid: "module-1",
+        message: "Did this arrive?",
+        sessionUuid: "session-1",
+        modelId: "gemini:flash",
+      },
+      previous,
+      () => "request-new"
+    );
+
+    expect(resolved.requestId).toBe("request-original");
+  });
+
+  it("creates a new request id after the message changes", () => {
+    const resolved = resolveChatSendPayload(
+      {
+        courseUuid: "course-1",
+        moduleUuid: "module-1",
+        message: "Changed message",
+        sessionUuid: null,
+        modelId: "gemini:flash",
+      },
+      {
+        courseUuid: "course-1",
+        moduleUuid: "module-1",
+        message: "Original message",
+        sessionUuid: null,
+        modelId: "gemini:flash",
+        requestId: "request-original",
+      },
+      () => "request-new"
+    );
+
+    expect(resolved.requestId).toBe("request-new");
   });
 });

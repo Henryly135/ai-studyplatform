@@ -149,6 +149,7 @@ export function LearnerAiQuestionPanel({
           aria-label="询问课程内容"
           placeholder={isContinuingSession ? "继续当前对话..." : "询问课程内容..."}
           value={question}
+          maxLength={4000}
           onChange={(event) => onQuestionChange(event.target.value)}
           disabled={!selectedModuleUuid || isSending}
         />

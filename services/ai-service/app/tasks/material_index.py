@@ -110,7 +110,7 @@ def index_material_task(self, jobId: int) -> dict[str, object]:
             attempt_count=job.attempt_count,
         )
 
-        content_service = MaterialContentService()
+        content_service = MaterialContentService(session)
         chunking_service = TextChunkingService()
         embedding_service = EmbeddingService(session)
         indexing_service = KnowledgeIndexingService(session)

@@ -10,7 +10,7 @@ import {
   enrollInCourse,
   getCourseByUuid,
   getManagedCourseByUuid,
-  getManagedCourses,
+  getAllManagedCourses,
   getMyEnrolledCourses,
   getMyEnrolledCourseUuids,
 } from "../../services/course";
@@ -368,7 +368,7 @@ function CourseLayout() {
         const availableCourses =
           currentUser?.identity === "Learner"
             ? await getMyEnrolledCourses()
-            : (await getManagedCourses({ page: 1, pageSize: 100 })).items;
+            : await getAllManagedCourses();
 
         if (!cancelled) {
           setForumCourses(availableCourses);

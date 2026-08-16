@@ -40,7 +40,7 @@ from app.schemas.admin_telemetry import (
 )
 from app.schemas.demo import ChatRequest, ChatServiceRequest
 from app.schemas.index_jobs import MaterialIndexDeleteRequest, ReleaseIndexJobsRequest
-from app.schemas.profiles import GlobalProfileInitRequest, GlobalProfileRead, ModuleProfileRead
+from app.schemas.profiles import GlobalProfileInitRequest, GlobalProfileRead, GlobalProfileUpdateRequest, ModuleProfileRead
 from app.schemas.tasks import SmokeTaskRequest
 from app.services.admin_telemetry_service import AdminAITelemetryService
 from app.services.workflows.quiz_generation.schemas import (
@@ -1302,8 +1302,8 @@ def test_chat_list_and_detail_helpers_return_serialized_rows(monkeypatch) -> Non
     monkeypatch.setattr(
         "app.api.chat.AIChatSessionsRepository",
         lambda db: SimpleNamespace(
-            list_by_user=lambda user_id: [session_row],
-            list_by_user_and_module=lambda user_id, module_id: [session_row],
+            list_by_user=lambda user_id, **_: [session_row],
+            list_by_user_and_module=lambda user_id, module_id, **_: [session_row],
             get_by_id=lambda session_id: session_row,
         ),
     )
@@ -1352,7 +1352,7 @@ def test_chat_session_list_filters_inaccessible_course_context(monkeypatch) -> N
     monkeypatch.setattr("app.api.chat.encode_module_uuid", lambda value: f"module-{value}")
     monkeypatch.setattr(
         "app.api.chat.AIChatSessionsRepository",
-        lambda db: SimpleNamespace(list_by_user=lambda user_id: [allowed_session, forbidden_session]),
+        lambda db: SimpleNamespace(list_by_user=lambda user_id, **_: [allowed_session, forbidden_session]),
     )
 
     def _ensure_chat_context_access(**kwargs):
@@ -1611,6 +1611,8 @@ def test_profile_api_direct_calls(monkeypatch) -> None:
         lambda db: SimpleNamespace(
             initialize_for_learner=lambda learner_id, payload: global_profile,
             get_for_learner=lambda learner_id: global_profile,
+            update_for_learner=lambda learner_id, payload: global_profile,
+            reset_for_learner=lambda learner_id: global_profile,
         ),
     )
     monkeypatch.setattr(
@@ -1630,6 +1632,17 @@ def test_profile_api_direct_calls(monkeypatch) -> None:
 
     assert profiles_api.initialize_global_profile(payload, current_user={"id": 7}, db=object()).learnerId == 7
     assert profiles_api.get_my_global_profile(current_user={"id": 7}, db=object()).learnerId == 7
+    assert profiles_api.update_my_global_profile(
+        GlobalProfileUpdateRequest(
+            supportRole="mentor",
+            helpStyle="concise",
+            learningFocus="projects",
+            responseTone="direct",
+        ),
+        current_user={"id": 7},
+        db=object(),
+    ).learnerId == 7
+    assert profiles_api.reset_my_global_profile(current_user={"id": 7}, db=object()).learnerId == 7
     assert profiles_api.initialize_module_profile("course-uuid", "module-uuid", current_user={"id": 7}, db=object()).moduleUuid == "module-uuid"
     assert profiles_api.get_my_module_profile("course-uuid", "module-uuid", current_user={"id": 7}, db=object()).moduleUuid == "module-uuid"
 

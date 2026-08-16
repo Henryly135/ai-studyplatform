@@ -8,6 +8,7 @@ class ChatServiceRequest(BaseModel):
     module_id: int | None = Field(default=None, ge=1)
     message: str = Field(..., min_length=1, max_length=4000)
     model_id: str | None = Field(default=None, max_length=120)
+    request_id: str | None = Field(default=None, min_length=8, max_length=64)
 
 
 class ChatRequest(BaseModel):
@@ -16,17 +17,23 @@ class ChatRequest(BaseModel):
     module_uuid: str | None = None
     message: str = Field(..., min_length=1, max_length=4000)
     model_id: str | None = Field(default=None, max_length=120)
+    request_id: str | None = Field(default=None, min_length=8, max_length=64)
 
 
 class ChatResponse(BaseModel):
     session_uuid: str
     user_message_id: int
-    assistant_message_id: int
-    reply: str
+    assistant_message_id: int | None = None
+    reply: str | None = None
     sources: list[dict[str, object]] = Field(default_factory=list)
     model_id: str | None = None
     model_name: str | None = None
     provider: str | None = None
+    request_id: str | None = None
+    status: str = "completed"
+    retryable: bool = False
+    error_code: str | None = None
+    error_message: str | None = None
 
 
 class APIErrorDetail(BaseModel):
@@ -66,6 +73,11 @@ class ChatMessageItem(BaseModel):
     message_type: str
     parent_message_id: int | None = None
     content_text: str
+    request_id: str | None = None
+    generation_status: str = "completed"
+    retryable: bool = False
+    error_code: str | None = None
+    error_message: str | None = None
     created_at: str
 
 

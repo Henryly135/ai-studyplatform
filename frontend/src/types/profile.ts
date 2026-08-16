@@ -11,6 +11,7 @@ export interface GlobalProfileRead {
   version: number | null;
   objectKey: string | null;
   content: string;
+  preferences: Partial<GlobalProfileInitRequest>;
   isDefaultProfile: boolean;
   createdAt: string | null;
   updatedAt: string | null;

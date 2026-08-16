@@ -14,7 +14,7 @@ class AIChatSessionsRepository:
         """Used by chat services to load an existing chat session by primary key."""
         return self.session.get(AIChatSession, session_id)
 
-    def list_by_user(self, user_id: int) -> list[AIChatSession]:
+    def list_by_user(self, user_id: int, *, limit: int = 50, offset: int = 0) -> list[AIChatSession]:
         """Used by chat history APIs to load a user's sessions ordered by recent activity."""
         stmt = (
             select(AIChatSession)
@@ -24,10 +24,19 @@ class AIChatSessionsRepository:
                 desc(AIChatSession.updated_at),
                 desc(AIChatSession.created_at),
             )
+            .offset(max(0, offset))
+            .limit(max(1, min(limit, 100)))
         )
         return list(self.session.scalars(stmt))
 
-    def list_by_user_and_module(self, *, user_id: int, module_id: int) -> list[AIChatSession]:
+    def list_by_user_and_module(
+        self,
+        *,
+        user_id: int,
+        module_id: int,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AIChatSession]:
         """Used by chat history APIs to load a user's sessions scoped to a module."""
         stmt = (
             select(AIChatSession)
@@ -40,6 +49,8 @@ class AIChatSessionsRepository:
                 desc(AIChatSession.updated_at),
                 desc(AIChatSession.created_at),
             )
+            .offset(max(0, offset))
+            .limit(max(1, min(limit, 100)))
         )
         return list(self.session.scalars(stmt))
 

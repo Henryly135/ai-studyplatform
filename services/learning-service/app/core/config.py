@@ -94,6 +94,30 @@ class Settings:
     max_multipart_material_upload_bytes: int = int(
         get_env("MAX_MULTIPART_MATERIAL_UPLOAD_BYTES", default=str(2 * 1024 * 1024 * 1024))
     )
+    material_video_max_duration_seconds: int = int(
+        get_env("MATERIAL_VIDEO_MAX_DURATION_SECONDS", default="300")
+    )
+    material_video_max_bytes: int = int(
+        get_env("MATERIAL_VIDEO_MAX_BYTES", default=str(200 * 1024 * 1024))
+    )
+    material_audio_max_duration_seconds: int = int(
+        get_env("MATERIAL_AUDIO_MAX_DURATION_SECONDS", default="900")
+    )
+    material_audio_max_bytes: int = int(
+        get_env("MATERIAL_AUDIO_MAX_BYTES", default=str(50 * 1024 * 1024))
+    )
+    material_image_max_bytes: int = int(
+        get_env("MATERIAL_IMAGE_MAX_BYTES", default=str(10 * 1024 * 1024))
+    )
+    material_image_max_pixels: int = int(
+        get_env("MATERIAL_IMAGE_MAX_PIXELS", default="25000000")
+    )
+    material_office_max_bytes: int = int(
+        get_env("MATERIAL_OFFICE_MAX_BYTES", default=str(50 * 1024 * 1024))
+    )
+    material_archive_max_bytes: int = int(
+        get_env("MATERIAL_ARCHIVE_MAX_BYTES", default=str(50 * 1024 * 1024))
+    )
     material_scan_enabled: bool = get_env("MATERIAL_SCAN_ENABLED", default="true").lower() == "true"
     material_scan_command: str = get_env("MATERIAL_SCAN_COMMAND", default="")
     material_scan_timeout_seconds: int = int(get_env("MATERIAL_SCAN_TIMEOUT_SECONDS", default="30"))

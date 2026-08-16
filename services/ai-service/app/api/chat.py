@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.uuid_codec import (
@@ -31,6 +31,7 @@ from app.services.chat.ai_chat_service import (
     AIChatSessionError,
     AIModelInvocationError,
     persist_chat,
+    retry_chat,
 )
 from app.services.chat.learning_context_access_client import LearningContextAccessClient
 from app.services.provider_error_messages import (
@@ -67,16 +68,46 @@ def _serialize_session(session_row) -> ChatSessionSummary:
 
 
 def _serialize_message(message_row) -> ChatMessageItem:
+    generation_status = getattr(message_row, "generation_status", "completed")
+    generation_status = (
+        generation_status.value
+        if hasattr(generation_status, "value")
+        else str(generation_status)
+    )
+    role = message_row.role.value if hasattr(message_row.role, "value") else str(message_row.role)
     return ChatMessageItem(
         message_id=message_row.message_id,
         session_uuid=encode_session_uuid(message_row.session_id),
-        role=message_row.role.value if hasattr(message_row.role, "value") else str(message_row.role),
+        role=role,
         message_type=message_row.message_type.value
         if hasattr(message_row.message_type, "value")
         else str(message_row.message_type),
         parent_message_id=message_row.parent_message_id,
         content_text=message_row.content_text,
+        request_id=getattr(message_row, "client_request_id", None),
+        generation_status=generation_status,
+        retryable=role == "user" and generation_status == "failed",
+        error_code=getattr(message_row, "failure_code", None),
+        error_message=getattr(message_row, "failure_message", None),
         created_at=message_row.created_at.isoformat(),
+    )
+
+
+def _serialize_chat_response(chat_response) -> ChatResponse:
+    return ChatResponse(
+        session_uuid=encode_session_uuid(chat_response.session_id),
+        user_message_id=chat_response.user_message_id,
+        assistant_message_id=chat_response.assistant_message_id,
+        reply=chat_response.reply,
+        sources=chat_response.sources,
+        model_id=getattr(chat_response, "model_id", None),
+        model_name=getattr(chat_response, "model_name", None),
+        provider=getattr(chat_response, "provider", None),
+        request_id=getattr(chat_response, "request_id", None),
+        status=getattr(chat_response, "status", "completed"),
+        retryable=bool(getattr(chat_response, "retryable", False)),
+        error_code=getattr(chat_response, "error_code", None),
+        error_message=getattr(chat_response, "error_message", None),
     )
 
 
@@ -193,20 +224,10 @@ def chat(
             module_id=module_id,
             message=payload.message,
             model_id=payload.model_id,
+            request_id=payload.request_id,
         )
         chat_response = persist_chat(db, service_payload)
-        return ChatSuccessResponse(
-            data=ChatResponse(
-                session_uuid=encode_session_uuid(chat_response.session_id),
-                user_message_id=chat_response.user_message_id,
-                assistant_message_id=chat_response.assistant_message_id,
-                reply=chat_response.reply,
-                sources=chat_response.sources,
-                model_id=getattr(chat_response, "model_id", None),
-                model_name=getattr(chat_response, "model_name", None),
-                provider=getattr(chat_response, "provider", None),
-            )
-        )
+        return ChatSuccessResponse(data=_serialize_chat_response(chat_response))
     except HTTPException:
         db.rollback()
         raise
@@ -241,18 +262,58 @@ def chat(
         raise _http_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "AI_INTERNAL_ERROR", "AI provider call failed.") from exc
 
 
+@router.post("/chat/messages/{message_id}/retry", response_model=ChatSuccessResponse)
+def retry_chat_message(
+    message_id: int,
+    current_user: dict = Depends(require_identity_permission(AI_CHAT_USE)),
+    db: Session = Depends(get_db_session),
+) -> ChatSuccessResponse:
+    try:
+        message_row = AIChatMessagesRepository(db).get_by_id(message_id)
+        if message_row is None:
+            raise AIChatSessionError("Chat message is unavailable.")
+        session_row = AIChatSessionsRepository(db).get_by_id(message_row.session_id)
+        if session_row is None or session_row.user_id != int(current_user["id"]):
+            raise AIChatSessionError("Chat message is unavailable.")
+        _ensure_session_context_access(session_row, current_user)
+        result = retry_chat(
+            db,
+            user_id=int(current_user["id"]),
+            message_id=message_id,
+        )
+        return ChatSuccessResponse(data=_serialize_chat_response(result))
+    except HTTPException:
+        db.rollback()
+        raise
+    except AIChatSessionError as exc:
+        db.rollback()
+        raise _http_error(status.HTTP_400_BAD_REQUEST, "CHAT_SESSION_INVALID", CHAT_SESSION_INVALID) from exc
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Unexpected error while retrying authenticated chat request")
+        raise _http_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "AI_INTERNAL_ERROR", "AI provider call failed.") from exc
+
+
 @router.get("/chat/sessions", response_model=list[ChatSessionSummary])
 def list_chat_sessions(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(require_identity_permission(AI_CHAT_USE)),
     db: Session = Depends(get_db_session),
 ) -> list[ChatSessionSummary]:
-    sessions = AIChatSessionsRepository(db).list_by_user(int(current_user["id"]))
+    sessions = AIChatSessionsRepository(db).list_by_user(
+        int(current_user["id"]),
+        limit=limit,
+        offset=offset,
+    )
     return [_serialize_session(session_row) for session_row in _filter_accessible_sessions(sessions, current_user)]
 
 
 @router.get("/chat/modules/{module_uuid}/sessions", response_model=list[ChatSessionSummary])
 def list_module_chat_sessions(
     module_uuid: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     current_user: dict = Depends(require_identity_permission(AI_CHAT_USE)),
     db: Session = Depends(get_db_session),
 ) -> list[ChatSessionSummary]:
@@ -260,6 +321,8 @@ def list_module_chat_sessions(
     sessions = AIChatSessionsRepository(db).list_by_user_and_module(
         user_id=int(current_user["id"]),
         module_id=module_id,
+        limit=limit,
+        offset=offset,
     )
     return [_serialize_session(session_row) for session_row in _filter_accessible_sessions(sessions, current_user)]
 

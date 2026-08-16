@@ -82,6 +82,15 @@ def role_code_to_identity(role_code: str | None) -> str:
     return "Learner"
 
 
+def identity_to_role_code(identity: str | None) -> str | None:
+    if not isinstance(identity, str):
+        return None
+    normalized = identity.strip().lower()
+    if normalized in {"learner", "educator", "admin"}:
+        return normalized
+    return None
+
+
 class AuthServiceError(AppServiceError):
     pass
 
@@ -94,6 +103,18 @@ class AuthInvalidCredentialsError(AuthServiceError):
 class AuthPendingApprovalError(AuthServiceError):
     def __init__(self) -> None:
         super().__init__("Account pending approval", 409)
+
+
+class AuthRoleNotAssignedError(AuthServiceError):
+    def __init__(self) -> None:
+        super().__init__("Requested identity is not assigned to this account", 403)
+
+
+class AuthServiceUnavailableError(AuthServiceError):
+    """A dependency needed to complete authentication is temporarily unavailable."""
+
+    def __init__(self) -> None:
+        super().__init__("Login is temporarily unavailable. Please try again.", 503)
 
 
 class AuthService:
@@ -312,6 +333,29 @@ class AuthService:
         ip_address: str | None = None,
         user_agent: str | None = None,
     ) -> dict:
+        """Authenticate without leaking database or audit-initialization failures as HTTP 500s."""
+        try:
+            return self._login(
+                email=email,
+                password=password,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        except AuthServiceError:
+            raise
+        except Exception as exc:
+            self._rollback_failed_login()
+            logger.exception("Login dependency failed before authentication could complete")
+            raise AuthServiceUnavailableError() from exc
+
+    def _login(
+        self,
+        *,
+        email: str,
+        password: str,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict:
         user = self.users.get_by_email(email)
         if not user:
             self._record_login_attempt(
@@ -374,6 +418,7 @@ class AuthService:
         roles = self.roles.list_user_roles(user.user_id)
         role_code = roles[0].role_code if roles else None
         identity = role_code_to_identity(role_code)
+        available_identities = self._available_identities(roles)
         should_show_global_profile_init_prompt = self._should_show_global_profile_init_prompt(
             user_id=user.user_id,
             identity=identity,
@@ -391,6 +436,7 @@ class AuthService:
                 "email": user.email,
                 "userName": user.full_name,
                 "identity": identity,
+                "availableIdentities": available_identities,
                 "emailVerified": bool(user.email_verified),
                 "accountStatus": user.account_status.value,
             },
@@ -475,7 +521,7 @@ class AuthService:
         return {"detail": "Password reset successfully"}
 
     def get_current_user(self, token: str) -> dict:
-        user, identity, _ = self._resolve_current_user(token)
+        user, identity, roles = self._resolve_current_user(token)
 
         return {
             "id": user.user_id,
@@ -483,15 +529,17 @@ class AuthService:
             "email": user.email,
             "userName": user.full_name,
             "identity": identity,
+            "availableIdentities": self._available_identities(roles),
             "emailVerified": bool(user.email_verified),
             "accountStatus": user.account_status.value,
         }
 
     def get_current_user_permissions(self, token: str) -> dict:
-        user, _, roles = self._resolve_current_user(token)
+        user, identity, roles = self._resolve_current_user(token)
 
-        role_id = roles[0].role_id if roles else None
-        role_code = roles[0].role_code if roles else None
+        active_role = self._role_for_identity(roles, identity)
+        role_id = active_role.role_id if active_role else None
+        role_code = active_role.role_code if active_role else None
         permissions = self.permissions.list_by_role(role_id) if role_id else []
 
         # PENDING educators have restricted permissions: filter out modification permissions
@@ -516,6 +564,35 @@ class AuthService:
             ]
         }
 
+    def switch_role(self, *, token: str, identity: str) -> dict:
+        user, _, roles = self._resolve_current_user(token)
+        target_role_code = identity_to_role_code(identity)
+        target_role = next(
+            (role for role in roles if role.role_code == target_role_code),
+            None,
+        )
+        if target_role is None:
+            raise AuthRoleNotAssignedError()
+
+        target_identity = role_code_to_identity(target_role.role_code)
+        access_token = create_access_token(user.user_id, target_identity)
+        return {
+            "accessToken": access_token,
+            "tokenType": "bearer",
+            "expiresIn": settings.jwt_expire_seconds,
+            "shouldShowGlobalProfileInitPrompt": False,
+            "user": {
+                "id": user.user_id,
+                "userUuid": encode_user_uuid(user.user_id),
+                "email": user.email,
+                "userName": user.full_name,
+                "identity": target_identity,
+                "availableIdentities": self._available_identities(roles),
+                "emailVerified": bool(user.email_verified),
+                "accountStatus": user.account_status.value,
+            },
+        }
+
     def _resolve_current_user(self, token: str):
         try:
             payload = decode_access_token(token)
@@ -531,10 +608,30 @@ class AuthService:
             raise AuthInvalidCredentialsError()
 
         roles = self.roles.list_user_roles(user.user_id)
-        role_code = roles[0].role_code if roles else None
-        identity = role_code_to_identity(role_code)
+        token_identity = payload.get("identity")
+        if token_identity is None:
+            active_role = roles[0] if roles else None
+        else:
+            role_code = identity_to_role_code(token_identity)
+            active_role = next(
+                (role for role in roles if role.role_code == role_code),
+                None,
+            )
+            if active_role is None:
+                raise AuthInvalidCredentialsError()
+
+        identity = role_code_to_identity(active_role.role_code if active_role else None)
 
         return user, identity, roles
+
+    @staticmethod
+    def _available_identities(roles) -> list[str]:
+        return [role_code_to_identity(role.role_code) for role in roles]
+
+    @staticmethod
+    def _role_for_identity(roles, identity: str):
+        role_code = identity_to_role_code(identity)
+        return next((role for role in roles if role.role_code == role_code), None)
 
     def _record_login_attempt(
         self,
@@ -555,6 +652,13 @@ class AuthService:
             user_agent=user_agent,
         )
         self.session.commit()
+
+    def _rollback_failed_login(self) -> None:
+        """Make a later request usable even when audit or role initialization failed."""
+        try:
+            self.session.rollback()
+        except Exception:
+            logger.exception("Unable to roll back failed login transaction")
 
     def _account_status_failure_reason(self, account_status: AccountStatus) -> str:
         if account_status == AccountStatus.REJECTED:

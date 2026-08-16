@@ -4,7 +4,9 @@ import hashlib
 import hmac
 import mimetypes
 import posixpath
+import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -72,6 +74,97 @@ class MultipartUploadTarget:
     bucket: str | None
     object_key: str
     upload_id: str
+
+
+@dataclass(frozen=True)
+class MaterialAccessGrant:
+    """A short-lived, user-bound grant used by the material delivery proxy."""
+
+    material_uuid: str
+    user_id: int
+    identity: str
+    expires_at: int
+    download: bool
+
+
+@dataclass(frozen=True)
+class MaterialContentSource:
+    """A managed object resolved only after the caller has passed authorization."""
+
+    provider: str
+    bucket: str | None
+    object_key: str
+    filename: str
+    content_type: str | None
+    size_bytes: int
+    absolute_path: Path | None = None
+
+
+def _material_proxy_signature_payload(
+    *,
+    material_uuid: str,
+    user_id: int,
+    identity: str,
+    expires_at: int,
+    download: bool,
+) -> str:
+    normalized_material_uuid = material_uuid.strip()
+    normalized_identity = identity.strip()
+    if not normalized_material_uuid or not normalized_identity or ":" in normalized_identity:
+        raise ValueError("Material access grant is invalid")
+    if user_id <= 0:
+        raise ValueError("Material access grant is invalid")
+    return f"{normalized_material_uuid}:{user_id}:{normalized_identity}:{expires_at}:{int(download)}"
+
+
+def sign_material_proxy_access_url(
+    *,
+    material_uuid: str,
+    user_id: int,
+    identity: str,
+    expires_at: int,
+    download: bool,
+) -> str:
+    payload = _material_proxy_signature_payload(
+        material_uuid=material_uuid,
+        user_id=user_id,
+        identity=identity,
+        expires_at=expires_at,
+        download=download,
+    )
+    secret = get_public_id_secret(settings.public_id_secret)
+    return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def validate_material_proxy_access_url(
+    *,
+    material_uuid: str,
+    user_id: int,
+    identity: str,
+    expires: int,
+    signature: str,
+    download: bool,
+) -> MaterialAccessGrant:
+    if expires < int(time.time()):
+        raise ValueError("Material access URL has expired")
+
+    expected_signature = sign_material_proxy_access_url(
+        material_uuid=material_uuid,
+        user_id=user_id,
+        identity=identity,
+        expires_at=expires,
+        download=download,
+    )
+    if not hmac.compare_digest(signature or "", expected_signature):
+        raise ValueError("Material access URL signature is invalid")
+
+    return MaterialAccessGrant(
+        material_uuid=material_uuid.strip(),
+        user_id=user_id,
+        identity=identity.strip(),
+        expires_at=expires,
+        download=download,
+    )
 
 
 class StorageService:
@@ -164,13 +257,18 @@ class StorageService:
             upload_id=upload_id,
             parts=parts,
         )
+        # Read the object metadata after completion instead of trusting the
+        # client-declared size.  This keeps media limits and AI indexing costs
+        # tied to bytes actually stored in MinIO.
+        object_stat = client.stat_object(normalized_bucket, object_key)
+        actual_size_bytes = int(getattr(object_stat, "size", size_bytes or 0) or 0)
         return StoredFile(
             provider="minio",
             bucket=normalized_bucket,
             object_key=object_key,
             public_url=self._build_minio_public_url(object_key),
             content_type=content_type,
-            size_bytes=size_bytes or 0,
+            size_bytes=actual_size_bytes,
             original_filename=Path(object_key).name,
             absolute_path=None,
         )
@@ -204,6 +302,147 @@ class StorageService:
         if not object_key or not bucket:
             return fallback_url or ""
 
+        return self._build_minio_material_url(bucket=bucket, object_key=object_key)
+
+    def get_material_download_url(self, *, metadata: dict | None, fallback_url: str | None) -> str:
+        metadata = metadata or {}
+        if self.provider != "minio":
+            object_key = self._resolve_local_material_object_key(metadata=metadata, fallback_url=fallback_url)
+            if not object_key:
+                return ""
+            base_url = self._build_local_material_access_url(object_key)
+            separator = "&" if "?" in base_url else "?"
+            return f"{base_url}{separator}download=1"
+
+        object_key = metadata.get("objectKey") or metadata.get("storedRelativePath")
+        bucket = metadata.get("bucket") or settings.minio_bucket
+        if not object_key or not bucket:
+            return fallback_url or ""
+        filename = str(metadata.get("originalFilename") or Path(str(object_key)).name)
+        client = self._build_minio_client()
+        expires = timedelta(seconds=settings.minio_signed_url_expires_seconds)
+        presigned_url = client.presigned_get_object(
+            bucket,
+            str(object_key),
+            expires=expires,
+            response_headers={
+                "response-content-disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+            },
+        )
+        return self._rewrite_minio_presigned_url(presigned_url=presigned_url, bucket=str(bucket))
+
+    def has_managed_material(self, *, metadata: dict | None) -> bool:
+        """Return whether a material has an object owned by this platform.
+
+        External links deliberately stay external; only uploaded/local/MinIO
+        objects are eligible for the authenticated delivery proxy.
+        """
+
+        metadata = metadata or {}
+        object_key = metadata.get("objectKey") or metadata.get("storedRelativePath")
+        return isinstance(object_key, str) and bool(object_key.strip())
+
+    def get_material_proxy_access_url(
+        self,
+        *,
+        material_uuid: str,
+        user_id: int,
+        identity: str,
+        download: bool = False,
+    ) -> str:
+        """Build a short-lived opaque URL for the learning-service proxy.
+
+        The URL contains no object path or storage credentials.  Its grant is
+        re-authorized against the database when the content is requested.
+        """
+
+        expires_at = int(time.time()) + max(1, settings.material_access_url_expires_seconds)
+        signature = sign_material_proxy_access_url(
+            material_uuid=material_uuid,
+            user_id=user_id,
+            identity=identity,
+            expires_at=expires_at,
+            download=download,
+        )
+        query = {
+            "userId": str(user_id),
+            "identity": identity.strip(),
+            "expires": str(expires_at),
+            "signature": signature,
+        }
+        if download:
+            query["download"] = "1"
+
+        base = settings.learning_material_public_base_url.rstrip("/")
+        return f"{base}/access/{quote(material_uuid.strip(), safe='')}?{urlencode(query)}"
+
+    def resolve_managed_material_content(self, *, metadata: dict | None) -> MaterialContentSource:
+        """Resolve a managed object for proxy delivery without exposing its URL."""
+
+        metadata = metadata or {}
+        raw_object_key = metadata.get("objectKey") or metadata.get("storedRelativePath")
+        if not isinstance(raw_object_key, str) or not raw_object_key.strip():
+            raise ValueError("Material does not have a managed storage object")
+
+        object_key = normalize_local_material_object_key(raw_object_key)
+        provider = str(metadata.get("storageProvider") or self.provider).strip().lower()
+        filename = str(metadata.get("originalFilename") or Path(object_key).name).strip() or Path(object_key).name
+        configured_content_type = metadata.get("contentType")
+        content_type = configured_content_type if isinstance(configured_content_type, str) else None
+
+        if provider == "local":
+            material_root = settings.material_root_path.resolve()
+            material_path = (material_root / object_key).resolve()
+            try:
+                material_path.relative_to(material_root)
+            except ValueError as exc:
+                raise ValueError("Material path is invalid") from exc
+            if not material_path.is_file():
+                raise FileNotFoundError("Material not found")
+            return MaterialContentSource(
+                provider="local",
+                bucket=None,
+                object_key=object_key,
+                filename=filename,
+                content_type=content_type or mimetypes.guess_type(filename)[0],
+                size_bytes=material_path.stat().st_size,
+                absolute_path=material_path,
+            )
+
+        if provider == "minio":
+            bucket = str(metadata.get("bucket") or settings.minio_bucket).strip()
+            if not bucket:
+                raise ValueError("Material storage bucket is invalid")
+            object_stat = self._build_minio_client().stat_object(bucket, object_key)
+            stat_content_type = getattr(object_stat, "content_type", None)
+            return MaterialContentSource(
+                provider="minio",
+                bucket=bucket,
+                object_key=object_key,
+                filename=filename,
+                content_type=content_type or stat_content_type or mimetypes.guess_type(filename)[0],
+                size_bytes=int(getattr(object_stat, "size", 0) or 0),
+                absolute_path=None,
+            )
+
+        raise ValueError("Unsupported material storage provider")
+
+    def open_managed_material_stream(
+        self,
+        *,
+        source: MaterialContentSource,
+        offset: int = 0,
+        length: int | None = None,
+    ):
+        if source.provider != "minio" or not source.bucket:
+            raise ValueError("Material source is not streamable from MinIO")
+
+        options: dict[str, int] = {"offset": max(0, offset)}
+        if length is not None:
+            options["length"] = max(0, length)
+        return self._build_minio_client().get_object(source.bucket, source.object_key, **options)
+
+    def _build_minio_material_url(self, *, bucket: str, object_key: str) -> str:
         client = self._build_minio_client()
         expires = timedelta(seconds=settings.minio_signed_url_expires_seconds)
         presigned_url = client.presigned_get_object(bucket, object_key, expires=expires)
@@ -289,6 +528,34 @@ class StorageService:
                 response.release_conn()
 
         raise ValueError("Unsupported storage provider for material security scan")
+
+    @contextmanager
+    def material_file_for_inspection(self, *, stored_file: StoredFile):
+        """Yield a local path for media metadata validation without exposing storage credentials."""
+        normalized_provider = stored_file.provider.strip().lower()
+        if normalized_provider == "local":
+            target_path = stored_file.absolute_path or (settings.material_root_path / stored_file.object_key).resolve()
+            yield target_path
+            return
+        if normalized_provider != "minio":
+            raise ValueError("Unsupported storage provider for material inspection")
+
+        temporary_file = tempfile.NamedTemporaryFile(prefix="material-inspection-", delete=False)
+        temporary_path = Path(temporary_file.name)
+        temporary_file.close()
+        response = None
+        try:
+            client = self._build_minio_client()
+            response = client.get_object(stored_file.bucket or settings.minio_bucket, stored_file.object_key)
+            with temporary_path.open("wb") as output_stream:
+                for chunk in response.stream(1024 * 1024):
+                    output_stream.write(chunk)
+            yield temporary_path
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
+            temporary_path.unlink(missing_ok=True)
 
     def _store_upload(self, *, upload: UploadFile, object_key: str) -> StoredFile:
         if self.provider == "minio":
@@ -470,10 +737,6 @@ class StorageService:
             counter += 1
 
     def _get_upload_size(self, upload: UploadFile) -> int:
-        size = getattr(upload, "size", None)
-        if isinstance(size, int) and size >= 0:
-            return size
-
         try:
             current_position = upload.file.tell()
             upload.file.seek(0, 2)
@@ -481,6 +744,9 @@ class StorageService:
             upload.file.seek(current_position)
             return size_bytes
         except (AttributeError, OSError) as exc:
+            declared_size = getattr(upload, "size", None)
+            if isinstance(declared_size, int) and declared_size >= 0:
+                return declared_size
             raise ValueError("Unable to determine upload size") from exc
 
     def _delete_file_if_exists(self, target_path: Path) -> None:

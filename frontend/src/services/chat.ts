@@ -13,6 +13,8 @@ import type {
   AiRuntimeHealth,
   ChatSessionDetail,
   ChatSessionSummary,
+  ChatSendPayload,
+  StableChatSendPayload,
   ChatSuccessResponse,
 } from "../types/chat";
 import {
@@ -38,6 +40,13 @@ const SUPPORTED_AI_PROVIDERS = new Set(["gemini", "glm", "openrouter"]);
 
 function getAccessToken() {
   return getStoredAccessToken();
+}
+
+export function createChatRequestId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`;
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -852,13 +861,24 @@ export async function retryAdminAiIndexJob(jobId: number): Promise<AdminAiIndexJ
   return parseResponse<AdminAiIndexJobRetryResponse>(response);
 }
 
-export async function sendChatMessage(payload: {
-  courseUuid: string | null;
-  moduleUuid: string;
-  message: string;
-  sessionUuid?: string | null;
-  modelId: string;
-}) {
+export function resolveChatSendPayload(
+  payload: ChatSendPayload,
+  previousUncertainRequest: StableChatSendPayload | null = null,
+  requestIdFactory: () => string = createChatRequestId
+): StableChatSendPayload {
+  const canReuse = previousUncertainRequest !== null
+    && previousUncertainRequest.courseUuid === payload.courseUuid
+    && previousUncertainRequest.moduleUuid === payload.moduleUuid
+    && previousUncertainRequest.message === payload.message
+    && (previousUncertainRequest.sessionUuid ?? null) === (payload.sessionUuid ?? null)
+    && previousUncertainRequest.modelId === payload.modelId;
+  return {
+    ...payload,
+    requestId: canReuse ? previousUncertainRequest.requestId : payload.requestId ?? requestIdFactory(),
+  };
+}
+
+export async function sendChatMessage(payload: ChatSendPayload) {
   getAccessToken();
   const requestBody: Record<string, unknown> = {
     session_uuid: payload.sessionUuid ?? null,
@@ -866,6 +886,7 @@ export async function sendChatMessage(payload: {
     module_uuid: payload.moduleUuid,
     message: payload.message,
     model_id: payload.modelId,
+    request_id: payload.requestId ?? createChatRequestId(),
   };
 
   const response = await fetch(CHAT_API_URL, {
@@ -874,6 +895,18 @@ export async function sendChatMessage(payload: {
       "Content-Type": "application/json",
     }),
     body: JSON.stringify(requestBody),
+  });
+
+  const data = await parseResponse<ChatSuccessResponse>(response);
+  return data.data;
+}
+
+export async function retryChatMessage(messageId: number) {
+  const response = await fetch(`${CHAT_API_URL}/messages/${messageId}/retry`, {
+    method: "POST",
+    headers: buildAuthHeaders({
+      "Content-Type": "application/json",
+    }),
   });
 
   const data = await parseResponse<ChatSuccessResponse>(response);

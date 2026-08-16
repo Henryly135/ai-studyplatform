@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -25,15 +26,29 @@ from app.repositories.module_material_repository import ModuleMaterialRepository
 from app.repositories.module_material_upload_session_repository import ModuleMaterialUploadSessionRepository
 from app.repositories.module_repository import ModuleRepository
 from app.services.ai_index_job_client import AIIndexJobClient
+from app.services.material_media_constraints import MaterialMediaConstraintService, MaterialMediaValidation
 from app.services.storage_service import StorageService, StoredFile
+from app.tasks.material_index_registration import register_material_index_job
 from app.services.upload_scan_service import UploadScanFailure, UploadScanResult, UploadScanService
 from platform_common.errors import http_error, invalid_identity_response_error, invalid_request_error
+
+logger = logging.getLogger(__name__)
 
 _MATERIAL_TYPE_BY_CONTENT_TYPE = {
     "text/plain": MaterialType.TEXT,
     "text/markdown": MaterialType.TEXT,
     "text/csv": MaterialType.TEXT,
+    "text/tab-separated-values": MaterialType.TEXT,
+    "text/yaml": MaterialType.TEXT,
+    "application/yaml": MaterialType.TEXT,
+    "application/x-yaml": MaterialType.TEXT,
     "application/json": MaterialType.TEXT,
+    "text/html": MaterialType.TEXT,
+    "text/xml": MaterialType.TEXT,
+    "application/xml": MaterialType.TEXT,
+    "application/xhtml+xml": MaterialType.TEXT,
+    "text/rtf": MaterialType.TEXT,
+    "application/rtf": MaterialType.TEXT,
     "application/pdf": MaterialType.PDF,
     "application/msword": MaterialType.FILE,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": MaterialType.FILE,
@@ -43,9 +58,63 @@ _MATERIAL_TYPE_BY_CONTENT_TYPE = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": MaterialType.FILE,
     "application/zip": MaterialType.FILE,
     "application/x-zip-compressed": MaterialType.FILE,
+    "application/vnd.oasis.opendocument.text": MaterialType.FILE,
+    "application/vnd.oasis.opendocument.presentation": MaterialType.FILE,
+    "application/vnd.oasis.opendocument.spreadsheet": MaterialType.FILE,
 }
 _VIDEO_PREFIX = "video/"
 _ALLOWED_MATERIAL_TYPE_PREFIXES = ("video/", "audio/", "image/")
+_ALLOWED_EXTENSION_WITHOUT_MIME = {
+    ".txt",
+    ".md",
+    ".markdown",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".html",
+    ".htm",
+    ".xhtml",
+    ".xml",
+    ".rtf",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".ppt",
+    ".pptx",
+    ".xls",
+    ".xlsx",
+    ".odt",
+    ".odp",
+    ".ods",
+    ".zip",
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".webm",
+    ".m4v",
+    ".mpeg",
+    ".mpg",
+    ".mp3",
+    ".wav",
+    ".aac",
+    ".m4a",
+    ".ogg",
+    ".flac",
+    ".opus",
+    ".wma",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".svg",
+}
 
 
 class ModuleMaterialService:
@@ -59,6 +128,7 @@ class ModuleMaterialService:
         self.ai_index_jobs = AIIndexJobClient()
         self.storage = StorageService()
         self.upload_scanner = UploadScanService()
+        self.media_constraints = MaterialMediaConstraintService()
 
     def delete_material(
         self,
@@ -108,6 +178,7 @@ class ModuleMaterialService:
 
         normalized_title = self._normalize_title(title=title, upload=file)
         self._validate_upload_file(file)
+        media_validation = self._validate_upload_media(file)
         scan_result = self._scan_upload_file(file)
         parsed_material_type = self._parse_material_type(material_type=material_type, upload=file)
         target_sort_order = self._resolve_target_sort_order(module.module_id, requested_sort_order=sort_order)
@@ -131,6 +202,7 @@ class ModuleMaterialService:
             "contentType": stored_file.content_type,
             "sizeBytes": stored_file.size_bytes,
             "securityScan": scan_result.as_metadata(),
+            "mediaValidation": media_validation.as_metadata(),
         }
         try:
             material = self.materials.create(
@@ -141,12 +213,6 @@ class ModuleMaterialService:
                 sort_order=target_sort_order,
                 metadata_json=metadata,
             )
-            self._register_ai_index_job(
-                course=course,
-                module=module,
-                material=material,
-                stored_file=stored_file,
-            )
             self.courses.touch(course)
             self.session.commit()
             self.session.refresh(material)
@@ -155,6 +221,7 @@ class ModuleMaterialService:
             self._delete_stored_file_quietly(stored_file)
             raise
 
+        self._register_or_queue_ai_index_job(course=course, module=module, material=material, stored_file=stored_file)
         return material
 
     def initiate_multipart_upload(
@@ -281,19 +348,22 @@ class ModuleMaterialService:
                 size_bytes=upload_session.size_bytes,
             )
             scan_result = self._scan_stored_file(stored_file)
+            media_validation = self._validate_stored_file_media(
+                stored_file=stored_file,
+                filename=upload_session.original_filename,
+            )
             material = self.materials.create(
                 module_id=module.module_id,
                 title=upload_session.title,
                 material_type=upload_session.material_type,
                 resource_url=stored_file.public_url,
                 sort_order=upload_session.sort_order,
-                metadata_json=self._build_material_metadata_from_session(upload_session, stored_file, scan_result),
-            )
-            self._register_ai_index_job(
-                course=course,
-                module=module,
-                material=material,
-                stored_file=stored_file,
+                metadata_json=self._build_material_metadata_from_session(
+                    upload_session,
+                    stored_file,
+                    scan_result,
+                    media_validation,
+                ),
             )
             self.upload_sessions.update(
                 upload_session,
@@ -308,7 +378,6 @@ class ModuleMaterialService:
             self.courses.touch(course)
             self.session.commit()
             self.session.refresh(material)
-            return material
         except Exception as exc:
             self.session.rollback()
             self._delete_stored_file_quietly(stored_file)
@@ -324,6 +393,9 @@ class ModuleMaterialService:
                 )
                 self.session.commit()
             raise
+
+        self._register_or_queue_ai_index_job(course=course, module=module, material=material, stored_file=stored_file)
+        return material
 
     def abort_multipart_upload(
         self,
@@ -427,12 +499,31 @@ class ModuleMaterialService:
                 f"File is too large for standard upload. Maximum is {settings.max_material_upload_bytes} bytes; use multipart upload for larger files."
             )
 
+    def _validate_upload_media(self, upload: UploadFile) -> MaterialMediaValidation:
+        try:
+            return self.media_constraints.validate_upload(
+                file_object=upload.file,
+                filename=upload.filename or "material",
+                content_type=upload.content_type,
+                size_bytes=self._get_upload_size(upload),
+            )
+        except ValueError as exc:
+            raise invalid_request_error(str(exc)) from exc
+
     def _validate_multipart_upload_request(self, *, filename: str, content_type: str | None, size_bytes: int) -> None:
         self._validate_material_content_type(filename=filename, content_type=content_type)
         if size_bytes > settings.max_multipart_material_upload_bytes:
             raise invalid_request_error(
                 f"File is too large. Maximum multipart material upload size is {settings.max_multipart_material_upload_bytes} bytes."
             )
+        try:
+            self.media_constraints.validate_declared_size(
+                filename=filename,
+                content_type=content_type,
+                size_bytes=size_bytes,
+            )
+        except ValueError as exc:
+            raise invalid_request_error(str(exc)) from exc
 
     def _validate_material_content_type(self, *, filename: str, content_type: str | None) -> None:
         normalized_content_type = (content_type or "").strip().lower()
@@ -440,7 +531,11 @@ class ModuleMaterialService:
             return
         if normalized_content_type.startswith(_ALLOWED_MATERIAL_TYPE_PREFIXES):
             return
-        if not normalized_content_type and Path(filename or "").suffix.lower() in {".txt", ".md", ".csv", ".pdf"}:
+        if normalized_content_type in {"application/octet-stream", "binary/octet-stream"} and Path(
+            filename or ""
+        ).suffix.lower() in _ALLOWED_EXTENSION_WITHOUT_MIME:
+            return
+        if not normalized_content_type and Path(filename or "").suffix.lower() in _ALLOWED_EXTENSION_WITHOUT_MIME:
             return
         raise invalid_request_error("Unsupported material file type")
 
@@ -647,6 +742,7 @@ class ModuleMaterialService:
         upload_session: ModuleMaterialUploadSession,
         stored_file: StoredFile,
         scan_result: UploadScanResult,
+        media_validation: MaterialMediaValidation,
     ) -> dict:
         return {
             "storageProvider": stored_file.provider,
@@ -659,7 +755,25 @@ class ModuleMaterialService:
             "uploadSessionUuid": upload_session.session_uuid,
             "multipartUploadId": upload_session.multipart_upload_id,
             "securityScan": scan_result.as_metadata(),
+            "mediaValidation": media_validation.as_metadata(),
         }
+
+    def _validate_stored_file_media(
+        self,
+        *,
+        stored_file: StoredFile,
+        filename: str,
+    ) -> MaterialMediaValidation:
+        try:
+            with self.storage.material_file_for_inspection(stored_file=stored_file) as path:
+                return self.media_constraints.validate_path(
+                    path=path,
+                    filename=filename,
+                    content_type=stored_file.content_type,
+                    size_bytes=stored_file.size_bytes,
+                )
+        except ValueError as exc:
+            raise invalid_request_error(str(exc)) from exc
 
     def _read_material_storage_provider(self, *, metadata: dict[str, object]) -> str | None:
         raw_provider = metadata.get("storageProvider")
@@ -675,7 +789,10 @@ class ModuleMaterialService:
         bucket = self._read_material_bucket(metadata=metadata)
         object_key = self._read_material_object_key(metadata=metadata)
 
-        self.ai_index_jobs.delete_material_index(material_id=material.material_id)
+        try:
+            self.ai_index_jobs.delete_material_index(material_id=material.material_id)
+        except Exception:
+            logger.exception("AI material index cleanup failed; continuing with material deletion")
         self.storage.delete_module_material(
             storage_provider=storage_provider,
             bucket=bucket,
@@ -734,3 +851,40 @@ class ModuleMaterialService:
             storage_bucket=stored_file.bucket,
             object_key=stored_file.object_key,
         )
+
+    def _register_or_queue_ai_index_job(
+        self,
+        *,
+        course: Course,
+        module: Module,
+        material: ModuleMaterial,
+        stored_file: StoredFile,
+    ) -> None:
+        payload = {
+            "course_id": course.course_id,
+            "module_id": module.module_id,
+            "material_id": material.material_id,
+            "educator_id": course.educator_id,
+            "title": material.title,
+            "material_type": material.material_type.value,
+            "resource_url": material.resource_url,
+            "storage_path": stored_file.object_key,
+            "absolute_path": str(stored_file.absolute_path) if stored_file.absolute_path is not None else None,
+            "content_type": stored_file.content_type,
+            "size_bytes": stored_file.size_bytes,
+            "module_status": module.status.value,
+            "storage_provider": stored_file.provider,
+            "storage_bucket": stored_file.bucket,
+            "object_key": stored_file.object_key,
+        }
+        try:
+            self.ai_index_jobs.register_material_job(**payload)
+        except Exception:
+            logger.exception("AI material index registration failed after material commit; queueing retry")
+            try:
+                register_material_index_job.apply_async(
+                    kwargs={"payload": payload},
+                    queue=settings.celery_task_default_queue,
+                )
+            except Exception:
+                logger.exception("Unable to queue AI material index registration retry")
