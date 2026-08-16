@@ -199,7 +199,7 @@ class ForumService:
             courseUuid=encode_course_uuid(comment.course_id),
             authorUserId=comment.author_user_id,
             authorUserUuid=encode_user_uuid(comment.author_user_id),
-            authorEmail=comment.author_email,
+            authorEmail=self._redact_email(comment.author_email),
             authorName=comment.author_name,
             rootCommentId=comment.root_comment_id,
             rootCommentUuid=encode_comment_uuid(comment.root_comment_id) if comment.root_comment_id is not None else None,
@@ -230,7 +230,7 @@ class ForumService:
             courseUuid=encode_course_uuid(post.course_id),
             authorUserId=post.author_user_id,
             authorUserUuid=encode_user_uuid(post.author_user_id),
-            authorEmail=post.author_email,
+            authorEmail=self._redact_email(post.author_email),
             authorName=post.author_name,
             title=post.title,
             content=post.content,
@@ -249,6 +249,15 @@ class ForumService:
         if not isinstance(user_id, int):
             raise invalid_identity_response_error()
         return user_id
+
+    def _redact_email(self, value: str | None) -> str:
+        normalized = (value or "").strip()
+        if "@" not in normalized:
+            return ""
+        local_part, domain = normalized.split("@", 1)
+        if not local_part:
+            return f"***@{domain}"
+        return f"{local_part[0]}***@{domain}"
 
     def _ensure_forum_access_by_course_id(self, *, course_id: int, current_user: dict) -> None:
         self.course_access.assert_forum_access(

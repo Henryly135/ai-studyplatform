@@ -133,6 +133,27 @@ def test_learner_chat_context_preserves_module_lock(monkeypatch) -> None:
     assert exc_info.value.detail["code"] == "MODULE_LOCKED"
 
 
+def test_learner_chat_context_rejects_class_scoped_module_without_membership_proof(monkeypatch) -> None:
+    # Course catalog and material delivery follow the same default-deny rule.
+    service = _service(
+        monkeypatch,
+        course=_course(),
+        module=_module(class_id="class-a"),
+        enrollment=_enrollment(),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.ensure_chat_context_access(
+            course_uuid="course-uuid",
+            module_uuid="module-uuid",
+            user_id=7,
+            identity="Learner",
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail["code"] == "AI_CONTEXT_FORBIDDEN"
+
+
 def test_educator_chat_context_is_limited_to_owned_courses(monkeypatch) -> None:
     # Tests educators cannot use AI context for courses owned by another teacher.
     service = _service(

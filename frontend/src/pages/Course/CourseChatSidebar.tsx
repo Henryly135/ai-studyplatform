@@ -3,11 +3,20 @@ import { LuArrowLeft, LuArrowUp, LuX } from "react-icons/lu";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { getAiModelCatalog, getChatSessionDetail, listModuleChatSessions, sendChatMessage } from "../../services/chat";
+import {
+  createChatRequestId,
+  getAiModelCatalog,
+  getChatSessionDetail,
+  listModuleChatSessions,
+  resolveChatSendPayload,
+  retryChatMessage,
+  sendChatMessage,
+} from "../../services/chat";
 import type {
   AiModelCatalog,
   CourseChatMessage,
   ChatSessionSummary,
+  StableChatSendPayload,
 } from "../../types/chat";
 import {
   formatRagOptionSuffix,
@@ -47,14 +56,20 @@ function formatRelativeTimestamp(value: string | null) {
   }).format(timestamp);
 }
 
-function mapMessagesToConversation(messages: CourseChatMessage[], pendingText: string) {
+function mapMessagesToConversation(
+  messages: CourseChatMessage[],
+  request: StableChatSendPayload
+) {
   const nextMessages = [...messages];
   const nextId = nextMessages.length > 0 ? Math.max(...nextMessages.map((entry) => entry.id)) + 1 : 1;
 
   nextMessages.push({
     id: nextId,
     role: "user",
-    text: pendingText,
+    text: request.message,
+    requestId: request.requestId,
+    generationStatus: "pending",
+    deliveryRequest: request,
   });
 
   return nextMessages;
@@ -234,6 +249,10 @@ function CourseChatSidebar({
               id: entry.message_id,
               role: entry.role === "assistant" ? "assistant" : "user",
               text: entry.content_text,
+              requestId: entry.request_id,
+              generationStatus: entry.generation_status,
+              retryable: entry.retryable,
+              errorMessage: entry.error_message,
             }))
         );
         setStatus("会话已加载。");
@@ -260,8 +279,17 @@ function CourseChatSidebar({
     }
 
     const wasViewingSession = isViewingSession;
+    const requestPayload = resolveChatSendPayload({
+      courseUuid,
+      moduleUuid,
+      message: trimmedMessage,
+      sessionUuid: wasViewingSession ? activeSessionUuid : null,
+      modelId: selectedModelId,
+      requestId: createChatRequestId(),
+    });
+    const requestId = requestPayload.requestId;
     setComposerValue("");
-    setMessages((current) => mapMessagesToConversation(current, trimmedMessage));
+    setMessages((current) => mapMessagesToConversation(current, requestPayload));
     if (!wasViewingSession) {
       setActiveSessionUuid("__pending__");
     }
@@ -270,42 +298,135 @@ function CourseChatSidebar({
 
     await runScopedCourseChatSend({
       send: () =>
-        sendChatMessage({
-          courseUuid,
-          moduleUuid,
-          message: trimmedMessage,
-          sessionUuid: activeSessionUuid,
-          modelId: selectedModelId,
-        }),
+        sendChatMessage(requestPayload),
       refresh: () => listModuleChatSessions(moduleUuid),
       isCurrent: () => activeAsyncScopeTokenRef.current === requestScopeToken,
       onSuccess: (response, updatedSessions) => {
         setSessions(updatedSessions);
         setActiveSessionUuid(response.session_uuid);
-        setMessages((current) => [
-          ...current,
-          {
-            id: response.assistant_message_id,
-            role: "assistant",
-            text: response.reply,
-          },
-        ]);
-        setStatus("助手已回复。");
+        const responseRequestId = response.request_id ?? requestId;
+        setMessages((current) => {
+          const withResolvedUserMessage = current.map((entry) =>
+            entry.requestId === responseRequestId
+              ? {
+                  ...entry,
+                  id: response.user_message_id,
+                  generationStatus: response.status,
+                  retryable: response.retryable,
+                  errorMessage: response.error_message,
+                  deliveryRequest: undefined,
+                }
+              : entry
+          );
+          if (
+            response.status !== "completed" ||
+            response.assistant_message_id === null ||
+            !response.reply
+          ) {
+            return withResolvedUserMessage;
+          }
+          return [
+            ...withResolvedUserMessage,
+            {
+              id: response.assistant_message_id,
+              role: "assistant" as const,
+              text: response.reply,
+              generationStatus: "completed",
+            },
+          ];
+        });
+        setStatus(
+          response.status === "completed"
+            ? "助手已回复。"
+            : response.status === "pending"
+              ? "消息已保存，正在等待助手回复。"
+              : response.error_message || "助手未能回复，可重试这条消息。"
+        );
       },
       onError: (error) => {
         setStatus(error instanceof Error ? error.message : "消息发送失败。");
-        if (wasViewingSession) {
-          setMessages((current) => current.slice(0, -1));
-        } else {
-          setActiveSessionUuid(null);
-          setMessages([]);
-        }
-        setComposerValue(trimmedMessage);
+        setMessages((current) =>
+          current.map((entry) =>
+            entry.requestId === requestId
+              ? {
+                  ...entry,
+                  generationStatus: "failed",
+                  retryable: true,
+                  errorMessage: "请求状态暂时未知；重试会使用同一个请求 ID 查询原结果。",
+                  deliveryRequest: requestPayload,
+                }
+              : entry
+          )
+        );
       },
       onSettled: () => {
         setIsSending(false);
       },
     });
+  };
+
+  const handleRetry = async (entry: CourseChatMessage) => {
+    if (!entry.retryable || isSending) {
+      return;
+    }
+
+    setIsSending(true);
+    setStatus("正在重试这条消息...");
+    try {
+      const response = entry.deliveryRequest
+        ? await sendChatMessage(entry.deliveryRequest)
+        : await retryChatMessage(entry.id);
+      setActiveSessionUuid(response.session_uuid);
+      const updatedSessions = await listModuleChatSessions(moduleUuid);
+      setSessions(updatedSessions);
+      setMessages((current) => {
+        const updated = current.map((message) =>
+          message.id === entry.id
+          || (
+            entry.requestId !== null
+            && entry.requestId !== undefined
+            && message.requestId === entry.requestId
+          )
+            ? {
+                ...message,
+                id: response.user_message_id,
+                generationStatus: response.status,
+                retryable: response.retryable,
+                errorMessage: response.error_message,
+                deliveryRequest: undefined,
+              }
+            : message
+        );
+        if (
+          response.status !== "completed" ||
+          response.assistant_message_id === null ||
+          !response.reply ||
+          updated.some((message) => message.id === response.assistant_message_id)
+        ) {
+          return updated;
+        }
+        return [
+          ...updated,
+          {
+            id: response.assistant_message_id,
+            role: "assistant" as const,
+            text: response.reply,
+            generationStatus: "completed",
+          },
+        ];
+      });
+      setStatus(
+        response.status === "completed"
+          ? "助手已回复。"
+          : response.status === "pending"
+            ? "消息正在处理中。"
+            : response.error_message || "重试失败，可稍后再试。"
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "重试消息失败。");
+    } finally {
+      setIsSending(false);
+    }
   };
 
   return (
@@ -398,6 +519,19 @@ function CourseChatSidebar({
                       className={`course-chat-message course-chat-message-${entry.role}`}
                     >
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.text}</ReactMarkdown>
+                      {entry.role === "user" && entry.generationStatus === "pending" ? (
+                        <small className="course-chat-message-state">正在等待助手回复…</small>
+                      ) : null}
+                      {entry.role === "user" && entry.generationStatus === "failed" ? (
+                        <div className="course-chat-message-state">
+                          <small>{entry.errorMessage || "助手未能回复。"}</small>
+                          {entry.retryable ? (
+                            <button type="button" onClick={() => void handleRetry(entry)} disabled={isSending}>
+                              重试
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </article>
                   ))
                 )}
@@ -463,6 +597,7 @@ function CourseChatSidebar({
             <div className="course-chat-composer-row">
               <textarea
                 value={composerValue}
+                maxLength={4000}
                 onChange={(event) => setComposerValue(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {

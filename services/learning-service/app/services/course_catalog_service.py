@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.uuid_codec import (
     decode_course_uuid,
+    decode_material_uuid,
     decode_module_uuid,
     encode_course_uuid,
     encode_material_uuid,
@@ -327,17 +328,99 @@ class CourseCatalogService:
             class_id=class_id,
         )
 
-    def to_material_response(self, material: ModuleMaterial) -> MaterialResponse:
+    def get_accessible_material_by_uuid(
+        self,
+        *,
+        material_uuid: str,
+        current_user: dict,
+    ) -> ModuleMaterial:
+        """Load a material only after applying the same access rules as the course UI."""
+
+        material = self.materials.get_by_id(decode_material_uuid(material_uuid))
+        if material is None:
+            raise HTTPException(status_code=404, detail="Material not found")
+
+        module = self.modules.get_by_id(material.module_id)
+        if module is None:
+            raise HTTPException(status_code=404, detail="Material not found")
+
+        learning_path = self.learning_paths.get_by_id(module.learning_path_id)
+        if learning_path is None:
+            raise HTTPException(status_code=404, detail="Material not found")
+
+        course = self.courses.get_by_id(learning_path.course_id)
+        if course is None:
+            raise HTTPException(status_code=404, detail="Material not found")
+
+        if not self._can_user_access_materials(
+            course=course,
+            module=module,
+            current_user=current_user,
+        ):
+            raise HTTPException(status_code=403, detail="Material is not accessible for the current user")
+
+        return material
+
+    def get_material_delivery_urls(
+        self,
+        *,
+        material: ModuleMaterial,
+        current_user: dict,
+    ) -> tuple[str, str | None]:
+        """Issue URLs for a material without exposing managed storage locations."""
+
+        metadata = material.metadata_json
+        fallback_url = self._resolve_material_url(material.resource_url)
+        is_managed_builder = getattr(self.storage, "has_managed_material", None)
+        proxy_url_builder = getattr(self.storage, "get_material_proxy_access_url", None)
+        is_managed = callable(is_managed_builder) and is_managed_builder(metadata=metadata)
+
+        actor_id = current_user.get("id")
+        identity = current_user.get("identity")
+        if is_managed and callable(proxy_url_builder):
+            if not isinstance(actor_id, int) or not isinstance(identity, str) or not identity.strip():
+                # Never fall back to the object URL if the authenticated subject
+                # cannot be bound to a proxy grant.
+                return "", None
+
+            material_uuid = encode_material_uuid(material.material_id)
+            return (
+                proxy_url_builder(
+                    material_uuid=material_uuid,
+                    user_id=actor_id,
+                    identity=identity,
+                    download=False,
+                ),
+                proxy_url_builder(
+                    material_uuid=material_uuid,
+                    user_id=actor_id,
+                    identity=identity,
+                    download=True,
+                ),
+            )
+
+        download_url_builder = getattr(self.storage, "get_material_download_url", None)
+        resource_url = self.storage.get_material_access_url(metadata=metadata, fallback_url=fallback_url)
+        download_url = (
+            download_url_builder(metadata=metadata, fallback_url=fallback_url)
+            if callable(download_url_builder)
+            else resource_url
+        )
+        return resource_url, download_url
+
+    def to_material_response(self, material: ModuleMaterial, *, current_user: dict) -> MaterialResponse:
+        resource_url, download_url = self.get_material_delivery_urls(
+            material=material,
+            current_user=current_user,
+        )
         return MaterialResponse(
             materialId=material.material_id,
             materialUuid=encode_material_uuid(material.material_id),
             moduleId=material.module_id,
             title=material.title,
             materialType=material.material_type.value,
-            resourceUrl=self.storage.get_material_access_url(
-                metadata=material.metadata_json,
-                fallback_url=self._resolve_material_url(material.resource_url),
-            ),
+            resourceUrl=resource_url,
+            downloadUrl=download_url,
             sortOrder=material.sort_order,
             metadataJson=material.metadata_json,
         )
@@ -493,7 +576,7 @@ class CourseCatalogService:
             slug=_slugify(module.title),
             materials=(
                 [
-                    self.to_material_response(material)
+                    self.to_material_response(material, current_user=current_user)
                     for material in self.materials.list_by_module(module.module_id)
                 ]
                 if self._can_user_access_materials(
@@ -583,6 +666,11 @@ class CourseCatalogService:
         identity = current_user.get("identity")
         user_id = current_user.get("id")
 
+        # Course-center classId is client supplied.  Until membership is stored
+        # and evaluated server-side, it cannot authorize visibility.  Class-only
+        # modules therefore remain absent from catalog responses; authoring
+        # remains available through the management endpoints below.
+        #
         # Published course detail follows the public course-center view:
         # only published modules are visible, regardless of elevated identity.
         if course.status == CourseStatus.PUBLISHED:
@@ -590,7 +678,7 @@ class CourseCatalogService:
                 return False
             if module.status.value == "published":
                 return True
-            return bool(class_id and module.visible_to_class_id == class_id)
+            return False
 
         if identity == "Admin":
             return True
@@ -602,7 +690,7 @@ class CourseCatalogService:
             return False
         if module.status.value == "published":
             return True
-        return bool(class_id and module.visible_to_class_id == class_id)
+        return False
 
     def _can_user_access_materials(
         self,

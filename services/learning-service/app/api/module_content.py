@@ -71,7 +71,7 @@ def upload_module_material(
         file=file,
         current_user=current_user,
     )
-    return CourseCatalogService(session).to_material_response(material)
+    return CourseCatalogService(session).to_material_response(material, current_user=current_user)
 
 
 @router.post(
@@ -164,7 +164,7 @@ def complete_multipart_module_material_upload(
         completed_parts=[(part.partNumber, part.etag) for part in payload.parts],
         current_user=current_user,
     )
-    return CourseCatalogService(session).to_material_response(material)
+    return CourseCatalogService(session).to_material_response(material, current_user=current_user)
 
 
 @router.delete(

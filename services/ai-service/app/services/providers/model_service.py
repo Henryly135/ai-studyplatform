@@ -193,6 +193,25 @@ class AIModelCatalogService:
                 default_embedding_model_id=paired_embedding_model_id,
             )
         self.session.commit()
+        self._ensure_local_gemini_credential()
+
+    def _ensure_local_gemini_credential(self) -> None:
+        """Seed a local-only env key once, without ever logging or returning the secret."""
+        if (
+            settings.app_env.strip().lower() != "local"
+            or not settings.local_demo_single_account_enabled
+            or not settings.gemini_api_key.strip()
+        ):
+            return
+        credential = self.repo.get_credential("gemini")
+        if credential is not None and credential.encrypted_api_key:
+            return
+        ProviderCredentialService(self.session).save_credentials(
+            provider_key="gemini",
+            api_key=settings.gemini_api_key,
+            base_url_override=None,
+            is_enabled=True,
+        )
 
     def _model_id_for_model_name(self, value: str) -> str | None:
         normalized = value.strip()
@@ -266,6 +285,8 @@ class AIModelCatalogService:
             return ModelAvailability(False, "模型向量维度与当前向量库不匹配，需要重新索引。")
         if credential is None or not credential.is_enabled or not credential.encrypted_api_key:
             return ModelAvailability(False, "管理员尚未配置该供应商 API key。")
+        health_status = "ready"
+        unavailable_reason: str | None = None
         if not bypass_health_status_for_health_check:
             health_status = str(
                 getattr(credential, "health_status", None) or "unknown"
@@ -275,12 +296,18 @@ class AIModelCatalogService:
                 "failed": "供应商健康检查失败，当前暂不可用。",
                 "quota": "供应商额度受限，当前暂不可用。",
             }.get(health_status)
-            if health_status != "ready":
-                return ModelAvailability(
-                    False,
-                    unavailable_reason
-                    or "供应商健康状态未知，当前暂不可用。",
-                )
+        if health_status != "ready":
+            if (
+                settings.app_env.strip().lower() == "local"
+                and settings.local_demo_single_account_enabled
+                and model.provider_key == "gemini"
+                and settings.gemini_api_key.strip()
+            ):
+                return ModelAvailability(True, None)
+            return ModelAvailability(
+                False,
+                unavailable_reason or "供应商健康状态未知，当前暂不可用。",
+            )
         return ModelAvailability(True, None)
 
     def resolve_chat_model(

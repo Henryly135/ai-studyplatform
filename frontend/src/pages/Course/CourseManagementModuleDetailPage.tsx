@@ -32,6 +32,10 @@ import type { CourseManagementOutletContext } from "./CourseManagementLayout";
 
 const MULTIPART_UPLOAD_THRESHOLD_BYTES = 100 * 1024 * 1024;
 const MULTIPART_CHUNK_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 50 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_OFFICE_BYTES = 50 * 1024 * 1024;
 
 function getInitialEstimatedMinutes(durationLabel: string) {
   const match = durationLabel.match(/\d+/);
@@ -125,6 +129,10 @@ function inferMaterialType(file: File) {
     return "text";
   }
 
+  if (normalizedMimeType.includes("yaml") || normalizedMimeType.includes("xhtml")) {
+    return "text";
+  }
+
   const fileName = file.name.trim().toLowerCase();
   const extension = fileName.includes(".") ? fileName.split(".").pop() : "";
 
@@ -132,7 +140,7 @@ function inferMaterialType(file: File) {
     return "";
   }
 
-  if (["mp4", "mov", "avi", "mkv", "webm", "m4v"].includes(extension)) {
+  if (["mp4", "mov", "avi", "mkv", "webm", "m4v", "mpeg", "mpg"].includes(extension)) {
     return "video";
   }
 
@@ -164,11 +172,27 @@ function inferMaterialType(file: File) {
     return "file";
   }
 
-  if (["txt", "md"].includes(extension)) {
+  if (["txt", "md", "markdown", "csv", "tsv", "json", "yaml", "yml", "html", "htm", "xhtml", "xml", "rtf"].includes(extension)) {
     return "text";
   }
 
-  return extension;
+  // The API accepts only the canonical material enum. Unknown extensions are
+  // still validated by the server, but must not be sent as an invalid enum.
+  return "file";
+}
+
+function getMaterialUploadLimitMessage(file: File) {
+  const mimeType = file.type.trim().toLowerCase();
+  const extension = file.name.trim().toLowerCase().split(".").pop() ?? "";
+  const isVideo = mimeType.startsWith("video/") || ["mp4", "mov", "avi", "mkv", "webm", "m4v"].includes(extension);
+  const isAudio = mimeType.startsWith("audio/") || ["mp3", "wav", "aac", "m4a", "ogg", "flac", "opus", "wma"].includes(extension);
+  const isImage = mimeType.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "svg"].includes(extension);
+  const isOffice = ["doc", "docx", "ppt", "pptx", "xls", "xlsx", "odt", "odp", "ods"].includes(extension);
+  if (isVideo && file.size > MAX_VIDEO_BYTES) return "视频文件不能超过 200 MB，且时长不能超过 5 分钟。";
+  if (isAudio && file.size > MAX_AUDIO_BYTES) return "音频文件不能超过 50 MB，且时长不能超过 15 分钟。";
+  if (isImage && file.size > MAX_IMAGE_BYTES) return "图片文件不能超过 10 MB。";
+  if (isOffice && file.size > MAX_OFFICE_BYTES) return "Office 文件不能超过 50 MB。";
+  return null;
 }
 
 function normalizeMultipartUploadUrl(uploadUrl: string) {
@@ -737,7 +761,9 @@ function CourseManagementModuleDetailPage() {
           <form className="course-management-form course-management-form-single" onSubmit={handleMaterialUpload}>
             <div className="course-management-inline-note course-management-field-full">
               <strong>上传顺序</strong>
-              <span>新资料会添加到该模块资料列表末尾。</span>
+              <span>
+                新资料会添加到该模块资料列表末尾。AI 会分析文本、PDF、Office、压缩包及受限的图片、音频和视频；视频最多 5 分钟，音频最多 15 分钟，图片最多 10 MB 且不超过 2500 万像素。
+              </span>
             </div>
 
             {isPublishedModule ? (
@@ -763,11 +789,11 @@ function CourseManagementModuleDetailPage() {
               <span>{text.upload.materialFileLabel}</span>
               <LocalizedFileInput
                 selectedFileName={materialFile?.name ?? null}
-                onFileChange={(file) => {
-                  setMaterialFile(file);
-                  setUploadError(null);
-                  setMaterialType(file ? inferMaterialType(file) : "");
-                }}
+                 onFileChange={(file) => {
+                   setMaterialFile(file);
+                   setUploadError(file ? getMaterialUploadLimitMessage(file) : null);
+                   setMaterialType(file ? inferMaterialType(file) : "");
+                 }}
               />
             </label>
 
@@ -809,7 +835,7 @@ function CourseManagementModuleDetailPage() {
               <button
                 type="submit"
                 className="course-management-action-button course-management-action-button-primary"
-                disabled={isUploading || (isPublishedModule && !confirmPublishedUpload)}
+                disabled={isUploading || Boolean(uploadError) || (isPublishedModule && !confirmPublishedUpload)}
               >
                 {isUploading ? "上传中..." : "上传资料"}
               </button>

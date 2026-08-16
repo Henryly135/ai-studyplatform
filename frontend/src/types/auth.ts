@@ -35,6 +35,7 @@ export interface LoginSuccessResponse {
     email: string;
     userName: string;
     identity: Identity;
+    availableIdentities?: Identity[];
     emailVerified: boolean;
     accountStatus?: string;
   };
@@ -46,6 +47,7 @@ export interface CurrentUserResponse {
   email: string;
   userName: string;
   identity: Identity;
+  availableIdentities?: Identity[];
   emailVerified: boolean;
   accountStatus?: string;
 }

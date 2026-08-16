@@ -17,8 +17,8 @@ import type { ReactNode } from "react";
 import HomeNotificationsMenu from "../../components/home/HomeNotificationsMenu";
 import HomeSidebarItem from "../../components/home/HomeSidebarItem";
 import { clearStoredSession } from "../../services/api";
-import { getCurrentUser } from "../../services/auth";
-import type { CurrentUserResponse } from "../../types/auth";
+import { getCurrentUser, switchCurrentRole } from "../../services/auth";
+import type { CurrentUserResponse, Identity } from "../../types/auth";
 import { isUsableAccessToken } from "../../utils/accessToken";
 import type { HomeSection } from "./homeConfig";
 import { getAllowedHomeSections } from "./homeConfig";
@@ -61,6 +61,12 @@ const SECTION_ICONS: Record<string, ReactNode> = {
   analytics: <LuChartBar size={18} />,
   "course-management": <LuLayoutDashboard size={18} />,
   "user-management": <LuUsers size={18} />,
+};
+
+const IDENTITY_LABELS: Record<Identity, string> = {
+  Learner: "学生",
+  Educator: "教师",
+  Admin: "管理员",
 };
 
 const SIDEBAR_GROUPS_BY_IDENTITY: Record<CurrentUserResponse["identity"], SidebarGroup[]> = {
@@ -188,10 +194,33 @@ function HomePage() {
   const location = useLocation();
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [switchingIdentity, setSwitchingIdentity] = useState<Identity | null>(null);
+  const [roleSwitchError, setRoleSwitchError] = useState("");
 
   const handleLogout = () => {
     clearStoredSession();
     navigate("/", { replace: true });
+  };
+
+  const handleRoleChange = async (identity: Identity) => {
+    if (!currentUser || identity === currentUser.identity || switchingIdentity) {
+      return;
+    }
+
+    setRoleSwitchError("");
+    setSwitchingIdentity(identity);
+    try {
+      const response = await switchCurrentRole(identity);
+      localStorage.setItem("accessToken", response.accessToken);
+      localStorage.setItem("tokenType", response.tokenType);
+      localStorage.setItem("currentUser", JSON.stringify(response.user));
+      setCurrentUser(response.user);
+      navigate("/home", { replace: true });
+    } catch (error) {
+      setRoleSwitchError(error instanceof Error ? error.message : "切换身份失败。");
+    } finally {
+      setSwitchingIdentity(null);
+    }
   };
 
   useEffect(() => {
@@ -280,6 +309,9 @@ function HomePage() {
   }
 
   const workspaceSummary = getWorkspaceSummary(currentUser, allowedSections.length);
+  const availableIdentities = currentUser.availableIdentities?.length
+    ? currentUser.availableIdentities
+    : [currentUser.identity];
   const canUseNotifications =
     currentUser.identity === "Learner" ||
     currentUser.identity === "Educator" ||
@@ -335,6 +367,29 @@ function HomePage() {
           </div>
 
           <div className="home-topbar-actions">
+            {availableIdentities.length > 1 ? (
+              <div className="home-role-switcher">
+                <label htmlFor="home-role-switcher">演示身份</label>
+                <select
+                  id="home-role-switcher"
+                  value={switchingIdentity ?? currentUser.identity}
+                  disabled={switchingIdentity !== null}
+                  onChange={(event) => void handleRoleChange(event.target.value as Identity)}
+                >
+                  {availableIdentities.map((identity) => (
+                    <option key={identity} value={identity}>
+                      {IDENTITY_LABELS[identity]}
+                    </option>
+                  ))}
+                </select>
+                {roleSwitchError ? (
+                  <span className="home-role-switcher-error" role="status">
+                    {roleSwitchError}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+
             {canUseNotifications ? <HomeNotificationsMenu /> : null}
 
             <button
@@ -348,7 +403,7 @@ function HomePage() {
               <div className="home-profile-avatar">{getInitials(currentUser.userName)}</div>
               <div>
                 <strong>{currentUser.userName}</strong>
-                <span>{currentUser.identity}</span>
+                <span>{IDENTITY_LABELS[currentUser.identity]}</span>
               </div>
             </div>
           </div>

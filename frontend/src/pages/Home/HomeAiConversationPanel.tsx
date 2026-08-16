@@ -32,6 +32,7 @@ type HomeAiConversationPanelProps = {
   onSubmit: () => void;
   onOpenSession: (sessionUuid: string) => void;
   onStartNewConversation: () => void;
+  onRetryMessage: (messageId: number) => void;
 };
 
 function formatSessionTimestamp(value: string | null) {
@@ -79,6 +80,7 @@ export function HomeAiConversationPanel({
   onSubmit,
   onOpenSession,
   onStartNewConversation,
+  onRetryMessage,
 }: HomeAiConversationPanelProps) {
   return (
     <article className="home-ai-panel home-ai-conversation-panel">
@@ -172,6 +174,23 @@ export function HomeAiConversationPanel({
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
                         {message.content_text}
                       </ReactMarkdown>
+                      {message.role === "user" && message.generation_status === "pending" ? (
+                        <small className="home-ai-message-state">正在等待助手回复…</small>
+                      ) : null}
+                      {message.role === "user" && message.generation_status === "failed" ? (
+                        <div className="home-ai-message-state">
+                          <small>{message.error_message || "助手未能回复。"}</small>
+                          {message.retryable ? (
+                            <button
+                              type="button"
+                              onClick={() => onRetryMessage(message.message_id)}
+                              disabled={isSending}
+                            >
+                              重试
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   </article>
                 ))}

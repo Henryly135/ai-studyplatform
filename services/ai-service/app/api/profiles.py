@@ -3,7 +3,12 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_identity_permission
 from app.db.session import get_db_session
-from app.schemas.profiles import GlobalProfileInitRequest, GlobalProfileRead, ModuleProfileRead
+from app.schemas.profiles import (
+    GlobalProfileInitRequest,
+    GlobalProfileRead,
+    GlobalProfileUpdateRequest,
+    ModuleProfileRead,
+)
 from app.services.profiles.global_profile_service import GlobalProfileService
 from app.services.profiles.module_profile_service import ModuleProfileService
 from platform_common.permissions.codes import LEARNER_PROFILE_MANAGE
@@ -29,6 +34,25 @@ def get_my_global_profile(
 ) -> GlobalProfileRead:
     learner_id = int(current_user["id"])
     return GlobalProfileService(db).get_for_learner(learner_id=learner_id)
+
+
+@router.put("/global/me", response_model=GlobalProfileRead)
+def update_my_global_profile(
+    payload: GlobalProfileUpdateRequest,
+    current_user: dict = Depends(require_identity_permission(LEARNER_PROFILE_MANAGE)),
+    db: Session = Depends(get_db_session),
+) -> GlobalProfileRead:
+    learner_id = int(current_user["id"])
+    return GlobalProfileService(db).update_for_learner(learner_id=learner_id, payload=payload)
+
+
+@router.delete("/global/me", response_model=GlobalProfileRead)
+def reset_my_global_profile(
+    current_user: dict = Depends(require_identity_permission(LEARNER_PROFILE_MANAGE)),
+    db: Session = Depends(get_db_session),
+) -> GlobalProfileRead:
+    learner_id = int(current_user["id"])
+    return GlobalProfileService(db).reset_for_learner(learner_id=learner_id)
 
 
 @router.post("/module/{course_uuid}/{module_uuid}/init", response_model=ModuleProfileRead)

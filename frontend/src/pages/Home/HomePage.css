@@ -488,6 +488,32 @@
   gap: 1rem;
 }
 
+.home-profile-init-loading {
+  margin: -0.45rem 0 0;
+  color: #64748b;
+  font: 500 0.9rem/1.4 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.home-profile-init-warning {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid #fde68a;
+  border-left-width: 4px;
+  border-radius: 1rem;
+  background: #fffbeb;
+  color: #78350f;
+}
+
+.home-profile-init-warning strong {
+  font: 700 0.88rem/1.3 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.home-profile-init-warning p {
+  margin: 0;
+  font: 500 0.9rem/1.5 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
 .home-profile-init-fieldset {
   display: grid;
   gap: 0.8rem;
@@ -577,6 +603,95 @@
   background: #fff5f5;
   color: #b91c1c;
   font: 600 0.92rem/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.home-profile-init-reset {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.home-profile-init-reset-button {
+  justify-self: start;
+  min-height: 2.5rem;
+  padding: 0 1rem;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  background: #fff7f7;
+  color: #b91c1c;
+  font: 600 0.88rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  cursor: pointer;
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+
+.home-profile-init-reset-button:hover {
+  transform: translateY(-1px);
+  background: #fef2f2;
+}
+
+.home-profile-init-reset-button:disabled,
+.home-profile-init-danger:disabled {
+  opacity: 0.68;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.home-profile-init-reset-confirm {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid #fecaca;
+  border-radius: 1rem;
+  background: #fff7f7;
+}
+
+.home-profile-init-reset-confirm p {
+  margin: 0;
+  color: #7f1d1d;
+  font: 600 0.9rem/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.home-profile-init-overwrite-confirm {
+  display: grid;
+  gap: 0.8rem;
+  padding: 1rem;
+  border: 1px solid #f59e0b;
+  border-radius: 1rem;
+  background: #fffaf0;
+}
+
+.home-profile-init-overwrite-confirm p {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  color: #78350f;
+  font: 500 0.9rem/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+.home-profile-init-overwrite-confirm p strong {
+  font-weight: 800;
+}
+
+.home-profile-init-overwrite-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.7rem;
+}
+
+.home-profile-init-reset-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.7rem;
+}
+
+.home-profile-init-danger {
+  min-height: 2.6rem;
+  padding: 0 1rem;
+  border: 0;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #ffffff;
+  font: 600 0.88rem/1 "IBM Plex Sans", "Segoe UI", sans-serif;
+  cursor: pointer;
 }
 
 .home-profile-init-actions {
@@ -860,6 +975,27 @@
 
 .home-ai-panel {
   grid-template-rows: auto minmax(0, 1fr);
+}
+
+/*
+ * Role dashboards contain a variable number of stacked sections. The shared
+ * fixed-height/grid-row rule above is intended for the conversation panel,
+ * but it made the runtime, checklist, insight and brief sections compete for
+ * the same implicit grid row. Keep the conversation panel constrained while
+ * allowing learner/educator dashboard cards to grow with their content.
+ */
+.home-ai-grid > .home-ai-panel:not(.home-ai-conversation-panel) {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  align-self: start;
+  height: auto;
+}
+
+.home-ai-grid > .home-ai-panel:not(.home-ai-conversation-panel) .home-ai-worklist,
+.home-ai-grid > .home-ai-panel:not(.home-ai-conversation-panel) .home-ai-checklist,
+.home-ai-grid > .home-ai-panel:not(.home-ai-conversation-panel) .home-ai-audit-list {
+  overflow: visible;
 }
 
 .home-ai-panel-detail-mode {
@@ -1983,7 +2119,20 @@
   }
 
   .home-profile-init-primary,
-  .home-profile-init-secondary {
+  .home-profile-init-secondary,
+  .home-profile-init-reset-button {
+    width: 100%;
+  }
+
+  .home-profile-init-reset-button {
+    justify-self: stretch;
+  }
+
+  .home-profile-init-reset-confirm-actions {
+    flex-direction: column-reverse;
+  }
+
+  .home-profile-init-danger {
     width: 100%;
   }
 

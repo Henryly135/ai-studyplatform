@@ -18,6 +18,10 @@ DEFAULT_CELERY_BROKER_URL = f"redis://{DEFAULT_REDIS_HOST}:{DEFAULT_REDIS_PORT}/
 
 @dataclass(frozen=True)
 class Settings:
+    app_env: str = get_env("APP_ENV", default="local")
+    local_demo_single_account_enabled: bool = get_env(
+        "LOCAL_DEMO_SINGLE_ACCOUNT_ENABLED", default="false"
+    ).lower() == "true"
     app_timezone: str = get_env("APP_TIMEZONE", default="Australia/Sydney")
     ai_service_port: int = int(get_env("AI_SERVICE_PORT", default="8001"))
     ai_db_host: str = get_env("AI_DB_HOST", default="postgres-ai")
@@ -64,6 +68,22 @@ class Settings:
     ai_index_job_retry_max_seconds: int = int(get_env("AI_INDEX_JOB_RETRY_MAX_SECONDS", default="900"))
     ai_index_job_running_timeout_seconds: int = int(get_env("AI_INDEX_JOB_RUNNING_TIMEOUT_SECONDS", default="1800"))
     ai_index_job_reaper_interval_seconds: int = int(get_env("AI_INDEX_JOB_REAPER_INTERVAL_SECONDS", default="60"))
+    ai_material_max_extracted_chars: int = int(
+        get_env("AI_MATERIAL_MAX_EXTRACTED_CHARS", default="500000")
+    )
+    ai_material_archive_max_entries: int = int(
+        get_env("AI_MATERIAL_ARCHIVE_MAX_ENTRIES", default="100")
+    )
+    ai_material_archive_max_uncompressed_bytes: int = int(
+        get_env("AI_MATERIAL_ARCHIVE_MAX_UNCOMPRESSED_BYTES", default=str(50 * 1024 * 1024))
+    )
+    ai_material_media_analysis_enabled: bool = get_env(
+        "AI_MATERIAL_MEDIA_ANALYSIS_ENABLED", default="true"
+    ).lower() == "true"
+    ai_material_media_analysis_max_output_tokens: int = int(
+        get_env("AI_MATERIAL_MEDIA_ANALYSIS_MAX_OUTPUT_TOKENS", default="1200")
+    )
+    gemini_api_key: str = get_env("GEMINI_API_KEY", default="")
     identity_service_url: str = get_env("IDENTITY_SERVICE_URL", default="http://identity-service:8000")
     ai_service_url: str = get_env("AI_SERVICE_URL", default="http://ai-service:8001")
     communication_service_url: str = get_env("COMMUNICATION_SERVICE_URL", default="http://communication-service:8002")

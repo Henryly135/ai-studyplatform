@@ -6,11 +6,17 @@ MYSQL_PORT="${MYSQL_INTERNAL_PORT:-3306}"
 DEFAULT_ADMIN_EMAIL="${DEFAULT_ADMIN_EMAIL:-eduplatform.aibot@gmail.com}"
 DEFAULT_ADMIN_PASSWORD="${DEFAULT_ADMIN_PASSWORD:-Eduadmin123!}"
 DEFAULT_ADMIN_FULL_NAME="${DEFAULT_ADMIN_FULL_NAME:-Edu Platform Admin}"
+LOCAL_DEMO_SINGLE_ACCOUNT_ENABLED="${LOCAL_DEMO_SINGLE_ACCOUNT_ENABLED:-false}"
 PASSWORD_HASH_ITERATIONS="${PASSWORD_HASH_ITERATIONS:-600000}"
 
 is_production_env() {
   app_env="$(printf "%s" "${APP_ENV:-local}" | tr '[:upper:]' '[:lower:]')"
   [ "${app_env}" = "prod" ] || [ "${app_env}" = "production" ]
+}
+
+is_local_demo_single_account_enabled() {
+  enabled="$(printf "%s" "${LOCAL_DEMO_SINGLE_ACCOUNT_ENABLED}" | tr '[:upper:]' '[:lower:]')"
+  [ "${enabled}" = "true" ] || [ "${enabled}" = "1" ] || [ "${enabled}" = "yes" ]
 }
 
 validate_production_bootstrap_config() {
@@ -19,14 +25,14 @@ validate_production_bootstrap_config() {
   fi
 
   case "${DEFAULT_ADMIN_EMAIL}" in
-    ""|"admin@gmail.com"|"eduplatform.aibot@gmail.com"|"your.team.email@gmail.com")
+    ""|"admin@gmail.com"|"eduplatform.aibot@gmail.com"|"demo@example.com"|"your.team.email@gmail.com")
       echo "DEFAULT_ADMIN_EMAIL must be changed from the demo/default value in production." >&2
       exit 1
       ;;
   esac
 
   case "${DEFAULT_ADMIN_PASSWORD}" in
-    ""|"Eduadmin123!"|"your-admin-password"|"password"|"secret")
+    ""|"Eduadmin123!"|"LocalDemo123!"|"your-admin-password"|"password"|"secret")
       echo "DEFAULT_ADMIN_PASSWORD must be changed from the demo/default value in production." >&2
       exit 1
       ;;
@@ -34,6 +40,11 @@ validate_production_bootstrap_config() {
 
   if [ "${#DEFAULT_ADMIN_PASSWORD}" -lt 16 ]; then
     echo "DEFAULT_ADMIN_PASSWORD must be at least 16 characters in production." >&2
+    exit 1
+  fi
+
+  if is_local_demo_single_account_enabled; then
+    echo "LOCAL_DEMO_SINGLE_ACCOUNT_ENABLED must be false in production." >&2
     exit 1
   fi
 }
@@ -201,6 +212,19 @@ ON DUPLICATE KEY UPDATE
     user_id = VALUES(user_id),
     role_id = VALUES(role_id);
 EOSQL
+
+  if is_local_demo_single_account_enabled; then
+    mysql_root "${db_name}" <<EOSQL
+INSERT INTO user_roles (user_id, role_id)
+SELECT u.user_id, r.role_id
+FROM users u
+JOIN roles r ON r.role_code IN ('learner', 'educator', 'admin')
+WHERE u.email = '${admin_email}'
+ON DUPLICATE KEY UPDATE
+    user_id = VALUES(user_id),
+    role_id = VALUES(role_id);
+EOSQL
+  fi
 }
 
 apply_pending_migrations() {
@@ -284,6 +308,7 @@ seed_baseline_migrations "${IDENTITY_DB_NAME}" \
   "009_remove_admin_course_create_permission.sql" \
   "010_add_communication_permissions.sql" \
   "012_seed_default_admin_account.sql" \
+  "013_seed_default_educator_account.sql" \
   "014_add_ai_chat_and_learner_profile_permissions.sql" \
   "015_add_ai_governance_manage_permission.sql"
 

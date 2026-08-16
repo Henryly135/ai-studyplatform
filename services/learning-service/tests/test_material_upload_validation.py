@@ -91,6 +91,7 @@ def test_material_upload_accepts_known_document_and_media_types():
     service._validate_upload_file(_upload(filename="notes.pdf", content_type="application/pdf"))
     service._validate_upload_file(_upload(filename="clip.mp4", content_type="video/mp4"))
     service._validate_upload_file(_upload(filename="outline.md", content_type=None))
+    service._validate_upload_file(_upload(filename="outline.yaml", content_type="application/yaml"))
 
 
 def test_builtin_upload_scan_rejects_eicar_signature():

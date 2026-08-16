@@ -86,6 +86,24 @@ function toBoolean(value: unknown) {
   return false;
 }
 
+const PROFILE_PREFERENCE_KEYS = [
+  "supportRole",
+  "helpStyle",
+  "learningFocus",
+  "responseTone",
+] as const;
+
+function normalizePreferences(value: unknown): Partial<GlobalProfileInitRequest> {
+  const data = asRecord(value);
+  return PROFILE_PREFERENCE_KEYS.reduce<Partial<GlobalProfileInitRequest>>((preferences, key) => {
+    const rawValue = data[key];
+    if (rawValue !== null && rawValue !== undefined && String(rawValue).trim()) {
+      preferences[key] = String(rawValue);
+    }
+    return preferences;
+  }, {});
+}
+
 function normalizeGlobalProfile(payload: unknown): GlobalProfileRead {
   const data = asRecord(payload);
 
@@ -95,21 +113,21 @@ function normalizeGlobalProfile(payload: unknown): GlobalProfileRead {
     version: toNullableNonNegativeNumber(data.version),
     objectKey: toNullableString(getField(data, "objectKey", "object_key")),
     content: String(data.content ?? ""),
+    preferences: normalizePreferences(getField(data, "preferences")),
     isDefaultProfile: toBoolean(getField(data, "isDefaultProfile", "is_default_profile")),
     createdAt: toNullableString(getField(data, "createdAt", "created_at")),
     updatedAt: toNullableString(getField(data, "updatedAt", "updated_at")),
   };
 }
 
-export async function initializeGlobalProfile(
-  payload: GlobalProfileInitRequest
+async function requestGlobalProfile(
+  path: string,
+  init: RequestInit,
+  fallbackErrorMessage: string
 ): Promise<GlobalProfileRead> {
-  const response = await fetch(`${AI_API_BASE_URL}/profiles/global/init`, {
-    method: "POST",
-    headers: buildAuthHeaders({
-      "Content-Type": "application/json",
-    }),
-    body: JSON.stringify(payload),
+  const response = await fetch(`${AI_API_BASE_URL}${path}`, {
+    ...init,
+    headers: buildAuthHeaders(init.body ? { "Content-Type": "application/json" } : undefined),
   });
 
   const text = await response.text();
@@ -117,8 +135,42 @@ export async function initializeGlobalProfile(
   handleAuthenticationFailureFromResponse(response.status, data);
 
   if (!response.ok) {
-    throw new Error(getErrorMessage(data, "初始化学习画像失败。"));
+    throw new Error(getErrorMessage(data, fallbackErrorMessage));
   }
 
   return normalizeGlobalProfile(data);
+}
+
+export async function initializeGlobalProfile(
+  payload: GlobalProfileInitRequest
+): Promise<GlobalProfileRead> {
+  return requestGlobalProfile("/profiles/global/init", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }, "初始化学习画像失败。");
+}
+
+export async function getMyGlobalProfile(): Promise<GlobalProfileRead> {
+  return requestGlobalProfile(
+    "/profiles/global/me",
+    { method: "GET" },
+    "读取学习画像失败。"
+  );
+}
+
+export async function updateGlobalProfile(
+  payload: GlobalProfileInitRequest
+): Promise<GlobalProfileRead> {
+  return requestGlobalProfile("/profiles/global/me", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  }, "更新学习画像失败。");
+}
+
+export async function resetGlobalProfile(): Promise<GlobalProfileRead> {
+  return requestGlobalProfile(
+    "/profiles/global/me",
+    { method: "DELETE" },
+    "重置学习画像失败。"
+  );
 }

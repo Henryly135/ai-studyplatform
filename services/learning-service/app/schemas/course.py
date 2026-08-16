@@ -42,8 +42,14 @@ class MaterialResponse(BaseModel):
     title: str
     materialType: str
     resourceUrl: str
+    downloadUrl: str | None = None
     sortOrder: int
     metadataJson: dict[str, Any] | None
+
+
+class MaterialAccessTicketResponse(BaseModel):
+    resourceUrl: str
+    downloadUrl: str | None = None
 
 
 class ModuleResponse(BaseModel):

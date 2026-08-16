@@ -1,7 +1,8 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, DateTime, Enum as SqlEnum, Integer, String, func
+from sqlalchemy import BigInteger, DateTime, Enum as SqlEnum, Integer, String, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -32,6 +33,12 @@ class LearnerGlobalProfileAsset(Base):
     version: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
+    )
+    preferences: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
     )
     status: Mapped[AIProfileAssetStatus] = mapped_column(
         SqlEnum(AIProfileAssetStatus, values_callable=enum_values, name="ai_profile_asset_status"),

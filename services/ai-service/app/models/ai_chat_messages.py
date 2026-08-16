@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum as SqlEnum, ForeignKey, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum as SqlEnum, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,6 +20,12 @@ class AIMessageType(str, Enum):
     PLAIN_TEXT = "plain_text"
     SYSTEM_NOTICE = "system_notice"
     RETRIEVAL_CONTEXT = "retrieval_context"
+
+
+class AIMessageGenerationStatus(str, Enum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class AIChatMessage(Base):
@@ -64,6 +70,34 @@ class AIChatMessage(Base):
         JSONB, 
         nullable=True
     )
+    client_request_id: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        unique=True,
+    )
+    requested_model_id: Mapped[str | None] = mapped_column(
+        String(160),
+        nullable=True,
+    )
+    generation_status: Mapped[AIMessageGenerationStatus] = mapped_column(
+        SqlEnum(
+            AIMessageGenerationStatus,
+            values_callable=enum_values,
+            name="ai_message_generation_status",
+        ),
+        nullable=False,
+        default=AIMessageGenerationStatus.COMPLETED,
+        server_default=AIMessageGenerationStatus.COMPLETED.value,
+    )
+    failure_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generation_attempt_count: Mapped[int] = mapped_column(
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    generation_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    generation_completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,

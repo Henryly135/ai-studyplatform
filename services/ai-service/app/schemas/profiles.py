@@ -11,12 +11,17 @@ class GlobalProfileInitRequest(BaseModel):
     responseTone: str = Field(..., min_length=1, max_length=200)
 
 
+class GlobalProfileUpdateRequest(GlobalProfileInitRequest):
+    """Learner preferences used to regenerate the active global profile."""
+
+
 class GlobalProfileRead(BaseModel):
     learnerId: int
     profileType: str = "global_skill"
     version: int | None = None
     objectKey: str | None = None
     content: str
+    preferences: dict[str, str] = Field(default_factory=dict)
     isDefaultProfile: bool = False
     createdAt: datetime | None = None
     updatedAt: datetime | None = None

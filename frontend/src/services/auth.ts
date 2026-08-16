@@ -87,16 +87,39 @@ function normalizeIdentity(value: unknown): Identity {
   return value === "Admin" || value === "Educator" || value === "Learner" ? value : "Learner";
 }
 
+function isIdentity(value: unknown): value is Identity {
+  return value === "Admin" || value === "Educator" || value === "Learner";
+}
+
+function normalizeAvailableIdentities(value: unknown, activeIdentity: Identity): Identity[] {
+  const identities = Array.isArray(value)
+    ? value
+        .filter(isIdentity)
+        .filter((identity, index, items) => items.indexOf(identity) === index)
+    : [];
+
+  if (!identities.includes(activeIdentity)) {
+    identities.unshift(activeIdentity);
+  }
+
+  return identities;
+}
+
 function normalizeUser(payload: unknown): CurrentUserResponse {
   const data = asRecord(payload);
   const accountStatus = toNullableString(getField(data, "accountStatus", "account_status"));
+  const identity = normalizeIdentity(data.identity);
 
   return {
     id: toNonNegativeNumber(data.id),
     userUuid: String(getField(data, "userUuid", "user_uuid") ?? ""),
     email: String(data.email ?? ""),
     userName: String(getField(data, "userName", "user_name") ?? ""),
-    identity: normalizeIdentity(data.identity),
+    identity,
+    availableIdentities: normalizeAvailableIdentities(
+      getField(data, "availableIdentities", "available_identities"),
+      identity
+    ),
     emailVerified: toBoolean(getField(data, "emailVerified", "email_verified")),
     ...(accountStatus === null ? {} : { accountStatus }),
   };
@@ -206,6 +229,25 @@ export async function loginUser(
 
   if (!response.ok) {
     throw new Error(getErrorMessage(data, "登录失败。"));
+  }
+
+  return normalizeLoginSuccess(data);
+}
+
+export async function switchCurrentRole(identity: Identity): Promise<LoginSuccessResponse> {
+  const response = await fetch(`${API_BASE_URL}/auth/switch-role`, {
+    method: "POST",
+    headers: buildAuthHeaders({
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify({ identity }),
+  });
+
+  const data = await parseJsonSafe(response);
+  handleAuthenticationFailureFromResponse(response.status, data);
+
+  if (!response.ok) {
+    throw new Error(getErrorMessage(data, "切换身份失败。"));
   }
 
   return normalizeLoginSuccess(data);

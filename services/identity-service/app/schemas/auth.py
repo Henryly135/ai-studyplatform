@@ -32,12 +32,17 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class SwitchRoleRequest(BaseModel):
+    identity: str
+
+
 class UserRead(BaseModel):
     id: int
     userUuid: str
     email: EmailStr
     userName: str
     identity: str
+    availableIdentities: list[str] = Field(default_factory=list)
     emailVerified: bool
     accountStatus: str | None = None
 

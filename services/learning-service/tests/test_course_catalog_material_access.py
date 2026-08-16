@@ -1,5 +1,8 @@
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
+
 from app.models.course_enrollments import EnrollmentStatus
 from app.models.courses import CourseStatus
 from app.models.modules import ModuleStatus
@@ -148,3 +151,58 @@ def test_course_detail_returns_material_urls_for_owner_educator(monkeypatch) -> 
 
     assert detail.modules[0].materials[0].resourceUrl == "signed://material"
     assert materials.list_calls == 1
+
+
+def test_course_detail_does_not_trust_client_supplied_class_id(monkeypatch) -> None:
+    # A query string classId is not evidence of class membership.  Until the
+    # membership model exists, class-only modules must not leak through the
+    # course-center catalog.
+    service, _materials = _service(
+        monkeypatch,
+        module=_module(status=ModuleStatus.ARCHIVED, class_id="class-a"),
+        enrollment=SimpleNamespace(enrollment_status=EnrollmentStatus.ACTIVE),
+    )
+
+    detail = service.get_course_by_id(
+        course_id=1,
+        current_user={"id": 7, "identity": "Learner"},
+        class_id="class-a",
+    )
+
+    assert detail.modules == []
+    with pytest.raises(HTTPException) as exc_info:
+        service.get_course_module_by_id(
+            course_id=1,
+            module_id=2,
+            current_user={"id": 7, "identity": "Learner"},
+            class_id="class-a",
+        )
+    assert getattr(exc_info.value, "status_code", None) == 403
+
+
+def test_managed_material_uses_user_bound_proxy_urls(monkeypatch) -> None:
+    enrollment = SimpleNamespace(enrollment_status=EnrollmentStatus.ACTIVE)
+    service, _materials = _service(monkeypatch, enrollment=enrollment)
+    calls: list[dict] = []
+
+    def build_proxy_url(**kwargs):
+        calls.append(kwargs)
+        return f"proxy://{kwargs['material_uuid']}?download={int(kwargs['download'])}"
+
+    service.storage = SimpleNamespace(
+        has_managed_material=lambda **_kwargs: True,
+        get_material_proxy_access_url=build_proxy_url,
+    )
+
+    detail = service.get_course_by_id(
+        course_id=1,
+        current_user={"id": 7, "identity": "Learner"},
+    )
+
+    material = detail.modules[0].materials[0]
+    assert material.resourceUrl == "proxy://material-3?download=0"
+    assert material.downloadUrl == "proxy://material-3?download=1"
+    assert calls == [
+        {"material_uuid": "material-3", "user_id": 7, "identity": "Learner", "download": False},
+        {"material_uuid": "material-3", "user_id": 7, "identity": "Learner", "download": True},
+    ]

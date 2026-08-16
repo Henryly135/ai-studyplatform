@@ -16,7 +16,13 @@ from app.repositories.educator_invite_token_repository import EducatorInviteToke
 from app.repositories.role_repository import RoleRepository
 from app.repositories.token_repository import TokenRepository
 from app.repositories.user_repository import UserRepository
-from app.services.auth_service import AuthInvalidCredentialsError, AuthService, role_code_to_identity
+from app.services.auth_service import (
+    AuthInvalidCredentialsError,
+    AuthRoleNotAssignedError,
+    AuthService,
+    AuthServiceUnavailableError,
+    role_code_to_identity,
+)
 from platform_common.permissions.codes import COURSE_CREATE
 
 
@@ -163,8 +169,112 @@ def test_login_success_records_audit_and_returns_token(db_session, monkeypatch):
     result = AuthService(db_session).login(email="login@example.com", password="Password1!", ip_address="ip", user_agent="ua")
 
     assert result["user"]["identity"] == "Learner"
+    assert result["user"]["availableIdentities"] == ["Learner"]
     assert result["shouldShowGlobalProfileInitPrompt"] is True
     assert user.last_login_at is not None
+
+
+@pytest.mark.parametrize("failed_dependency", ["audit", "roles"])
+def test_login_converts_audit_and_role_initialization_errors_to_retryable_auth_error(
+    db_session,
+    monkeypatch,
+    failed_dependency,
+):
+    # A healthy password must not turn an audit/role dependency failure into a raw 500.
+    learner_role = _add_role(db_session, "learner", "Learner")
+    user = UserRepository(db_session).create(
+        email="resilient-login@example.com",
+        password_hash=hash_password("Password1!"),
+        full_name="Resilient Login",
+        account_status=AccountStatus.ACTIVE,
+        email_verified=True,
+    )
+    RoleRepository(db_session).assign_role(user.user_id, learner_role.role_id)
+    service = AuthService(db_session)
+
+    if failed_dependency == "audit":
+        monkeypatch.setattr(
+            service.audit_logs,
+            "create_login_audit_log",
+            lambda **_: (_ for _ in ()).throw(RuntimeError("audit unavailable")),
+        )
+    else:
+        monkeypatch.setattr(
+            service.roles,
+            "list_user_roles",
+            lambda _user_id: (_ for _ in ()).throw(RuntimeError("roles unavailable")),
+        )
+
+    with pytest.raises(AuthServiceUnavailableError) as exc_info:
+        service.login(email="resilient-login@example.com", password="Password1!")
+
+    assert exc_info.value.status_code == 503
+    assert "temporarily unavailable" in exc_info.value.detail
+
+
+def test_multi_role_account_switches_active_identity_and_permissions(db_session, monkeypatch):
+    learner_role = _add_role(db_session, "learner", "Learner")
+    educator_role = _add_role(db_session, "educator", "Educator")
+    admin_role = _add_role(db_session, "admin", "Admin")
+    learner_permission = Permission(
+        permission_code="course.enrol",
+        permission_name="Enrol in course",
+        description=None,
+    )
+    admin_permission = Permission(
+        permission_code="user.read",
+        permission_name="Read users",
+        description=None,
+    )
+    db_session.add_all([learner_permission, admin_permission])
+    db_session.flush()
+    db_session.add_all([
+        RolePermission(role_id=learner_role.role_id, permission_id=learner_permission.permission_id),
+        RolePermission(role_id=admin_role.role_id, permission_id=admin_permission.permission_id),
+    ])
+    user = UserRepository(db_session).create(
+        email="demo@example.com",
+        password_hash=hash_password("LocalDemo123!"),
+        full_name="Local Demo",
+        account_status=AccountStatus.ACTIVE,
+        email_verified=True,
+    )
+    roles = RoleRepository(db_session)
+    for role in (learner_role, educator_role, admin_role):
+        roles.assign_role(user.user_id, role.role_id)
+    monkeypatch.setattr(AuthService, "_fetch_global_profile_exists", lambda self, user_id: True)
+
+    service = AuthService(db_session)
+    login = service.login(email="demo@example.com", password="LocalDemo123!")
+    switched = service.switch_role(token=login["accessToken"], identity="Admin")
+
+    assert login["user"]["identity"] == "Learner"
+    assert login["user"]["availableIdentities"] == ["Learner", "Educator", "Admin"]
+    assert switched["user"]["identity"] == "Admin"
+    assert switched["user"]["availableIdentities"] == ["Learner", "Educator", "Admin"]
+    assert service.get_current_user(switched["accessToken"])["identity"] == "Admin"
+    assert [
+        permission["permissionCode"]
+        for permission in service.get_current_user_permissions(switched["accessToken"])["permissions"]
+    ] == ["user.read"]
+
+
+def test_role_switch_rejects_identity_not_assigned_to_account(db_session, monkeypatch):
+    learner_role = _add_role(db_session, "learner", "Learner")
+    user = UserRepository(db_session).create(
+        email="learner-only@example.com",
+        password_hash=hash_password("Password1!"),
+        full_name="Learner Only",
+        account_status=AccountStatus.ACTIVE,
+        email_verified=True,
+    )
+    RoleRepository(db_session).assign_role(user.user_id, learner_role.role_id)
+    monkeypatch.setattr(AuthService, "_fetch_global_profile_exists", lambda self, user_id: True)
+    service = AuthService(db_session)
+    login = service.login(email="learner-only@example.com", password="Password1!")
+
+    with pytest.raises(AuthRoleNotAssignedError):
+        service.switch_role(token=login["accessToken"], identity="Admin")
 
 
 def test_login_upgrades_legacy_sha256_password_hash(db_session, monkeypatch):

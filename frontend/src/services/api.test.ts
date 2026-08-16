@@ -123,6 +123,7 @@ describe("shared API authentication helpers", () => {
         email: "educator@example.com",
         user_name: "Educator",
         identity: "Educator",
+        available_identities: ["Educator", "Admin", "Educator", "Owner"],
         email_verified: "false",
         account_status: 123,
       })
@@ -134,6 +135,7 @@ describe("shared API authentication helpers", () => {
       email: "educator@example.com",
       userName: "Educator",
       identity: "Educator",
+      availableIdentities: ["Educator", "Admin"],
       emailVerified: false,
       accountStatus: "123",
     });

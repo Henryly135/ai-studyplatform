@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { initializeGlobalProfile } from "./profile";
+import { getMyGlobalProfile, initializeGlobalProfile, resetGlobalProfile, updateGlobalProfile } from "./profile";
 
 const NOW_MS = 1_800_000_000_000;
 
@@ -96,6 +96,7 @@ describe("profile service normalization", () => {
       version: null,
       objectKey: "456",
       content: "789",
+      preferences: {},
       isDefaultProfile: false,
       createdAt: null,
       updatedAt: "2026-07-02T00:00:00Z",
@@ -109,5 +110,23 @@ describe("profile service normalization", () => {
     );
 
     await expect(initializeGlobalProfile(profilePayload)).rejects.toThrow("Profile provider unavailable");
+  });
+
+  it("supports reading, updating, and resetting the learner profile", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(mockJsonResponse({ learnerId: 7, content: "profile", preferences: profilePayload }))
+      .mockResolvedValueOnce(mockJsonResponse({ learnerId: 7, content: "updated", preferences: profilePayload }))
+      .mockResolvedValueOnce(mockJsonResponse({ learnerId: 7, content: "default", isDefaultProfile: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getMyGlobalProfile()).resolves.toMatchObject({ content: "profile", preferences: profilePayload });
+    await expect(updateGlobalProfile(profilePayload)).resolves.toMatchObject({ content: "updated" });
+    await expect(resetGlobalProfile()).resolves.toMatchObject({ content: "default", isDefaultProfile: true });
+
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+      ["/api/ai/profiles/global/me", "GET"],
+      ["/api/ai/profiles/global/me", "PUT"],
+      ["/api/ai/profiles/global/me", "DELETE"],
+    ]);
   });
 });

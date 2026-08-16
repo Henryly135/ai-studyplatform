@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Navigate, useLocation, useOutletContext, useParams } from "react-router-dom";
 
 import { updateModuleProgress } from "../../services/course";
@@ -167,20 +167,31 @@ function CourseMaterialPage() {
   const moduleIsCompleteable =
     module ? !module.isLocked && !module.isCompleted && !module.hasPublishedQuiz : false;
   const activeModuleUuid = module?.moduleUuid ?? null;
+  const [isCompleting, setIsCompleting] = useState(false);
 
-  useEffect(() => {
-    if (!activeModuleUuid || !moduleIsCompleteable || !isLearnerView) {
+  const completeModule = async () => {
+    if (!activeModuleUuid || !moduleIsCompleteable || !isLearnerView || isCompleting) {
       return;
     }
-    void updateModuleProgress(course.courseUuid, activeModuleUuid, "completed")
-      .then(() => {
-        markModuleCompleted(activeModuleUuid);
-        return refreshCourse();
-      })
-      .catch(() => {
-        // Progress updates are opportunistic; the learner can continue reading the material.
-      });
-  }, [activeModuleUuid, course.courseUuid, isLearnerView, markModuleCompleted, moduleIsCompleteable, refreshCourse]);
+    setIsCompleting(true);
+    try {
+      await updateModuleProgress(course.courseUuid, activeModuleUuid, "completed");
+      markModuleCompleted(activeModuleUuid);
+      await refreshCourse();
+    } finally {
+      setIsCompleting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!material?.resourceUrl) {
+      return;
+    }
+    const refreshTimer = window.setInterval(() => {
+      void refreshCourse();
+    }, 4 * 60 * 1000);
+    return () => window.clearInterval(refreshTimer);
+  }, [material?.resourceUrl, refreshCourse]);
 
   if (!module || !material) {
     return <Navigate to={`/course/${course.courseUuid}`} replace />;
@@ -209,16 +220,17 @@ function CourseMaterialPage() {
                   preload="metadata"
                   playsInline
                   src={material.resourceUrl}
+                  onError={() => void refreshCourse()}
                 >你的浏览器不支持内嵌视频播放，请使用打开资料链接。
                 </video>
               </div>
             ) : imageMaterial ? (
               <div className="course-document-stage">
-                <img className="course-image-viewer" src={material.resourceUrl} alt={material.title} />
+                <img className="course-image-viewer" src={material.resourceUrl} alt={material.title} onError={() => void refreshCourse()} />
               </div>
             ) : audioMaterial ? (
               <div className="course-audio-stage">
-                <audio className="course-audio-player" controls preload="metadata" src={material.resourceUrl}>你的浏览器不支持内嵌音频播放，请使用打开资料链接。
+                <audio className="course-audio-player" controls preload="metadata" src={material.resourceUrl} onError={() => void refreshCourse()}>你的浏览器不支持内嵌音频播放，请使用打开资料链接。
                 </audio>
               </div>
             ) : markdownMaterial ? (
@@ -233,6 +245,7 @@ function CourseMaterialPage() {
                   className="course-document-viewer"
                   title={material.title}
                   src={pdfMaterial ? `${material.resourceUrl}#view=FitH` : material.resourceUrl}
+                  onError={() => void refreshCourse()}
                 />
               </div>
             ) : (
@@ -265,10 +278,20 @@ function CourseMaterialPage() {
                 <div className="course-material-actions">
                   <a className="course-primary-link" href={material.resourceUrl} target="_blank" rel="noreferrer">打开资料
                   </a>
-                  <a className="course-secondary-link" href={getMaterialDownloadUrl(material.resourceUrl)} download>
+                  <a className="course-secondary-link" href={material.downloadUrl || getMaterialDownloadUrl(material.resourceUrl)} download>
                     {videoMaterial ? "Download video" : "下载文件"}
                   </a>
                 </div>
+              ) : null}
+              {moduleIsCompleteable && isLearnerView ? (
+                <button
+                  type="button"
+                  className="course-primary-link"
+                  onClick={() => void completeModule()}
+                  disabled={isCompleting}
+                >
+                  {isCompleting ? "提交中..." : "完成本模块"}
+                </button>
               ) : null}
             </article>
 

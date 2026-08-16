@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import { LuDownload, LuRefreshCw, LuSearch } from "react-icons/lu";
@@ -24,6 +24,8 @@ import {
   getChatSessionDetail,
   listChatSessions,
   retryAdminAiIndexJob,
+  retryChatMessage,
+  resolveChatSendPayload,
   searchAdminAiTelemetryFailures,
   sendChatMessage,
 } from "../../services/chat";
@@ -34,7 +36,7 @@ import {
   getEducatorTeachingInsights,
   getCourseByUuid,
   getManagedCourseByUuid,
-  getManagedCourses,
+  getAllManagedCourses,
   getMyEnrolledCourses,
 } from "../../services/course";
 import type { AdminAiProviderCredential, AdminUserResponse } from "../../types/admin";
@@ -52,6 +54,7 @@ import type {
   AiRuntimeHealth,
   ChatSessionDetail,
   ChatSessionSummary,
+  StableChatSendPayload,
 } from "../../types/chat";
 import type {
   CourseRecord,
@@ -276,6 +279,7 @@ function HomeAiPage() {
   const [learnerQuestion, setLearnerQuestion] = useState("");
   const [learnerQuestionStatus, setLearnerQuestionStatus] = useState("选择课程模块后即可提问。");
   const [learnerQuestionSending, setLearnerQuestionSending] = useState(false);
+  const uncertainLearnerRequestRef = useRef<StableChatSendPayload | null>(null);
 
   useEffect(() => {
     if (!isChatUser) {
@@ -323,12 +327,12 @@ function HomeAiPage() {
       const errors: string[] = [];
 
       const [managedCoursesResult, aiHealthResult] = await Promise.allSettled([
-        getManagedCourses({ page: 1, pageSize: 100 }),
+        getAllManagedCourses(),
         getAiRuntimeHealth(),
       ]);
 
       if (managedCoursesResult.status === "fulfilled") {
-        nextDashboard.managedCourses = managedCoursesResult.value.items;
+        nextDashboard.managedCourses = managedCoursesResult.value;
       } else {
         errors.push(
           managedCoursesResult.reason instanceof Error
@@ -581,9 +585,9 @@ function HomeAiPage() {
 
     const loadChatCourses = isLearner
       ? getMyEnrolledCourses().then((data) => hydrateLearnerAiCourses(data, getCourseByUuid))
-      : getManagedCourses({ page: 1, pageSize: 100 }).then(async (response) =>
+      : getAllManagedCourses().then(async (courses) =>
           Promise.all(
-            response.items.map(async (course) => {
+            courses.map(async (course) => {
               try {
                 return (await getManagedCourseByUuid(course.courseUuid)) ?? course;
               } catch {
@@ -911,6 +915,7 @@ function HomeAiPage() {
   }
 
   function handleStartNewConversation() {
+    uncertainLearnerRequestRef.current = null;
     setActiveSession(null);
     setDetailErrorMessage(null);
     setDetailLoading(false);
@@ -923,6 +928,7 @@ function HomeAiPage() {
       return;
     }
 
+    uncertainLearnerRequestRef.current = null;
     setActiveSession(null);
     setDetailLoading(true);
     setDetailErrorMessage(null);
@@ -968,14 +974,16 @@ function HomeAiPage() {
     setLearnerQuestionSending(true);
     setLearnerQuestionStatus(continuingSessionUuid ? "正在继续当前会话..." : "正在创建新会话...");
 
-    try {
-      const response = await sendChatMessage({
+    const requestPayload = resolveChatSendPayload({
         courseUuid: requestCourseUuid,
         moduleUuid: requestModuleUuid,
         message,
         sessionUuid: continuingSessionUuid,
         modelId: selectedLearnerModelId,
-      });
+      }, uncertainLearnerRequestRef.current);
+
+    try {
+      const response = await sendChatMessage(requestPayload);
       if (continuingSessionUuid && response.session_uuid !== continuingSessionUuid) {
         throw new Error("服务器未继续当前历史会话，请重试。 ");
       }
@@ -986,10 +994,49 @@ function HomeAiPage() {
       setActiveSession(detail);
       setSessions(updatedSessions);
       setDetailErrorMessage(null);
-      setLearnerQuestionStatus("助手已回复。");
+      uncertainLearnerRequestRef.current = null;
+      setLearnerQuestionStatus(
+        response.status === "completed"
+          ? "助手已回复。"
+          : response.status === "pending"
+            ? "消息已保存，正在等待助手回复。"
+            : response.error_message || "助手未能回复，可在历史会话中重试。"
+      );
     } catch (error) {
+      uncertainLearnerRequestRef.current = requestPayload;
       setLearnerQuestion(message);
       setLearnerQuestionStatus(error instanceof Error ? error.message : "消息发送失败。");
+    } finally {
+      setLearnerQuestionSending(false);
+    }
+  }
+
+  async function handleLearnerMessageRetry(messageId: number) {
+    if (learnerQuestionSending || detailLoading) {
+      return;
+    }
+
+    setLearnerQuestionSending(true);
+    setLearnerQuestionStatus("正在重试这条消息...");
+    uncertainLearnerRequestRef.current = null;
+    try {
+      const response = await retryChatMessage(messageId);
+      const [detail, updatedSessions] = await Promise.all([
+        getChatSessionDetail(response.session_uuid),
+        listChatSessions(),
+      ]);
+      setActiveSession(detail);
+      setSessions(updatedSessions);
+      setDetailErrorMessage(null);
+      setLearnerQuestionStatus(
+        response.status === "completed"
+          ? "助手已回复。"
+          : response.status === "pending"
+            ? "消息正在处理中。"
+            : response.error_message || "重试失败，可稍后再试。"
+      );
+    } catch (error) {
+      setLearnerQuestionStatus(error instanceof Error ? error.message : "重试消息失败。");
     } finally {
       setLearnerQuestionSending(false);
     }
@@ -1264,6 +1311,7 @@ function HomeAiPage() {
             onSubmit={() => void handleLearnerQuestionSubmit()}
             onOpenSession={handleOpenSession}
             onStartNewConversation={handleStartNewConversation}
+            onRetryMessage={(messageId) => void handleLearnerMessageRetry(messageId)}
           />
         ) : null}
 
@@ -1992,6 +2040,7 @@ function HomeAiPage() {
           onSubmit={() => void handleLearnerQuestionSubmit()}
           onOpenSession={handleOpenSession}
           onStartNewConversation={handleStartNewConversation}
+          onRetryMessage={(messageId) => void handleLearnerMessageRetry(messageId)}
         />
 
         <article className="home-ai-panel">

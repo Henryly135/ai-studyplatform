@@ -80,6 +80,20 @@ function toBoolean(value: unknown) {
   return false;
 }
 
+function normalizeAvailableIdentities(value: unknown, activeIdentity: Identity): Identity[] {
+  const identities = Array.isArray(value)
+    ? value
+        .filter((identity): identity is Identity => VALID_IDENTITIES.has(identity as Identity))
+        .filter((identity, index, items) => items.indexOf(identity) === index)
+    : [];
+
+  if (!identities.includes(activeIdentity)) {
+    identities.unshift(activeIdentity);
+  }
+
+  return identities;
+}
+
 function normalizeStoredCurrentUser(payload: unknown): CurrentUserResponse | null {
   const data = readRecord(payload);
   if (!data || !VALID_IDENTITIES.has(data.identity as Identity)) {
@@ -87,13 +101,18 @@ function normalizeStoredCurrentUser(payload: unknown): CurrentUserResponse | nul
   }
 
   const accountStatus = pickField(data, "accountStatus", "account_status");
+  const identity = data.identity as Identity;
 
   return {
     id: toNonNegativeNumber(data.id),
     userUuid: String(pickField(data, "userUuid", "user_uuid") ?? ""),
     email: String(data.email ?? ""),
     userName: String(pickField(data, "userName", "user_name") ?? ""),
-    identity: data.identity as Identity,
+    identity,
+    availableIdentities: normalizeAvailableIdentities(
+      pickField(data, "availableIdentities", "available_identities"),
+      identity
+    ),
     emailVerified: toBoolean(pickField(data, "emailVerified", "email_verified")),
     ...(accountStatus === null || accountStatus === undefined ? {} : { accountStatus: String(accountStatus) }),
   };

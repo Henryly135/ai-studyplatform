@@ -27,11 +27,12 @@ from app.schemas.auth import (
     LoginRequest,
     RegisterRequest,
     ResetPasswordRequest,
+    SwitchRoleRequest,
 )
 from app.schemas.user_directory import UserDirectoryLookupRequest, UserDirectoryLookupResponse
 from app.services.admin_user_service import AdminUserNotFoundError
 from app.services.approval_service import EducatorApprovalNotFoundError
-from app.services.auth_service import AuthInvalidCredentialsError
+from app.services.auth_service import AuthInvalidCredentialsError, AuthServiceUnavailableError
 
 
 class _Request:
@@ -215,6 +216,27 @@ def test_auth_login_uses_forwarded_ip_and_converts_service_errors(monkeypatch):
     assert exc_info.value.status_code == 401
 
 
+def test_auth_login_returns_controlled_503_for_unavailable_dependencies(monkeypatch):
+    class FakeAuthService:
+        def __init__(self, session):
+            pass
+
+        def login(self, **kwargs):
+            raise AuthServiceUnavailableError()
+
+    monkeypatch.setattr(auth_api, "AuthService", FakeAuthService)
+
+    with pytest.raises(HTTPException) as exc_info:
+        auth_api.login(
+            LoginRequest(email="user@example.com", password="Password1!"),
+            _Request(),
+            session=object(),
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Login is temporarily unavailable. Please try again."
+
+
 def test_auth_simple_endpoints_delegate_to_service(monkeypatch):
     # Tests verify, resend, forgot, reset, permissions, change-password, and invite auth endpoints.
     calls = []
@@ -243,6 +265,10 @@ def test_auth_simple_endpoints_delegate_to_service(monkeypatch):
             calls.append(("permissions", token))
             return {"permissions": []}
 
+        def switch_role(self, **kwargs):
+            calls.append(("switch", kwargs))
+            return {"user": {"identity": kwargs["identity"]}}
+
         def change_password(self, **kwargs):
             calls.append(("change", kwargs))
             return {"detail": "changed"}
@@ -263,6 +289,7 @@ def test_auth_simple_endpoints_delegate_to_service(monkeypatch):
     assert auth_api.forgot_password(ForgotPasswordRequest(email="user@example.com"), _Request(), object())["detail"] == "forgot"
     assert auth_api.reset_password(ResetPasswordRequest(token="tok", newPassword="Password1!"), object())["detail"] == "reset"
     assert auth_api.me_permissions({}, token="tok", session=object()) == {"permissions": []}
+    assert auth_api.switch_role(SwitchRoleRequest(identity="Admin"), token="tok", session=object())["user"]["identity"] == "Admin"
     assert auth_api.change_password(ChangePasswordRequest(currentPassword="Old1!", newPassword="Newpass1!"), {"id": 4}, object())["detail"] == "changed"
     assert auth_api.validate_educator_invite(token="tok", session=object()) == {"valid": True}
     assert auth_api.register_educator_invite(
@@ -270,7 +297,7 @@ def test_auth_simple_endpoints_delegate_to_service(monkeypatch):
         _Request(),
         object(),
     )["detail"] == "invited"
-    assert [call[0] for call in calls] == ["verify", "resend", "forgot", "reset", "permissions", "change", "validate", "invite"]
+    assert [call[0] for call in calls] == ["verify", "resend", "forgot", "reset", "permissions", "switch", "change", "validate", "invite"]
 
 
 def test_admin_invite_url_uses_frontend_public_base(monkeypatch):

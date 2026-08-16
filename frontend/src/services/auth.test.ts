@@ -5,6 +5,7 @@ import {
   getCurrentUserPermissions,
   loginUser,
   registerUser,
+  switchCurrentRole,
   validateEducatorInviteToken,
 } from "./auth";
 
@@ -85,6 +86,7 @@ describe("auth service normalization", () => {
             email: "learner@example.com",
             user_name: "Learner",
             identity: "Learner",
+            available_identities: ["Learner", "Educator", "Admin"],
             email_verified: "true",
             account_status: "active",
           },
@@ -114,6 +116,7 @@ describe("auth service normalization", () => {
     expect(login.expiresIn).toBe(0);
     expect(login.shouldShowGlobalProfileInitPrompt).toBe(true);
     expect(login.user.id).toBe(5);
+    expect(login.user.availableIdentities).toEqual(["Learner", "Educator", "Admin"]);
     expect(login.user.emailVerified).toBe(true);
     await expect(loginUser({ email: "learner@example.com", password: "Password1!" })).rejects.toThrow(
       "登录响应无效"
@@ -182,12 +185,50 @@ describe("auth service normalization", () => {
     expect(register.user?.emailVerified).toBe(false);
     expect(currentUser.id).toBe(0);
     expect(currentUser.identity).toBe("Learner");
+    expect(currentUser.availableIdentities).toEqual(["Learner"]);
     expect(currentUser.emailVerified).toBe(true);
     expect(currentUser.accountStatus).toBeUndefined();
     expect(permissions.permissions[0].permissionId).toBe(7);
     expect(permissions.permissions[1].permissionId).toBe(0);
     expect(permissions.permissions[1].permissionCode).toBe("123");
     expect(permissions.permissions[1].description).toBe("456");
+  });
+
+  it("switches the active role with the stored bearer token", async () => {
+    const currentToken = makeToken(NOW_MS / 1000 + 60);
+    const switchedToken = makeToken(NOW_MS / 1000 + 120);
+    localStorage.setItem("accessToken", currentToken);
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockJsonResponse({
+        accessToken: switchedToken,
+        tokenType: "bearer",
+        expiresIn: 3600,
+        user: {
+          id: 7,
+          userUuid: "user-7",
+          email: "demo@example.com",
+          userName: "Local Demo",
+          identity: "Admin",
+          availableIdentities: ["Learner", "Educator", "Admin"],
+          emailVerified: true,
+          accountStatus: "active",
+        },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await switchCurrentRole("Admin");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/auth/switch-role",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: `Bearer ${currentToken}` }),
+        body: JSON.stringify({ identity: "Admin" }),
+      })
+    );
+    expect(result.accessToken).toBe(switchedToken);
+    expect(result.user.identity).toBe("Admin");
   });
 
   it("rejects invite validation payloads that are not explicitly valid", async () => {

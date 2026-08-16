@@ -64,12 +64,14 @@ class LearnerGlobalProfileAssetsRepository:
         learner_id: int,
         object_key: str,
         version: int,
+        preferences: dict[str, str] | None = None,
         status: AIProfileAssetStatus = AIProfileAssetStatus.ACTIVE,
     ) -> LearnerGlobalProfileAsset:
         profile_asset = LearnerGlobalProfileAsset(
             learner_id=learner_id,
             object_key=object_key,
             version=version,
+            preferences=preferences or {},
             status=status,
         )
         self.session.add(profile_asset)
